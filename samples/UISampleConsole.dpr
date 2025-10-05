@@ -1,0 +1,56 @@
+program UISampleConsole;
+
+{$APPTYPE CONSOLE}
+
+uses
+  {$IFDEF UNIX}cthreads,{$ENDIF}
+  SysUtils,
+  Classes,
+  maxLogic.EventNexus;
+
+function KeyOf(const aValue: Integer): TMLString;
+begin
+  Result := '';
+end;
+
+var
+  gDone: Boolean;
+
+procedure OnValue(const aValue: Integer);
+begin
+  Writeln('value ', aValue);
+  if aValue >= 1000 then
+    gDone := True;
+end;
+
+type
+  TProducer = class(TThread)
+  protected
+    procedure Execute; override;
+  end;
+
+procedure TProducer.Execute;
+var
+  i: Integer;
+begin
+  for i := 1 to 1000 do
+  begin
+    MLBus.Post<Integer>(i);
+    Sleep(1);
+  end;
+end;
+
+var
+  lProd: TProducer;
+  lSub: IMLSubscription;
+begin
+  (MLBus as IMLBusAdvanced).EnableCoalesceOf<Integer>(@KeyOf, 100000);
+  lSub := MLBus.Subscribe<Integer>(@OnValue, TMLDelivery.Main);
+  lProd := TProducer.Create(False);
+  while not gDone do
+    CheckSynchronize(10);
+  lProd.WaitFor;
+  lProd.Free;
+  lSub.Unsubscribe;
+end.
+
