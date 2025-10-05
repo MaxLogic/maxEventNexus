@@ -14,7 +14,7 @@ uses
   Classes, SysUtils,
   Generics.Collections, TypInfo, maxlogic.fpc.diagnostics
   {$IFDEF ML_FPC}, maxlogic.fpc.compatibility{$ENDIF}
-  {$IFDEF ML_DELPHI}, Rtti{$ENDIF};
+  {$IFDEF ML_DELPHI}, Rtti, System.WeakReference{$ENDIF};
 
 const
   ML_BUS_VERSION = '0.1.0';
@@ -133,6 +133,9 @@ type
 function MLBus: IMLBus;
 procedure MLSetAsyncErrorHandler(const aHandler: TOnAsyncError);
 procedure MLSetMetricCallback(const aSampler: TOnMetricSample);
+procedure MLSetAsyncScheduler(const aScheduler: IMLAsync);
+function MLGetAsyncScheduler: IMLAsync;
+
 
 {$IFDEF ML_DELPHI}
 type
@@ -156,9 +159,14 @@ type
     fSticky: Boolean;
     fPolicy: TMLQueuePolicy;
     fStats: TMLTopicStats;
+    fMetricName: TMLString;
+    fWarnedHighWater: Boolean;
+    procedure TouchMetrics; inline;
+    procedure CheckHighWater; inline;
   public
     constructor Create;
     destructor Destroy; override;
+    procedure SetMetricName(const aName: TMLString); inline;
     function Enqueue(const aProc: TMLProc): Boolean;
     procedure RemoveByTarget(const aTarget: TObject); virtual; abstract;
     procedure SetSticky(aEnable: Boolean); virtual;
@@ -180,15 +188,28 @@ type
   TMLSubList = TList<IMLSubscription>;
   TMLAutoSubDict = TObjectDictionary<TObject, TMLSubList>;
 
+  TMLSubscriptionToken = UInt64;
+
+  TMLWeakTarget = record
+    Raw: TObject;
+  {$IFDEF ML_DELPHI}
+    WeakRef: IWeakReference;
+  {$ENDIF}
+    class function Create(const aObj: TObject): TMLWeakTarget; static;
+    function Matches(const aObj: TObject): Boolean;
+    function IsAlive: Boolean;
+  end;
+
   TTypedSubscriber<T> = record
     Handler: TMLProcOf<T>;
     Mode: TMLDelivery;
-    Target: TObject;
+    Token: TMLSubscriptionToken;
+    Target: TMLWeakTarget;
   end;
 
   TTypedTopic<T> = class(TMLTopicBase)
   private
-    fSubs: array of TTypedSubscriber<T>;
+    fSubs: TArray<TTypedSubscriber<T>>;
     fLast: T;
     fHasLast: Boolean;
     fCoalesce: Boolean;
@@ -196,10 +217,12 @@ type
     fWindowUs: Integer;
     fPending: TDictionary<TMLString, T>;
     fPendingLock: TMLMonitorObject;
+    fNextToken: TMLSubscriptionToken;
+    procedure PruneDead;
   public
     constructor Create;
-    function Add(const aHandler: TMLProcOf<T>; aMode: TMLDelivery): Integer;
-    procedure Remove(aIndex: Integer);
+    function Add(const aHandler: TMLProcOf<T>; aMode: TMLDelivery): TMLSubscriptionToken;
+    procedure RemoveByToken(aToken: TMLSubscriptionToken);
     function Snapshot: TArray<TTypedSubscriber<T>>;
     procedure RemoveByTarget(const aTarget: TObject); override;
     procedure SetSticky(aEnable: Boolean); override;
@@ -270,6 +293,13 @@ type
   end;
 
 implementation
+
+var
+  gAsyncError: TOnAsyncError = nil;
+  gMetricSample: TOnMetricSample = nil;
+  gBus: IMLBus = nil;
+  gAsyncScheduler: IMLAsync = nil;
+  gAsyncFallback: IMLAsync = nil;
 
 {$IFDEF ML_DELPHI}
 var
@@ -398,6 +428,42 @@ begin
   inherited Destroy;
 end;
 
+{ TMLWeakTarget }
+
+class function TMLWeakTarget.Create(const aObj: TObject): TMLWeakTarget;
+begin
+  Result.Raw := aObj;
+{$IFDEF ML_DELPHI}
+  if aObj <> nil then
+    Result.WeakRef := TWeakReference.Create(aObj)
+  else
+    Result.WeakRef := nil;
+{$ENDIF}
+end;
+
+function TMLWeakTarget.Matches(const aObj: TObject): Boolean;
+begin
+  Result := (Raw <> nil) and (Raw = aObj);
+end;
+
+function TMLWeakTarget.IsAlive: Boolean;
+{$IFDEF ML_DELPHI}
+var
+  lObj: TObject;
+{$ENDIF}
+begin
+  if Raw = nil then
+    Exit(True);
+{$IFDEF ML_DELPHI}
+  if WeakRef = nil then
+    Exit(True);
+  lObj := WeakRef.Target;
+  Result := lObj <> nil;
+{$ELSE}
+  Result := True;
+{$ENDIF}
+end;
+
 { TMLTopicBase }
 
 constructor TMLTopicBase.Create;
@@ -409,6 +475,9 @@ begin
   fPolicy.MaxDepth := 0;
   fPolicy.Overflow := DropNewest;
   fPolicy.DeadlineUs := 0;
+  fMetricName := '';
+  fWarnedHighWater := False;
+  FillChar(fStats, SizeOf(fStats), 0);
 end;
 
 destructor TMLTopicBase.Destroy;
@@ -417,9 +486,16 @@ begin
   inherited Destroy;
 end;
 
+procedure TMLTopicBase.SetMetricName(const aName: TMLString);
+begin
+  if (fMetricName = '') and (aName <> '') then
+    fMetricName := aName;
+end;
+
 procedure TMLTopicBase.SetPolicy(const aPolicy: TMLQueuePolicy);
 begin
   fPolicy := aPolicy;
+  fWarnedHighWater := False;
 end;
 
 function TMLTopicBase.GetPolicy: TMLQueuePolicy;
@@ -427,24 +503,48 @@ begin
   Result := fPolicy;
 end;
 
+procedure TMLTopicBase.TouchMetrics;
+begin
+  if (fMetricName <> '') and Assigned(gMetricSample) then
+    gMetricSample(string(fMetricName), fStats);
+end;
+
+procedure TMLTopicBase.CheckHighWater;
+begin
+  if fPolicy.MaxDepth = 0 then
+  begin
+    if (not fWarnedHighWater) and (fStats.CurrentQueueDepth > 10000) then
+    begin
+      fWarnedHighWater := True;
+      TouchMetrics;
+    end
+    else if fWarnedHighWater and (fStats.CurrentQueueDepth <= 5000) then
+      fWarnedHighWater := False;
+  end;
+end;
+
 procedure TMLTopicBase.AddPost;
 begin
   Inc(fStats.PostsTotal);
+  TouchMetrics;
 end;
 
 procedure TMLTopicBase.AddDelivered(aCount: Integer);
 begin
   Inc(fStats.DeliveredTotal, aCount);
+  TouchMetrics;
 end;
 
 procedure TMLTopicBase.AddDropped;
 begin
   Inc(fStats.DroppedTotal);
+  TouchMetrics;
 end;
 
 procedure TMLTopicBase.AddException;
 begin
   Inc(fStats.ExceptionsTotal);
+  TouchMetrics;
 end;
 
 function TMLTopicBase.GetStats: TMLTopicStats;
@@ -509,6 +609,8 @@ begin
     Inc(fStats.CurrentQueueDepth);
     if fStats.CurrentQueueDepth > fStats.MaxQueueDepth then
       fStats.MaxQueueDepth := fStats.CurrentQueueDepth;
+    CheckHighWater;
+    TouchMetrics;
     if fProcessing then
       Exit(True);
     fProcessing := True;
@@ -523,11 +625,14 @@ begin
       begin
         fProcessing := False;
         TMonitor.PulseAll(Self);
+        TouchMetrics;
         Exit;
       end;
       lProc := fQueue.Dequeue;
       if fStats.CurrentQueueDepth > 0 then
         Dec(fStats.CurrentQueueDepth);
+      CheckHighWater;
+      TouchMetrics;
       TMonitor.Pulse(Self);
     finally
       TMonitor.Exit(Self);
@@ -545,16 +650,19 @@ end;
     TNamedSubscriber = record
       Handler: TMLProc;
       Mode: TMLDelivery;
-      Target: TObject;
+      Token: TMLSubscriptionToken;
+      Target: TMLWeakTarget;
     end;
 
   TNamedTopic = class(TMLTopicBase)
   private
-    fSubs: array of TNamedSubscriber;
+    fSubs: TArray<TNamedSubscriber>;
     fHasLast: Boolean;
+    fNextToken: TMLSubscriptionToken;
+    procedure PruneDead;
   public
-    function Add(const aHandler: TMLProc; aMode: TMLDelivery): Integer;
-    procedure Remove(aIndex: Integer);
+    function Add(const aHandler: TMLProc; aMode: TMLDelivery): TMLSubscriptionToken;
+    procedure RemoveByToken(aToken: TMLSubscriptionToken);
     function Snapshot: TArray<TNamedSubscriber>;
     procedure RemoveByTarget(const aTarget: TObject); override;
     procedure SetSticky(aEnable: Boolean); override;
@@ -574,25 +682,20 @@ end;
   TMLTypedSubscription<T> = class(TMLSubscriptionBase)
   private
     fTopic: TTypedTopic<T>;
-    fIndex: Integer;
+    fToken: TMLSubscriptionToken;
   public
-    constructor Create(aTopic: TTypedTopic<T>; aIndex: Integer);
+    constructor Create(aTopic: TTypedTopic<T>; aToken: TMLSubscriptionToken);
     procedure Unsubscribe; override;
   end;
 
   TMLNamedSubscription = class(TMLSubscriptionBase)
   private
     fTopic: TNamedTopic;
-    fIndex: Integer;
+    fToken: TMLSubscriptionToken;
   public
-    constructor Create(aTopic: TNamedTopic; aIndex: Integer);
+    constructor Create(aTopic: TNamedTopic; aToken: TMLSubscriptionToken);
     procedure Unsubscribe; override;
   end;
-
-var
-  gAsyncError: TOnAsyncError = nil;
-  gMetricSample: TOnMetricSample = nil;
-  gBus: IMLBus = nil;
 
 type
   TMLProcAdapter = class
@@ -627,6 +730,26 @@ var
 begin
   m := TMethod(aProc);
   Result := m.Code <> nil;
+end;
+
+function TypeMetricName(const aInfo: PTypeInfo): TMLString; inline;
+begin
+  Result := TMLString(GetTypeName(aInfo));
+end;
+
+function NamedMetricName(const aName: TMLString): TMLString; inline;
+begin
+  Result := aName;
+end;
+
+function NamedTypeMetricName(const aName: TMLString; const aInfo: PTypeInfo): TMLString; inline;
+begin
+  Result := aName + ':' + TMLString(GetTypeName(aInfo));
+end;
+
+function GuidMetricName(const aGuid: TGuid): TMLString; inline;
+begin
+  Result := TMLString(GuidToString(aGuid));
 end;
 
 { TMLProcAdapter }
@@ -696,43 +819,116 @@ constructor TTypedTopic<T>.Create;
 begin
   inherited Create;
   fPendingLock := TMLMonitorObject.Create;
+  fNextToken := 1;
+  SetLength(fSubs, 0);
 end;
 
-function TTypedTopic<T>.Add(const aHandler: TMLProcOf<T>; aMode: TMLDelivery): Integer;
+procedure TTypedTopic<T>.PruneDead;
 var
-  m: TMethod;
+  lNeedsPrune: Boolean;
+  lIdx, lCount, lOut: Integer;
+  lCopy: TArray<TTypedSubscriber<T>>;
 begin
-  Result := Length(fSubs);
-  SetLength(fSubs, Result + 1);
-  fSubs[Result].Handler := aHandler;
-  fSubs[Result].Mode := aMode;
-  m := TMethod(aHandler);
-  fSubs[Result].Target := TObject(m.Data);
-end;
-
-procedure TTypedTopic<T>.Remove(aIndex: Integer);
-var
-  L: Integer;
-begin
-  L := Length(fSubs);
-  if (aIndex < 0) or (aIndex >= L) then
+  lCount := Length(fSubs);
+  if lCount = 0 then
     Exit;
-  fSubs[aIndex] := fSubs[L - 1];
-  SetLength(fSubs, L - 1);
+  lNeedsPrune := False;
+  for lIdx := 0 to lCount - 1 do
+    if not fSubs[lIdx].Target.IsAlive then
+    begin
+      lNeedsPrune := True;
+      Break;
+    end;
+  if not lNeedsPrune then
+    Exit;
+  lCopy := nil;
+  SetLength(lCopy, lCount);
+  lOut := 0;
+  for lIdx := 0 to lCount - 1 do
+    if fSubs[lIdx].Target.IsAlive then
+    begin
+      lCopy[lOut] := fSubs[lIdx];
+      Inc(lOut);
+    end;
+  SetLength(lCopy, lOut);
+  fSubs := lCopy;
+end;
+
+function TTypedTopic<T>.Add(const aHandler: TMLProcOf<T>; aMode: TMLDelivery): TMLSubscriptionToken;
+var
+  lMethod: TMethod;
+  lNew: TArray<TTypedSubscriber<T>>;
+  lSub: TTypedSubscriber<T>;
+begin
+  if fNextToken = 0 then
+    fNextToken := 1;
+  lMethod := TMethod(aHandler);
+  lSub.Handler := aHandler;
+  lSub.Mode := aMode;
+  lSub.Token := fNextToken;
+  lSub.Target := TMLWeakTarget.Create(TObject(lMethod.Data));
+  Inc(fNextToken);
+  lNew := Copy(fSubs);
+  SetLength(lNew, Length(lNew) + 1);
+  lNew[High(lNew)] := lSub;
+  fSubs := lNew;
+  Result := lSub.Token;
+end;
+
+procedure TTypedTopic<T>.RemoveByToken(aToken: TMLSubscriptionToken);
+var
+  lCount, lIdx, lOut: Integer;
+  lNew: TArray<TTypedSubscriber<T>>;
+begin
+  lCount := Length(fSubs);
+  if lCount = 0 then
+    Exit;
+  lNew := nil;
+  SetLength(lNew, lCount);
+  lOut := 0;
+  for lIdx := 0 to lCount - 1 do
+    if fSubs[lIdx].Token <> aToken then
+    begin
+      lNew[lOut] := fSubs[lIdx];
+      Inc(lOut);
+    end;
+  if lOut = lCount then
+  begin
+    SetLength(lNew, 0);
+    Exit;
+  end;
+  SetLength(lNew, lOut);
+  fSubs := lNew;
 end;
 
 function TTypedTopic<T>.Snapshot: TArray<TTypedSubscriber<T>>;
 begin
+  PruneDead;
   Result := Copy(fSubs);
 end;
 
 procedure TTypedTopic<T>.RemoveByTarget(const aTarget: TObject);
 var
-  i: Integer;
+  lCount, lIdx, lOut: Integer;
+  lNew: TArray<TTypedSubscriber<T>>;
 begin
-  for i := High(fSubs) downto 0 do
-    if fSubs[i].Target = aTarget then
-      Remove(i);
+  if aTarget = nil then
+    Exit;
+  PruneDead;
+  lCount := Length(fSubs);
+  if lCount = 0 then
+    Exit;
+  lNew := nil;
+  SetLength(lNew, lCount);
+  lOut := 0;
+  for lIdx := 0 to lCount - 1 do
+    if not fSubs[lIdx].Target.Matches(aTarget) then
+    begin
+      lNew[lOut] := fSubs[lIdx];
+      Inc(lOut);
+    end;
+  SetLength(lNew, lOut);
+  fSubs := lNew;
 end;
 
 procedure TTypedTopic<T>.SetSticky(aEnable: Boolean);
@@ -762,7 +958,10 @@ procedure TTypedTopic<T>.SetCoalesce(const aKeyOf: TMLKeyFunc<T>; aWindowUs: Int
 begin
   fCoalesce := Assigned(aKeyOf);
   fKeyFunc := aKeyOf;
-  fWindowUs := aWindowUs;
+  if aWindowUs < 0 then
+    fWindowUs := 0
+  else
+    fWindowUs := aWindowUs;
   TMonitor.Enter(fPendingLock);
   try
     if fCoalesce then
@@ -787,7 +986,10 @@ end;
 
 function TTypedTopic<T>.CoalesceKey(const aEvent: T): TMLString;
 begin
-  Result := fKeyFunc(aEvent);
+  if Assigned(fKeyFunc) then
+    Result := fKeyFunc(aEvent)
+  else
+    Result := '';
 end;
 
 function TTypedTopic<T>.AddOrUpdatePending(const aKey: TMLString; const aEvent: T): Boolean;
@@ -841,41 +1043,112 @@ end;
 
 { TNamedTopic }
 
-function TNamedTopic.Add(const aHandler: TMLProc; aMode: TMLDelivery): Integer;
+function TNamedTopic.Add(const aHandler: TMLProc; aMode: TMLDelivery): TMLSubscriptionToken;
 var
-  m: TMethod;
+  lMethod: TMethod;
+  lSub: TNamedSubscriber;
+  lNew: TArray<TNamedSubscriber>;
 begin
-  Result := Length(fSubs);
-  SetLength(fSubs, Result + 1);
-  fSubs[Result].Handler := aHandler;
-  fSubs[Result].Mode := aMode;
-  m := TMethod(aHandler);
-  fSubs[Result].Target := TObject(m.Data);
+  if fNextToken = 0 then
+    fNextToken := 1;
+  lMethod := TMethod(aHandler);
+  lSub.Handler := aHandler;
+  lSub.Mode := aMode;
+  lSub.Token := fNextToken;
+  lSub.Target := TMLWeakTarget.Create(TObject(lMethod.Data));
+  Inc(fNextToken);
+  lNew := Copy(fSubs);
+  SetLength(lNew, Length(lNew) + 1);
+  lNew[High(lNew)] := lSub;
+  fSubs := lNew;
+  Result := lSub.Token;
 end;
 
-procedure TNamedTopic.Remove(aIndex: Integer);
+procedure TNamedTopic.RemoveByToken(aToken: TMLSubscriptionToken);
 var
-  L: Integer;
+  lCount, lIdx, lOut: Integer;
+  lNew: TArray<TNamedSubscriber>;
 begin
-  L := Length(fSubs);
-  if (aIndex < 0) or (aIndex >= L) then
+  lCount := Length(fSubs);
+  if lCount = 0 then
     Exit;
-  fSubs[aIndex] := fSubs[L - 1];
-  SetLength(fSubs, L - 1);
+  lNew := nil;
+  SetLength(lNew, lCount);
+  lOut := 0;
+  for lIdx := 0 to lCount - 1 do
+    if fSubs[lIdx].Token <> aToken then
+    begin
+      lNew[lOut] := fSubs[lIdx];
+      Inc(lOut);
+    end;
+  if lOut = lCount then
+  begin
+    SetLength(lNew, 0);
+    Exit;
+  end;
+  SetLength(lNew, lOut);
+  fSubs := lNew;
+end;
+
+procedure TNamedTopic.PruneDead;
+var
+  lNeedsPrune: Boolean;
+  lIdx, lCount, lOut: Integer;
+  lCopy: TArray<TNamedSubscriber>;
+begin
+  lCount := Length(fSubs);
+  if lCount = 0 then
+    Exit;
+  lNeedsPrune := False;
+  for lIdx := 0 to lCount - 1 do
+    if not fSubs[lIdx].Target.IsAlive then
+    begin
+      lNeedsPrune := True;
+      Break;
+    end;
+  if not lNeedsPrune then
+    Exit;
+  lCopy := nil;
+  SetLength(lCopy, lCount);
+  lOut := 0;
+  for lIdx := 0 to lCount - 1 do
+    if fSubs[lIdx].Target.IsAlive then
+    begin
+      lCopy[lOut] := fSubs[lIdx];
+      Inc(lOut);
+    end;
+  SetLength(lCopy, lOut);
+  fSubs := lCopy;
 end;
 
 function TNamedTopic.Snapshot: TArray<TNamedSubscriber>;
 begin
+  PruneDead;
   Result := Copy(fSubs);
 end;
 
 procedure TNamedTopic.RemoveByTarget(const aTarget: TObject);
 var
-  i: Integer;
+  lCount, lIdx, lOut: Integer;
+  lNew: TArray<TNamedSubscriber>;
 begin
-  for i := High(fSubs) downto 0 do
-    if fSubs[i].Target = aTarget then
-      Remove(i);
+  if aTarget = nil then
+    Exit;
+  PruneDead;
+  lCount := Length(fSubs);
+  if lCount = 0 then
+    Exit;
+  lNew := nil;
+  SetLength(lNew, lCount);
+  lOut := 0;
+  for lIdx := 0 to lCount - 1 do
+    if not fSubs[lIdx].Target.Matches(aTarget) then
+    begin
+      lNew[lOut] := fSubs[lIdx];
+      Inc(lOut);
+    end;
+  SetLength(lNew, lOut);
+  fSubs := lNew;
 end;
 
 procedure TNamedTopic.SetSticky(aEnable: Boolean);
@@ -911,44 +1184,53 @@ end;
 
 { TMLTypedSubscription<T> }
 
-constructor TMLTypedSubscription<T>.Create(aTopic: TTypedTopic<T>; aIndex: Integer);
+constructor TMLTypedSubscription<T>.Create(aTopic: TTypedTopic<T>; aToken: TMLSubscriptionToken);
 begin
   inherited Create;
   fTopic := aTopic;
-  fIndex := aIndex;
+  fToken := aToken;
 end;
 
 procedure TMLTypedSubscription<T>.Unsubscribe;
 begin
   if fActive then
   begin
-    fTopic.Remove(fIndex);
+    fTopic.RemoveByToken(fToken);
     fActive := False;
   end;
 end;
 
 { TMLNamedSubscription }
 
-constructor TMLNamedSubscription.Create(aTopic: TNamedTopic; aIndex: Integer);
+constructor TMLNamedSubscription.Create(aTopic: TNamedTopic; aToken: TMLSubscriptionToken);
 begin
   inherited Create;
   fTopic := aTopic;
-  fIndex := aIndex;
+  fToken := aToken;
 end;
 
 procedure TMLNamedSubscription.Unsubscribe;
 begin
   if fActive then
   begin
-    fTopic.Remove(fIndex);
+    fTopic.RemoveByToken(fToken);
     fActive := False;
   end;
+end;
+
+function DefaultAsync: IMLAsync;
+begin
+  if gAsyncScheduler <> nil then
+    Exit(gAsyncScheduler);
+  if gAsyncFallback = nil then
+    gAsyncFallback := TMLAsync.Create;
+  Result := gAsyncFallback;
 end;
 
 function MLBus: IMLBus;
 begin
   if gBus = nil then
-    gBus := TMLBus.Create(TMLAsync.Create);
+    gBus := TMLBus.Create(DefaultAsync);
   Result := gBus;
 end;
 
@@ -960,6 +1242,19 @@ end;
 procedure MLSetMetricCallback(const aSampler: TOnMetricSample);
 begin
   gMetricSample := aSampler;
+end;
+
+procedure MLSetAsyncScheduler(const aScheduler: IMLAsync);
+begin
+  gAsyncScheduler := aScheduler;
+end;
+
+function MLGetAsyncScheduler: IMLAsync;
+begin
+  if gAsyncScheduler <> nil then
+    Result := gAsyncScheduler
+  else
+    Result := DefaultAsync;
 end;
 
 { TMLAsync }
@@ -1003,32 +1298,48 @@ end;
 function TMLBus.ScheduleTypedCoalesce<T>(const aTopicName: TMLString;
   aTopic: TTypedTopic<T>; const aSubs: TArray<TTypedSubscriber<T>>;
   const aKey: TMLString): Boolean;
+var
+  lKeyCopy: TMLString;
 begin
-  Result := True;
-  fAsync.RunDelayed(
+  lKeyCopy := aKey;
+  Result := aTopic.Enqueue(
     procedure
     var
-      lK: TMLString;
-      lVal: T;
+      lPendingKey: TMLString;
     begin
-      lK := aKey;
-      if not aTopic.Enqueue(
+      lPendingKey := lKeyCopy;
+      fAsync.RunDelayed(
         procedure
         var
           lSub: TTypedSubscriber<T>;
           lInner: T;
           lErrs: TMLExceptionList;
         begin
-          if not aTopic.PopPending(lK, lInner) then
+          if not aTopic.PopPending(lPendingKey, lInner) then
             Exit;
           lErrs := nil;
           for lSub in aSubs do
+          begin
+            if not lSub.Target.IsAlive then
+            begin
+              aTopic.RemoveByToken(lSub.Token);
+              Continue;
+            end;
             try
               Dispatch(aTopicName, lSub.Mode,
                 procedure
                 begin
-                  lSub.Handler(lInner);
-                  aTopic.AddDelivered(1);
+                  try
+                    lSub.Handler(lInner);
+                    aTopic.AddDelivered(1);
+                  except
+                    on e: Exception do
+                    begin
+                      if (e is EAccessViolation) or (e is EInvalidPointer) then
+                        aTopic.RemoveByToken(lSub.Token);
+                      raise;
+                    end;
+                  end;
                 end,
                 procedure
                 begin
@@ -1042,15 +1353,12 @@ begin
                 lErrs.Add(e);
               end;
             end;
+          end;
           if lErrs <> nil then
             raise EMLAggregateException.Create(lErrs);
-        end) then
-      begin
-        aTopic.AddDropped;
-        aTopic.PopPending(lK, lVal);
-      end;
-    end,
-    aTopic.CoalesceWindow);
+        end,
+        aTopic.CoalesceWindow);
+    end);
 end;
 
 { TMLBus }
@@ -1158,29 +1466,32 @@ begin
   end;
 end;
 
-{$IFDEF ML_FPC}
 function TMLBus.Subscribe<T>(const aHandler: TMLProcOf<T>; aMode: TMLDelivery): IMLSubscription;
 var
   key: PTypeInfo;
   obj: TMLTopicBase;
   topic: TTypedTopic<T>;
-  idx: Integer;
+  token: TMLSubscriptionToken;
   send: Boolean;
   last: T;
+  metricName: TMLString;
 begin
   key := TypeInfo(T);
+  metricName := TypeMetricName(key);
   TMonitor.Enter(fLock);
   try
     if not fTyped.TryGetValue(key, obj) then
     begin
       topic := TTypedTopic<T>.Create;
+      topic.SetMetricName(metricName);
       if fStickyTypes.ContainsKey(key) then
         topic.SetSticky(True);
       fTyped.Add(key, topic);
     end
     else
       topic := TTypedTopic<T>(obj);
-    idx := topic.Add(aHandler, aMode);
+    topic.SetMetricName(metricName);
+    token := topic.Add(aHandler, aMode);
     send := topic.TryGetCached(last);
   finally
     TMonitor.Exit(fLock);
@@ -1192,18 +1503,27 @@ begin
         val: T;
       begin
         val := last;
-        Dispatch(TMLString(GetTypeName(TypeInfo(T))), aMode,
+        Dispatch(metricName, aMode,
           procedure
           begin
-            aHandler(val);
-            topic.AddDelivered(1);
+            try
+              aHandler(val);
+              topic.AddDelivered(1);
+            except
+              on e: Exception do
+              begin
+                if (e is EAccessViolation) or (e is EInvalidPointer) then
+                  topic.RemoveByToken(token);
+                raise;
+              end;
+            end;
           end,
           procedure
           begin
             topic.AddException;
           end);
       end);
-  Result := TMLTypedSubscription<T>.Create(topic, idx);
+  Result := TMLTypedSubscription<T>.Create(topic, token);
 end;
 
 procedure TMLBus.Post<T>(const aEvent: T);
@@ -1215,8 +1535,10 @@ var
   lIsNew: Boolean;
   lKeyStr: TMLString;
   lDropVal: T;
+  lMetric: TMLString;
 begin
   lKey := TypeInfo(T);
+  lMetric := TypeMetricName(lKey);
   TMonitor.Enter(fLock);
   try
     if not fTyped.TryGetValue(lKey, lObj) then
@@ -1224,6 +1546,7 @@ begin
       if fStickyTypes.ContainsKey(lKey) then
       begin
         lTopic := TTypedTopic<T>.Create;
+        lTopic.SetMetricName(lMetric);
         lTopic.SetSticky(True);
         fTyped.Add(lKey, lTopic);
       end
@@ -1232,6 +1555,7 @@ begin
     end
     else
       lTopic := TTypedTopic<T>(lObj);
+    lTopic.SetMetricName(lMetric);
     lSubs := lTopic.Snapshot;
     lTopic.Cache(aEvent);
     if lTopic.HasCoalesce then
@@ -1249,14 +1573,14 @@ begin
   begin
     if not lIsNew then
       Exit;
-    if not ScheduleTypedCoalesce<T>(TMLString(GetTypeName(TypeInfo(T))),
-      lTopic, lSubs, lKeyStr) then
+    if not ScheduleTypedCoalesce<T>(lMetric, lTopic, lSubs, lKeyStr) then
     begin
       lTopic.AddDropped;
       lTopic.PopPending(lKeyStr, lDropVal);
     end;
-  end
-  else if not lTopic.Enqueue(
+    Exit;
+  end;
+  if not lTopic.Enqueue(
     procedure
     var
       lSub: TTypedSubscriber<T>;
@@ -1266,12 +1590,27 @@ begin
       lVal := aEvent;
       lErrs := nil;
       for lSub in lSubs do
+      begin
+        if not lSub.Target.IsAlive then
+        begin
+          lTopic.RemoveByToken(lSub.Token);
+          Continue;
+        end;
         try
-          Dispatch(TMLString(GetTypeName(TypeInfo(T))), lSub.Mode,
+          Dispatch(lMetric, lSub.Mode,
             procedure
             begin
-              lSub.Handler(lVal);
-              lTopic.AddDelivered(1);
+              try
+                lSub.Handler(lVal);
+                lTopic.AddDelivered(1);
+              except
+                on e: Exception do
+                begin
+                  if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    lTopic.RemoveByToken(lSub.Token);
+                  raise;
+                end;
+              end;
             end,
             procedure
             begin
@@ -1285,6 +1624,7 @@ begin
             lErrs.Add(e);
           end;
         end;
+      end;
       if lErrs <> nil then
         raise EMLAggregateException.Create(lErrs);
     end) then
@@ -1300,695 +1640,11 @@ var
   lIsNew: Boolean;
   lKeyStr: TMLString;
   lDropVal: T;
+  lMetric: TMLString;
 begin
-  Result := False;
-  lKey := TypeInfo(T);
-  TMonitor.Enter(fLock);
-  try
-    if not fTyped.TryGetValue(lKey, lObj) then
-    begin
-      if fStickyTypes.ContainsKey(lKey) then
-      begin
-        lTopic := TTypedTopic<T>.Create;
-        lTopic.SetSticky(True);
-        fTyped.Add(lKey, lTopic);
-        lTopic.Cache(aEvent);
-      end;
-      Exit;
-    end;
-    lTopic := TTypedTopic<T>(lObj);
-    lSubs := lTopic.Snapshot;
-    lTopic.Cache(aEvent);
-    if lTopic.HasCoalesce then
-    begin
-      lKeyStr := lTopic.CoalesceKey(aEvent);
-      lIsNew := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
-    end;
-  finally
-    TMonitor.Exit(fLock);
-  end;
-  lTopic.AddPost;
-  if Length(lSubs) = 0 then
-    Exit;
-  if lTopic.HasCoalesce then
-  begin
-    if not lIsNew then
-      Exit;
-    Result := ScheduleTypedCoalesce<T>(TMLString(GetTypeName(TypeInfo(T))),
-      lTopic, lSubs, lKeyStr);
-    if not Result then
-    begin
-      lTopic.AddDropped;
-      lTopic.PopPending(lKeyStr, lDropVal);
-    end;
-  end
-  else
-    Result := lTopic.Enqueue(
-      procedure
-      var
-        lSub: TTypedSubscriber<T>;
-        lVal: T;
-        lErrs: TMLExceptionList;
-      begin
-        lVal := aEvent;
-        lErrs := nil;
-        for lSub in lSubs do
-          try
-            Dispatch(TMLString(GetTypeName(TypeInfo(T))), lSub.Mode,
-              procedure
-              begin
-                lSub.Handler(lVal);
-                lTopic.AddDelivered(1);
-              end,
-              procedure
-              begin
-                lTopic.AddException;
-              end);
-          except
-            on e: Exception do
-            begin
-              if lErrs = nil then
-                lErrs := TMLExceptionList.Create(True);
-              lErrs.Add(e);
-            end;
-          end;
-        if lErrs <> nil then
-          raise EMLAggregateException.Create(lErrs);
-      end);
-  if not Result then
-    lTopic.AddDropped;
-end;
-
-function TMLBus.SubscribeNamed(const aName: TMLString; const aHandler: TMLProc; aMode: TMLDelivery): IMLSubscription;
-var
-  obj: TMLTopicBase;
-  topic: TNamedTopic;
-  idx: Integer;
-  send: Boolean;
-  lNameKey: TMLString;
-begin
-  lNameKey := NormalizeName(aName);
-  TMonitor.Enter(fLock);
-  try
-    if not fNamed.TryGetValue(lNameKey, obj) then
-    begin
-      topic := TNamedTopic.Create;
-      if fStickyNames.ContainsKey(lNameKey) then
-        topic.SetSticky(True);
-      fNamed.Add(lNameKey, topic);
-    end
-    else
-      topic := TNamedTopic(obj);
-    idx := topic.Add(aHandler, aMode);
-    send := topic.HasCached;
-  finally
-    TMonitor.Exit(fLock);
-  end;
-  if send then
-    topic.Enqueue(
-      procedure
-      begin
-        Dispatch(aName, aMode,
-          procedure
-          begin
-            aHandler();
-            topic.AddDelivered(1);
-          end,
-          procedure
-          begin
-            topic.AddException;
-          end);
-      end);
-  Result := TMLNamedSubscription.Create(topic, idx);
-end;
-
-procedure TMLBus.PostNamed(const aName: TMLString);
-var
-  obj: TMLTopicBase;
-  topic: TNamedTopic;
-  subs: TArray<TNamedSubscriber>;
-  lNameKey: TMLString;
-begin
-  lNameKey := NormalizeName(aName);
-  TMonitor.Enter(fLock);
-  try
-    if not fNamed.TryGetValue(lNameKey, obj) then
-    begin
-      if fStickyNames.ContainsKey(lNameKey) then
-      begin
-        topic := TNamedTopic.Create;
-        topic.SetSticky(True);
-        fNamed.Add(lNameKey, topic);
-      end
-      else
-        Exit;
-    end
-    else
-      topic := TNamedTopic(obj);
-    subs := topic.Snapshot;
-    topic.Cache;
-  finally
-    TMonitor.Exit(fLock);
-  end;
-  topic.AddPost;
-  if Length(subs) = 0 then
-    Exit;
-  if not topic.Enqueue(
-    procedure
-    var
-      sub: TNamedSubscriber;
-      lErrs: TMLExceptionList;
-    begin
-      lErrs := nil;
-      for sub in subs do
-        try
-          Dispatch(aName, sub.Mode,
-            procedure
-            begin
-              sub.Handler();
-              topic.AddDelivered(1);
-            end,
-            procedure
-            begin
-              topic.AddException;
-            end);
-        except
-          on e: Exception do
-          begin
-            if lErrs = nil then
-              lErrs := TMLExceptionList.Create(True);
-            lErrs.Add(e);
-          end;
-        end;
-      if lErrs <> nil then
-        raise EMLAggregateException.Create(lErrs);
-    end) then
-    topic.AddDropped;
-end;
-
-function TMLBus.TryPostNamed(const aName: TMLString): Boolean;
-var
-  obj: TMLTopicBase;
-  topic: TNamedTopic;
-  subs: TArray<TNamedSubscriber>;
-  lNameKey: TMLString;
-begin
-  Result := False;
-  lNameKey := NormalizeName(aName);
-  TMonitor.Enter(fLock);
-  try
-    if not fNamed.TryGetValue(lNameKey, obj) then
-    begin
-      if fStickyNames.ContainsKey(lNameKey) then
-      begin
-        topic := TNamedTopic.Create;
-        topic.SetSticky(True);
-        fNamed.Add(lNameKey, topic);
-        topic.Cache;
-      end;
-      Exit;
-    end;
-    topic := TNamedTopic(obj);
-    subs := topic.Snapshot;
-    topic.Cache;
-  finally
-    TMonitor.Exit(fLock);
-  end;
-  topic.AddPost;
-  if Length(subs) = 0 then
-    Exit;
   Result := True;
-  if not topic.Enqueue(
-    procedure
-    var
-      sub: TNamedSubscriber;
-      lErrs: TMLExceptionList;
-    begin
-      lErrs := nil;
-      for sub in subs do
-        try
-          Dispatch(aName, sub.Mode,
-            procedure
-            begin
-              sub.Handler();
-              topic.AddDelivered(1);
-            end,
-            procedure
-            begin
-              topic.AddException;
-            end);
-        except
-          on e: Exception do
-          begin
-            if lErrs = nil then
-              lErrs := TMLExceptionList.Create(True);
-            lErrs.Add(e);
-          end;
-        end;
-      if lErrs <> nil then
-        raise EMLAggregateException.Create(lErrs);
-    end) then
-    topic.AddDropped;
-end;
-
-function TMLBus.SubscribeNamedOf<T>(const aName: TMLString; const aHandler: TMLProcOf<T>; aMode: TMLDelivery): IMLSubscription;
-var
-  typeDict: TMLTypeTopicDict;
-  obj: TMLTopicBase;
-  topic: TTypedTopic<T>;
-  idx: Integer;
-  key: PTypeInfo;
-  send: Boolean;
-  last: T;
-  lNameKey: TMLString;
-begin
-  key := TypeInfo(T);
-  lNameKey := NormalizeName(aName);
-  TMonitor.Enter(fLock);
-  try
-    if not fNamedTyped.TryGetValue(lNameKey, typeDict) then
-    begin
-      typeDict := TMLTypeTopicDict.Create([doOwnsValues]);
-      fNamedTyped.Add(lNameKey, typeDict);
-    end;
-    if not typeDict.TryGetValue(key, obj) then
-    begin
-      topic := TTypedTopic<T>.Create;
-      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(key) then
-        topic.SetSticky(True);
-      typeDict.Add(key, topic);
-    end
-    else
-      topic := TTypedTopic<T>(obj);
-    idx := topic.Add(aHandler, aMode);
-    send := topic.TryGetCached(last);
-  finally
-    TMonitor.Exit(fLock);
-  end;
-  if send then
-    topic.Enqueue(
-      procedure
-      var
-        val: T;
-      begin
-        val := last;
-        Dispatch(aName + ':' + TMLString(GetTypeName(TypeInfo(T))), aMode,
-          procedure
-          begin
-            aHandler(val);
-            topic.AddDelivered(1);
-          end,
-          procedure
-          begin
-            topic.AddException;
-          end);
-      end);
-  Result := TMLTypedSubscription<T>.Create(topic, idx);
-end;
-
-procedure TMLBus.PostNamedOf<T>(const aName: TMLString; const aEvent: T);
-var
-  lTypeDict: TMLTypeTopicDict;
-  lObj: TMLTopicBase;
-  lTopic: TTypedTopic<T>;
-  lSubs: TArray<TTypedSubscriber<T>>;
-  lIsNew: Boolean;
-  lKeyStr: TMLString;
-  lDropVal: T;
-  lNameKey: TMLString;
-begin
-  lNameKey := NormalizeName(aName);
-  TMonitor.Enter(fLock);
-  try
-    if not fNamedTyped.TryGetValue(lNameKey, lTypeDict) then
-    begin
-      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(TypeInfo(T)) then
-      begin
-        lTypeDict := TMLTypeTopicDict.Create([doOwnsValues]);
-        fNamedTyped.Add(lNameKey, lTypeDict);
-      end
-      else
-        Exit;
-    end;
-    if not lTypeDict.TryGetValue(TypeInfo(T), lObj) then
-    begin
-      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(TypeInfo(T)) then
-      begin
-        lTopic := TTypedTopic<T>.Create;
-        lTopic.SetSticky(True);
-        lTypeDict.Add(TypeInfo(T), lTopic);
-      end
-      else
-        Exit;
-    end
-    else
-      lTopic := TTypedTopic<T>(lObj);
-    lSubs := lTopic.Snapshot;
-    lTopic.Cache(aEvent);
-    if lTopic.HasCoalesce then
-    begin
-      lKeyStr := lTopic.CoalesceKey(aEvent);
-      lIsNew := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
-    end;
-  finally
-    TMonitor.Exit(fLock);
-  end;
-  lTopic.AddPost;
-  if Length(lSubs) = 0 then
-    Exit;
-  if lTopic.HasCoalesce then
-  begin
-    if not lIsNew then
-      Exit;
-    if not ScheduleTypedCoalesce<T>(aName + ':' + TMLString(GetTypeName(TypeInfo(T))),
-      lTopic, lSubs, lKeyStr) then
-    begin
-      lTopic.AddDropped;
-      lTopic.PopPending(lKeyStr, lDropVal);
-    end;
-  end
-  else if not lTopic.Enqueue(
-    procedure
-    var
-      lSub: TTypedSubscriber<T>;
-      lVal: T;
-      lErrs: TMLExceptionList;
-    begin
-      lVal := aEvent;
-      lErrs := nil;
-      for lSub in lSubs do
-        try
-          Dispatch(aName + ':' + TMLString(GetTypeName(TypeInfo(T))), lSub.Mode,
-            procedure
-            begin
-              lSub.Handler(lVal);
-              lTopic.AddDelivered(1);
-            end,
-            procedure
-            begin
-              lTopic.AddException;
-            end);
-        except
-          on e: Exception do
-          begin
-            if lErrs = nil then
-              lErrs := TMLExceptionList.Create(True);
-            lErrs.Add(e);
-          end;
-        end;
-      if lErrs <> nil then
-        raise EMLAggregateException.Create(lErrs);
-    end) then
-    lTopic.AddDropped;
-end;
-
-function TMLBus.TryPostNamedOf<T>(const aName: TMLString; const aEvent: T): Boolean;
-var
-  lTypeDict: TMLTypeTopicDict;
-  lObj: TMLTopicBase;
-  lTopic: TTypedTopic<T>;
-  lSubs: TArray<TTypedSubscriber<T>>;
-  lIsNew: Boolean;
-  lKeyStr: TMLString;
-  lDropVal: T;
-  lNameKey: TMLString;
-begin
-  Result := False;
-  lNameKey := NormalizeName(aName);
-  TMonitor.Enter(fLock);
-  try
-    if not fNamedTyped.TryGetValue(lNameKey, lTypeDict) then
-    begin
-      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(TypeInfo(T)) then
-      begin
-        lTypeDict := TMLTypeTopicDict.Create([doOwnsValues]);
-        fNamedTyped.Add(lNameKey, lTypeDict);
-      end;
-      Exit;
-    end;
-    if not lTypeDict.TryGetValue(TypeInfo(T), lObj) then
-    begin
-      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(TypeInfo(T)) then
-      begin
-        lTopic := TTypedTopic<T>.Create;
-        lTopic.SetSticky(True);
-        lTypeDict.Add(TypeInfo(T), lTopic);
-        lTopic.Cache(aEvent);
-      end;
-      Exit;
-    end;
-    lTopic := TTypedTopic<T>(lObj);
-    lSubs := lTopic.Snapshot;
-    lTopic.Cache(aEvent);
-    if lTopic.HasCoalesce then
-    begin
-      lKeyStr := lTopic.CoalesceKey(aEvent);
-      lIsNew := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
-    end;
-  finally
-    TMonitor.Exit(fLock);
-  end;
-  lTopic.AddPost;
-  if Length(lSubs) = 0 then
-    Exit;
-  if lTopic.HasCoalesce then
-  begin
-    if not lIsNew then
-      Exit;
-    Result := ScheduleTypedCoalesce<T>(aName + ':' + TMLString(GetTypeName(TypeInfo(T))),
-      lTopic, lSubs, lKeyStr);
-    if not Result then
-    begin
-      lTopic.AddDropped;
-      lTopic.PopPending(lKeyStr, lDropVal);
-    end;
-  end
-  else
-    Result := lTopic.Enqueue(
-      procedure
-      var
-        lSub: TTypedSubscriber<T>;
-        lVal: T;
-        lErrs: TMLExceptionList;
-      begin
-        lVal := aEvent;
-        lErrs := nil;
-        for lSub in lSubs do
-          try
-            Dispatch(aName + ':' + TMLString(GetTypeName(TypeInfo(T))), lSub.Mode,
-              procedure
-              begin
-                lSub.Handler(lVal);
-                lTopic.AddDelivered(1);
-              end,
-              procedure
-              begin
-                lTopic.AddException;
-              end);
-          except
-            on e: Exception do
-            begin
-              if lErrs = nil then
-                lErrs := TMLExceptionList.Create(True);
-              lErrs.Add(e);
-            end;
-          end;
-        if lErrs <> nil then
-          raise EMLAggregateException.Create(lErrs);
-      end);
-  if not Result then
-    lTopic.AddDropped;
-end;
-
-function TMLBus.SubscribeGuidOf<T>(const aHandler: TMLProcOf<T>; aMode: TMLDelivery): IMLSubscription;
-var
-  key: TGuid;
-  obj: TMLTopicBase;
-  topic: TTypedTopic<T>;
-  idx: Integer;
-  send: Boolean;
-  last: T;
-begin
-  key := GetTypeData(TypeInfo(T))^.Guid;
-  TMonitor.Enter(fLock);
-  try
-    if not fGuid.TryGetValue(key, obj) then
-    begin
-      topic := TTypedTopic<T>.Create;
-      if fStickyTypes.ContainsKey(TypeInfo(T)) then
-        topic.SetSticky(True);
-      fGuid.Add(key, topic);
-    end
-    else
-      topic := TTypedTopic<T>(obj);
-    idx := topic.Add(aHandler, aMode);
-    send := topic.TryGetCached(last);
-  finally
-    TMonitor.Exit(fLock);
-  end;
-  if send then
-    topic.Enqueue(
-      procedure
-      var
-        val: T;
-      begin
-        val := last;
-        Dispatch(GuidToString(key), aMode,
-          procedure
-          begin
-            aHandler(val);
-            topic.AddDelivered(1);
-          end,
-          procedure
-          begin
-            topic.AddException;
-          end);
-      end);
-  Result := TMLTypedSubscription<T>.Create(topic, idx);
-end;
-
-procedure TMLBus.PostGuidOf<T>(const aEvent: T);
-var
-  lKey: TGuid;
-  lObj: TMLTopicBase;
-  lTopic: TTypedTopic<T>;
-  lSubs: TArray<TTypedSubscriber<T>>;
-  lIsNew: Boolean;
-  lKeyStr: TMLString;
-  lDrop: T;
-begin
-  lKey := GetTypeData(TypeInfo(T))^.Guid;
-  TMonitor.Enter(fLock);
-  try
-    if not fGuid.TryGetValue(lKey, lObj) then
-    begin
-      if fStickyTypes.ContainsKey(TypeInfo(T)) then
-      begin
-        lTopic := TTypedTopic<T>.Create;
-        lTopic.SetSticky(True);
-        fGuid.Add(lKey, lTopic);
-      end
-      else
-        Exit;
-    end
-    else
-      lTopic := TTypedTopic<T>(lObj);
-    lSubs := lTopic.Snapshot;
-    lTopic.Cache(aEvent);
-    if lTopic.HasCoalesce then
-    begin
-      lKeyStr := lTopic.CoalesceKey(aEvent);
-      lIsNew := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
-    end;
-  finally
-    TMonitor.Exit(fLock);
-  end;
-  lTopic.AddPost;
-  if Length(lSubs) = 0 then
-    Exit;
-  if lTopic.HasCoalesce then
-  begin
-    if not lIsNew then
-      Exit;
-    if not ScheduleTypedCoalesce<T>(GuidToString(lKey), lTopic, lSubs, lKeyStr) then
-    begin
-      lTopic.AddDropped;
-      lTopic.PopPending(lKeyStr, lDrop);
-    end;
-  end
-  else if not lTopic.Enqueue(
-    procedure
-    var
-      lSub: TTypedSubscriber<T>;
-      lVal: T;
-      lErrs: TMLExceptionList;
-    begin
-      lVal := aEvent;
-      lErrs := nil;
-      for lSub in lSubs do
-        try
-          Dispatch(GuidToString(lKey), lSub.Mode,
-            procedure
-            begin
-              lSub.Handler(lVal);
-              lTopic.AddDelivered(1);
-            end,
-            procedure
-            begin
-              lTopic.AddException;
-            end);
-        except
-          on e: Exception do
-          begin
-            if lErrs = nil then
-              lErrs := TMLExceptionList.Create(True);
-            lErrs.Add(e);
-          end;
-        end;
-      if lErrs <> nil then
-        raise EMLAggregateException.Create(lErrs);
-    end) then
-    lTopic.AddDropped;
-end;
-{$ELSE}
-function TMLBus.Subscribe<T>(const aHandler: TMLProcOf<T>; aMode: TMLDelivery): IMLSubscription;
-var
-  key: PTypeInfo;
-  obj: TMLTopicBase;
-  topic: TTypedTopic<T>;
-  idx: Integer;
-  send: Boolean;
-  last: T;
-begin
-  key := TypeInfo(T);
-  TMonitor.Enter(fLock);
-  try
-    if not fTyped.TryGetValue(key, obj) then
-    begin
-      topic := TTypedTopic<T>.Create;
-      if fStickyTypes.ContainsKey(key) then
-        topic.SetSticky(True);
-      fTyped.Add(key, topic);
-    end
-    else
-      topic := TTypedTopic<T>(obj);
-    idx := topic.Add(aHandler, aMode);
-    send := topic.TryGetCached(last);
-  finally
-    TMonitor.Exit(fLock);
-  end;
-  if send then
-    topic.Enqueue(
-      procedure
-      var
-        val: T;
-      begin
-        val := last;
-        Dispatch(TMLString(GetTypeName(TypeInfo(T))), aMode,
-          procedure
-          begin
-            aHandler(val);
-            topic.AddDelivered(1);
-          end,
-          procedure
-          begin
-            topic.AddException;
-          end);
-      end);
-  Result := TMLTypedSubscription<T>.Create(topic, idx);
-end;
-
-procedure TMLBus.Post<T>(const aEvent: T);
-var
-  lKey: PTypeInfo;
-  lObj: TMLTopicBase;
-  lTopic: TTypedTopic<T>;
-  lSubs: TArray<TTypedSubscriber<T>>;
-  lIsNew: Boolean;
-  lKeyStr: TMLString;
-  lDropVal: T;
-begin
   lKey := TypeInfo(T);
+  lMetric := TypeMetricName(lKey);
   TMonitor.Enter(fLock);
   try
     if not fTyped.TryGetValue(lKey, lObj) then
@@ -1996,14 +1652,15 @@ begin
       if fStickyTypes.ContainsKey(lKey) then
       begin
         lTopic := TTypedTopic<T>.Create;
+        lTopic.SetMetricName(lMetric);
         lTopic.SetSticky(True);
         fTyped.Add(lKey, lTopic);
-      end
-      else
-        Exit;
-    end
-    else
-      lTopic := TTypedTopic<T>(lObj);
+        lTopic.Cache(aEvent);
+      end;
+      Exit;
+    end;
+    lTopic := TTypedTopic<T>(lObj);
+    lTopic.SetMetricName(lMetric);
     lSubs := lTopic.Snapshot;
     lTopic.Cache(aEvent);
     if lTopic.HasCoalesce then
@@ -2021,14 +1678,15 @@ begin
   begin
     if not lIsNew then
       Exit;
-    if not ScheduleTypedCoalesce<T>(TMLString(GetTypeName(TypeInfo(T))),
-      lTopic, lSubs, lKeyStr) then
+    Result := ScheduleTypedCoalesce<T>(lMetric, lTopic, lSubs, lKeyStr);
+    if not Result then
     begin
       lTopic.AddDropped;
       lTopic.PopPending(lKeyStr, lDropVal);
     end;
-  end
-  else if not lTopic.Enqueue(
+    Exit;
+  end;
+  Result := lTopic.Enqueue(
     procedure
     var
       lSub: TTypedSubscriber<T>;
@@ -2038,12 +1696,27 @@ begin
       lVal := aEvent;
       lErrs := nil;
       for lSub in lSubs do
+      begin
+        if not lSub.Target.IsAlive then
+        begin
+          lTopic.RemoveByToken(lSub.Token);
+          Continue;
+        end;
         try
-          Dispatch(TMLString(GetTypeName(TypeInfo(T))), lSub.Mode,
+          Dispatch(lMetric, lSub.Mode,
             procedure
             begin
-              lSub.Handler(lVal);
-              lTopic.AddDelivered(1);
+              try
+                lSub.Handler(lVal);
+                lTopic.AddDelivered(1);
+              except
+                on e: Exception do
+                begin
+                  if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    lTopic.RemoveByToken(lSub.Token);
+                  raise;
+                end;
+              end;
             end,
             procedure
             begin
@@ -2057,285 +1730,259 @@ begin
             lErrs.Add(e);
           end;
         end;
-      if lErrs <> nil then
-        raise EMLAggregateException.Create(lErrs);
-    end) then
-    lTopic.AddDropped;
-end;
-
-function TMLBus.TryPost<T>(const aEvent: T): Boolean;
-var
-  lKey: PTypeInfo;
-  lObj: TMLTopicBase;
-  lTopic: TTypedTopic<T>;
-  lSubs: TArray<TTypedSubscriber<T>>;
-  lIsNew: Boolean;
-  lKeyStr: TMLString;
-  lDropVal: T;
-begin
-  Result := False;
-  lKey := TypeInfo(T);
-  TMonitor.Enter(fLock);
-  try
-    if not fTyped.TryGetValue(lKey, lObj) then
-    begin
-      if fStickyTypes.ContainsKey(lKey) then
-      begin
-        lTopic := TTypedTopic<T>.Create;
-        lTopic.SetSticky(True);
-        fTyped.Add(lKey, lTopic);
-        lTopic.Cache(aEvent);
       end;
-      Exit;
-    end;
-    lTopic := TTypedTopic<T>(lObj);
-    lSubs := lTopic.Snapshot;
-    lTopic.Cache(aEvent);
-    if lTopic.HasCoalesce then
-    begin
-      lKeyStr := lTopic.CoalesceKey(aEvent);
-      lIsNew := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
-    end;
-  finally
-    TMonitor.Exit(fLock);
-  end;
-  lTopic.AddPost;
-  if Length(lSubs) = 0 then
-    Exit;
-  if lTopic.HasCoalesce then
-  begin
-    if not lIsNew then
-      Exit;
-    Result := ScheduleTypedCoalesce<T>(TMLString(GetTypeName(TypeInfo(T))),
-      lTopic, lSubs, lKeyStr);
-    if not Result then
-    begin
-      lTopic.AddDropped;
-      lTopic.PopPending(lKeyStr, lDropVal);
-    end;
-  end
-  else
-    Result := lTopic.Enqueue(
-      procedure
-      var
-        lSub: TTypedSubscriber<T>;
-        lVal: T;
-        lErrs: TMLExceptionList;
-      begin
-        lVal := aEvent;
-        lErrs := nil;
-        for lSub in lSubs do
-          try
-            Dispatch(TMLString(GetTypeName(TypeInfo(T))), lSub.Mode,
-              procedure
-              begin
-                lSub.Handler(lVal);
-                lTopic.AddDelivered(1);
-              end,
-              procedure
-              begin
-                lTopic.AddException;
-              end);
-          except
-            on e: Exception do
-            begin
-              if lErrs = nil then
-                lErrs := TMLExceptionList.Create(True);
-              lErrs.Add(e);
-            end;
-          end;
-        if lErrs <> nil then
-          raise EMLAggregateException.Create(lErrs);
-      end);
-  if not Result then
-    lTopic.AddDropped;
-end;
-
-function TMLBus.SubscribeNamed(const aName: TMLString; const aHandler: TMLProc; aMode: TMLDelivery): IMLSubscription;
-var
-  obj: TMLTopicBase;
-  topic: TNamedTopic;
-  idx: Integer;
-  send: Boolean;
-  lNameKey: TMLString;
-begin
-  lNameKey := NormalizeName(aName);
-  TMonitor.Enter(fLock);
-  try
-    if not fNamed.TryGetValue(lNameKey, obj) then
-    begin
-      topic := TNamedTopic.Create;
-      if fStickyNames.ContainsKey(lNameKey) then
-        topic.SetSticky(True);
-      fNamed.Add(lNameKey, topic);
-    end
-    else
-      topic := TNamedTopic(obj);
-    idx := topic.Add(aHandler, aMode);
-    send := topic.HasCached;
-  finally
-    TMonitor.Exit(fLock);
-  end;
-  if send then
-    topic.Enqueue(
-      procedure
-      begin
-        Dispatch(aName, aMode,
-          procedure
-          begin
-            aHandler();
-            topic.AddDelivered(1);
-          end,
-          procedure
-          begin
-            topic.AddException;
-          end);
-      end);
-  Result := TMLNamedSubscription.Create(topic, idx);
-end;
-
-procedure TMLBus.PostNamed(const aName: TMLString);
-var
-  obj: TMLTopicBase;
-  topic: TNamedTopic;
-  subs: TArray<TNamedSubscriber>;
-  lNameKey: TMLString;
-begin
-  lNameKey := NormalizeName(aName);
-  TMonitor.Enter(fLock);
-  try
-    if not fNamed.TryGetValue(lNameKey, obj) then
-    begin
-      if fStickyNames.ContainsKey(lNameKey) then
-      begin
-        topic := TNamedTopic.Create;
-        topic.SetSticky(True);
-        fNamed.Add(lNameKey, topic);
-      end
-      else
-        Exit;
-    end
-    else
-      topic := TNamedTopic(obj);
-    subs := topic.Snapshot;
-    topic.Cache;
-  finally
-    TMonitor.Exit(fLock);
-  end;
-  topic.AddPost;
-  if Length(subs) = 0 then
-    Exit;
-  if not topic.Enqueue(
-    procedure
-    var
-      sub: TNamedSubscriber;
-      lErrs: TMLExceptionList;
-    begin
-      lErrs := nil;
-      for sub in subs do
-        try
-          Dispatch(aName, sub.Mode,
-            procedure
-            begin
-              sub.Handler();
-              topic.AddDelivered(1);
-            end,
-            procedure
-            begin
-              topic.AddException;
-            end);
-        except
-          on e: Exception do
-          begin
-            if lErrs = nil then
-              lErrs := TMLExceptionList.Create(True);
-            lErrs.Add(e);
-          end;
-        end;
-      if lErrs <> nil then
-        raise EMLAggregateException.Create(lErrs);
-    end) then
-    topic.AddDropped;
-end;
-
-function TMLBus.TryPostNamed(const aName: TMLString): Boolean;
-var
-  obj: TMLTopicBase;
-  topic: TNamedTopic;
-  subs: TArray<TNamedSubscriber>;
-  lNameKey: TMLString;
-begin
-  Result := False;
-  lNameKey := NormalizeName(aName);
-  TMonitor.Enter(fLock);
-  try
-    if not fNamed.TryGetValue(lNameKey, obj) then
-    begin
-      if fStickyNames.ContainsKey(lNameKey) then
-      begin
-        topic := TNamedTopic.Create;
-        topic.SetSticky(True);
-        fNamed.Add(lNameKey, topic);
-        topic.Cache;
-      end;
-      Exit;
-    end;
-    topic := TNamedTopic(obj);
-    subs := topic.Snapshot;
-    topic.Cache;
-  finally
-    TMonitor.Exit(fLock);
-  end;
-  topic.AddPost;
-  if Length(subs) = 0 then
-    Exit;
-  Result := topic.Enqueue(
-    procedure
-    var
-      sub: TNamedSubscriber;
-      lErrs: TMLExceptionList;
-    begin
-      lErrs := nil;
-      for sub in subs do
-        try
-          Dispatch(aName, sub.Mode,
-            procedure
-            begin
-              sub.Handler();
-              topic.AddDelivered(1);
-            end,
-            procedure
-            begin
-              topic.AddException;
-            end);
-        except
-          on e: Exception do
-          begin
-            if lErrs = nil then
-              lErrs := TMLExceptionList.Create(True);
-            lErrs.Add(e);
-          end;
-        end;
       if lErrs <> nil then
         raise EMLAggregateException.Create(lErrs);
     end);
   if not Result then
+    lTopic.AddDropped;
+end;
+
+function TMLBus.SubscribeNamed(const aName: TMLString; const aHandler: TMLProc; aMode: TMLDelivery): IMLSubscription;
+var
+  obj: TMLTopicBase;
+  topic: TNamedTopic;
+  token: TMLSubscriptionToken;
+  send: Boolean;
+  lNameKey: TMLString;
+  lMetric: TMLString;
+begin
+  lNameKey := NormalizeName(aName);
+  lMetric := NamedMetricName(lNameKey);
+  TMonitor.Enter(fLock);
+  try
+    if not fNamed.TryGetValue(lNameKey, obj) then
+    begin
+      topic := TNamedTopic.Create;
+      topic.SetMetricName(lMetric);
+      if fStickyNames.ContainsKey(lNameKey) then
+        topic.SetSticky(True);
+      fNamed.Add(lNameKey, topic);
+    end
+    else
+      topic := TNamedTopic(obj);
+    topic.SetMetricName(lMetric);
+    token := topic.Add(aHandler, aMode);
+    send := topic.HasCached;
+  finally
+    TMonitor.Exit(fLock);
+  end;
+  if send then
+    topic.Enqueue(
+      procedure
+      begin
+        Dispatch(lMetric, aMode,
+          procedure
+          begin
+            try
+              aHandler();
+              topic.AddDelivered(1);
+            except
+              on e: Exception do
+              begin
+                if (e is EAccessViolation) or (e is EInvalidPointer) then
+                  topic.RemoveByToken(token);
+                raise;
+              end;
+            end;
+          end,
+          procedure
+          begin
+            topic.AddException;
+          end);
+      end);
+  Result := TMLNamedSubscription.Create(topic, token);
+end;
+
+
+procedure TMLBus.PostNamed(const aName: TMLString);
+var
+  obj: TMLTopicBase;
+  topic: TNamedTopic;
+  subs: TArray<TNamedSubscriber>;
+  lNameKey: TMLString;
+  lMetric: TMLString;
+begin
+  lNameKey := NormalizeName(aName);
+  lMetric := NamedMetricName(lNameKey);
+  TMonitor.Enter(fLock);
+  try
+    if not fNamed.TryGetValue(lNameKey, obj) then
+    begin
+      if fStickyNames.ContainsKey(lNameKey) then
+      begin
+        topic := TNamedTopic.Create;
+        topic.SetMetricName(lMetric);
+        topic.SetSticky(True);
+        fNamed.Add(lNameKey, topic);
+      end
+      else
+        Exit;
+    end
+    else
+      topic := TNamedTopic(obj);
+    topic.SetMetricName(lMetric);
+    subs := topic.Snapshot;
+    topic.Cache;
+  finally
+    TMonitor.Exit(fLock);
+  end;
+  topic.AddPost;
+  if Length(subs) = 0 then
+    Exit;
+  if not topic.Enqueue(
+    procedure
+    var
+      sub: TNamedSubscriber;
+      lErrs: TMLExceptionList;
+    begin
+      lErrs := nil;
+      for sub in subs do
+      begin
+        if not sub.Target.IsAlive then
+        begin
+          topic.RemoveByToken(sub.Token);
+          Continue;
+        end;
+        try
+          Dispatch(lMetric, sub.Mode,
+            procedure
+            begin
+              try
+                sub.Handler();
+                topic.AddDelivered(1);
+              except
+                on e: Exception do
+                begin
+                  if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    topic.RemoveByToken(sub.Token);
+                  raise;
+                end;
+              end;
+            end,
+            procedure
+            begin
+              topic.AddException;
+            end);
+        except
+          on e: Exception do
+          begin
+            if lErrs = nil then
+              lErrs := TMLExceptionList.Create(True);
+            lErrs.Add(e);
+          end;
+        end;
+      end;
+      if lErrs <> nil then
+        raise EMLAggregateException.Create(lErrs);
+    end) then
     topic.AddDropped;
 end;
+
+
+function TMLBus.TryPostNamed(const aName: TMLString): Boolean;
+var
+  obj: TMLTopicBase;
+  topic: TNamedTopic;
+  subs: TArray<TNamedSubscriber>;
+  lNameKey: TMLString;
+  lMetric: TMLString;
+begin
+  Result := True;
+  lNameKey := NormalizeName(aName);
+  lMetric := NamedMetricName(lNameKey);
+  TMonitor.Enter(fLock);
+  try
+    if not fNamed.TryGetValue(lNameKey, obj) then
+    begin
+      if fStickyNames.ContainsKey(lNameKey) then
+      begin
+        topic := TNamedTopic.Create;
+        topic.SetMetricName(lMetric);
+        topic.SetSticky(True);
+        fNamed.Add(lNameKey, topic);
+        topic.Cache;
+      end;
+      Exit;
+    end;
+    topic := TNamedTopic(obj);
+    topic.SetMetricName(lMetric);
+    subs := topic.Snapshot;
+    topic.Cache;
+  finally
+    TMonitor.Exit(fLock);
+  end;
+  topic.AddPost;
+  if Length(subs) = 0 then
+    Exit;
+  if not topic.Enqueue(
+    procedure
+    var
+      sub: TNamedSubscriber;
+      lErrs: TMLExceptionList;
+    begin
+      lErrs := nil;
+      for sub in subs do
+      begin
+        if not sub.Target.IsAlive then
+        begin
+          topic.RemoveByToken(sub.Token);
+          Continue;
+        end;
+        try
+          Dispatch(lMetric, sub.Mode,
+            procedure
+            begin
+              try
+                sub.Handler();
+                topic.AddDelivered(1);
+              except
+                on e: Exception do
+                begin
+                  if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    topic.RemoveByToken(sub.Token);
+                  raise;
+                end;
+              end;
+            end,
+            procedure
+            begin
+              topic.AddException;
+            end);
+        except
+          on e: Exception do
+          begin
+            if lErrs = nil then
+              lErrs := TMLExceptionList.Create(True);
+            lErrs.Add(e);
+          end;
+        end;
+      end;
+      if lErrs <> nil then
+        raise EMLAggregateException.Create(lErrs);
+    end) then
+  begin
+    topic.AddDropped;
+    Result := False;
+  end;
+end;
+
 
 function TMLBus.SubscribeNamedOf<T>(const aName: TMLString; const aHandler: TMLProcOf<T>; aMode: TMLDelivery): IMLSubscription;
 var
   typeDict: TMLTypeTopicDict;
   obj: TMLTopicBase;
   topic: TTypedTopic<T>;
-  idx: Integer;
+  token: TMLSubscriptionToken;
   key: PTypeInfo;
   send: Boolean;
   last: T;
   lNameKey: TMLString;
+  lMetric: TMLString;
 begin
   key := TypeInfo(T);
   lNameKey := NormalizeName(aName);
+  lMetric := NamedTypeMetricName(lNameKey, key);
   TMonitor.Enter(fLock);
   try
     if not fNamedTyped.TryGetValue(lNameKey, typeDict) then
@@ -2346,13 +1993,15 @@ begin
     if not typeDict.TryGetValue(key, obj) then
     begin
       topic := TTypedTopic<T>.Create;
+      topic.SetMetricName(lMetric);
       if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(key) then
         topic.SetSticky(True);
       typeDict.Add(key, topic);
     end
     else
       topic := TTypedTopic<T>(obj);
-    idx := topic.Add(aHandler, aMode);
+    topic.SetMetricName(lMetric);
+    token := topic.Add(aHandler, aMode);
     send := topic.TryGetCached(last);
   finally
     TMonitor.Exit(fLock);
@@ -2364,19 +2013,29 @@ begin
         val: T;
       begin
         val := last;
-        Dispatch(aName + ':' + TMLString(GetTypeName(TypeInfo(T))), aMode,
+        Dispatch(lMetric, aMode,
           procedure
           begin
-            aHandler(val);
-            topic.AddDelivered(1);
+            try
+              aHandler(val);
+              topic.AddDelivered(1);
+            except
+              on e: Exception do
+              begin
+                if (e is EAccessViolation) or (e is EInvalidPointer) then
+                  topic.RemoveByToken(token);
+                raise;
+              end;
+            end;
           end,
           procedure
           begin
             topic.AddException;
           end);
       end);
-  Result := TMLTypedSubscription<T>.Create(topic, idx);
+  Result := TMLTypedSubscription<T>.Create(topic, token);
 end;
+
 
 procedure TMLBus.PostNamedOf<T>(const aName: TMLString; const aEvent: T);
 var
@@ -2388,13 +2047,17 @@ var
   lKeyStr: TMLString;
   lDropVal: T;
   lNameKey: TMLString;
+  lMetric: TMLString;
+  key: PTypeInfo;
 begin
+  key := TypeInfo(T);
   lNameKey := NormalizeName(aName);
+  lMetric := NamedTypeMetricName(lNameKey, key);
   TMonitor.Enter(fLock);
   try
     if not fNamedTyped.TryGetValue(lNameKey, lTypeDict) then
     begin
-      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(TypeInfo(T)) then
+      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(key) then
       begin
         lTypeDict := TMLTypeTopicDict.Create([doOwnsValues]);
         fNamedTyped.Add(lNameKey, lTypeDict);
@@ -2402,19 +2065,21 @@ begin
       else
         Exit;
     end;
-    if not lTypeDict.TryGetValue(TypeInfo(T), lObj) then
+    if not lTypeDict.TryGetValue(key, lObj) then
     begin
-      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(TypeInfo(T)) then
+      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(key) then
       begin
         lTopic := TTypedTopic<T>.Create;
+        lTopic.SetMetricName(lMetric);
         lTopic.SetSticky(True);
-        lTypeDict.Add(TypeInfo(T), lTopic);
+        lTypeDict.Add(key, lTopic);
       end
       else
         Exit;
     end
     else
       lTopic := TTypedTopic<T>(lObj);
+    lTopic.SetMetricName(lMetric);
     lSubs := lTopic.Snapshot;
     lTopic.Cache(aEvent);
     if lTopic.HasCoalesce then
@@ -2432,14 +2097,14 @@ begin
   begin
     if not lIsNew then
       Exit;
-    if not ScheduleTypedCoalesce<T>(aName + ':' + TMLString(GetTypeName(TypeInfo(T))),
-      lTopic, lSubs, lKeyStr) then
+    if not ScheduleTypedCoalesce<T>(lMetric, lTopic, lSubs, lKeyStr) then
     begin
       lTopic.AddDropped;
       lTopic.PopPending(lKeyStr, lDropVal);
     end;
-  end
-  else if not lTopic.Enqueue(
+    Exit;
+  end;
+  if not lTopic.Enqueue(
     procedure
     var
       lSub: TTypedSubscriber<T>;
@@ -2449,12 +2114,27 @@ begin
       lVal := aEvent;
       lErrs := nil;
       for lSub in lSubs do
+      begin
+        if not lSub.Target.IsAlive then
+        begin
+          lTopic.RemoveByToken(lSub.Token);
+          Continue;
+        end;
         try
-          Dispatch(aName + ':' + TMLString(GetTypeName(TypeInfo(T))), lSub.Mode,
+          Dispatch(lMetric, lSub.Mode,
             procedure
             begin
-              lSub.Handler(lVal);
-              lTopic.AddDelivered(1);
+              try
+                lSub.Handler(lVal);
+                lTopic.AddDelivered(1);
+              except
+                on e: Exception do
+                begin
+                  if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    lTopic.RemoveByToken(lSub.Token);
+                  raise;
+                end;
+              end;
             end,
             procedure
             begin
@@ -2468,11 +2148,13 @@ begin
             lErrs.Add(e);
           end;
         end;
+      end;
       if lErrs <> nil then
         raise EMLAggregateException.Create(lErrs);
     end) then
     lTopic.AddDropped;
 end;
+
 
 function TMLBus.TryPostNamedOf<T>(const aName: TMLString; const aEvent: T): Boolean;
 var
@@ -2484,32 +2166,38 @@ var
   lKeyStr: TMLString;
   lDropVal: T;
   lNameKey: TMLString;
+  lMetric: TMLString;
+  key: PTypeInfo;
 begin
-  Result := False;
+  Result := True;
+  key := TypeInfo(T);
   lNameKey := NormalizeName(aName);
+  lMetric := NamedTypeMetricName(lNameKey, key);
   TMonitor.Enter(fLock);
   try
     if not fNamedTyped.TryGetValue(lNameKey, lTypeDict) then
     begin
-      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(TypeInfo(T)) then
+      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(key) then
       begin
         lTypeDict := TMLTypeTopicDict.Create([doOwnsValues]);
         fNamedTyped.Add(lNameKey, lTypeDict);
       end;
       Exit;
     end;
-    if not lTypeDict.TryGetValue(TypeInfo(T), lObj) then
+    if not lTypeDict.TryGetValue(key, lObj) then
     begin
-      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(TypeInfo(T)) then
+      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(key) then
       begin
         lTopic := TTypedTopic<T>.Create;
+        lTopic.SetMetricName(lMetric);
         lTopic.SetSticky(True);
-        lTypeDict.Add(TypeInfo(T), lTopic);
+        lTypeDict.Add(key, lTopic);
         lTopic.Cache(aEvent);
       end;
       Exit;
     end;
     lTopic := TTypedTopic<T>(lObj);
+    lTopic.SetMetricName(lMetric);
     lSubs := lTopic.Snapshot;
     lTopic.Cache(aEvent);
     if lTopic.HasCoalesce then
@@ -2527,148 +2215,15 @@ begin
   begin
     if not lIsNew then
       Exit;
-    Result := ScheduleTypedCoalesce<T>(aName + ':' + TMLString(GetTypeName(TypeInfo(T))),
-      lTopic, lSubs, lKeyStr);
+    Result := ScheduleTypedCoalesce<T>(lMetric, lTopic, lSubs, lKeyStr);
     if not Result then
     begin
       lTopic.AddDropped;
       lTopic.PopPending(lKeyStr, lDropVal);
     end;
-  end
-  else
-    Result := lTopic.Enqueue(
-      procedure
-      var
-        lSub: TTypedSubscriber<T>;
-        lVal: T;
-        lErrs: TMLExceptionList;
-      begin
-        lVal := aEvent;
-        lErrs := nil;
-        for lSub in lSubs do
-          try
-            Dispatch(aName + ':' + TMLString(GetTypeName(TypeInfo(T))), lSub.Mode,
-              procedure
-              begin
-                lSub.Handler(lVal);
-                lTopic.AddDelivered(1);
-              end,
-              procedure
-              begin
-                lTopic.AddException;
-              end);
-          except
-            on e: Exception do
-            begin
-              if lErrs = nil then
-                lErrs := TMLExceptionList.Create(True);
-              lErrs.Add(e);
-            end;
-          end;
-        if lErrs <> nil then
-          raise EMLAggregateException.Create(lErrs);
-      end);
-  if not Result then
-    lTopic.AddDropped;
-end;
-
-function TMLBus.SubscribeGuidOf<T: IInterface>(const aHandler: TMLProcOf<T>; aMode: TMLDelivery): IMLSubscription;
-var
-  key: TGuid;
-  obj: TMLTopicBase;
-  topic: TTypedTopic<T>;
-  idx: Integer;
-  send: Boolean;
-  last: T;
-begin
-  key := GetTypeData(TypeInfo(T))^.Guid;
-  TMonitor.Enter(fLock);
-  try
-    if not fGuid.TryGetValue(key, obj) then
-    begin
-      topic := TTypedTopic<T>.Create;
-      if fStickyTypes.ContainsKey(TypeInfo(T)) then
-        topic.SetSticky(True);
-      fGuid.Add(key, topic);
-    end
-    else
-      topic := TTypedTopic<T>(obj);
-    idx := topic.Add(aHandler, aMode);
-    send := topic.TryGetCached(last);
-  finally
-    TMonitor.Exit(fLock);
-  end;
-  if send then
-    topic.Enqueue(
-      procedure
-      var
-        val: T;
-      begin
-        val := last;
-        Dispatch(GuidToString(key), aMode,
-          procedure
-          begin
-            aHandler(val);
-            topic.AddDelivered(1);
-          end,
-          procedure
-          begin
-            topic.AddException;
-          end);
-      end);
-  Result := TMLTypedSubscription<T>.Create(topic, idx);
-end;
-
-procedure TMLBus.PostGuidOf<T: IInterface>(const aEvent: T);
-var
-  lKey: TGuid;
-  lObj: TMLTopicBase;
-  lTopic: TTypedTopic<T>;
-  lSubs: TArray<TTypedSubscriber<T>>;
-  lIsNew: Boolean;
-  lKeyStr: TMLString;
-  lDrop: T;
-begin
-  lKey := GetTypeData(TypeInfo(T))^.Guid;
-  TMonitor.Enter(fLock);
-  try
-    if not fGuid.TryGetValue(lKey, lObj) then
-    begin
-      if fStickyTypes.ContainsKey(TypeInfo(T)) then
-      begin
-        lTopic := TTypedTopic<T>.Create;
-        lTopic.SetSticky(True);
-        fGuid.Add(lKey, lTopic);
-      end
-      else
-        Exit;
-    end
-    else
-      lTopic := TTypedTopic<T>(lObj);
-    lSubs := lTopic.Snapshot;
-    lTopic.Cache(aEvent);
-    if lTopic.HasCoalesce then
-    begin
-      lKeyStr := lTopic.CoalesceKey(aEvent);
-      lIsNew := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
-    end;
-  finally
-    TMonitor.Exit(fLock);
-  end;
-  lTopic.AddPost;
-  if Length(lSubs) = 0 then
     Exit;
-  if lTopic.HasCoalesce then
-  begin
-    if not lIsNew then
-      Exit;
-    if not ScheduleTypedCoalesce<T>(GuidToString(lKey), lTopic, lSubs, lKeyStr) then
-    begin
-      lTopic.AddDropped;
-      lTopic.PopPending(lKeyStr, lDrop);
-    end;
-  end
-  else if not lTopic.Enqueue(
+  end;
+  Result := lTopic.Enqueue(
     procedure
     var
       lSub: TTypedSubscriber<T>;
@@ -2678,12 +2233,27 @@ begin
       lVal := aEvent;
       lErrs := nil;
       for lSub in lSubs do
+      begin
+        if not lSub.Target.IsAlive then
+        begin
+          lTopic.RemoveByToken(lSub.Token);
+          Continue;
+        end;
         try
-          Dispatch(GuidToString(lKey), lSub.Mode,
+          Dispatch(lMetric, lSub.Mode,
             procedure
             begin
-              lSub.Handler(lVal);
-              lTopic.AddDelivered(1);
+              try
+                lSub.Handler(lVal);
+                lTopic.AddDelivered(1);
+              except
+                on e: Exception do
+                begin
+                  if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    lTopic.RemoveByToken(lSub.Token);
+                  raise;
+                end;
+              end;
             end,
             procedure
             begin
@@ -2697,22 +2267,192 @@ begin
             lErrs.Add(e);
           end;
         end;
+      end;
+      if lErrs <> nil then
+        raise EMLAggregateException.Create(lErrs);
+    end);
+  if not Result then
+    lTopic.AddDropped;
+end;
+
+
+function TMLBus.SubscribeGuidOf<T{$IFDEF ML_DELPHI}: IInterface{$ENDIF}>(const aHandler: TMLProcOf<T>; aMode: TMLDelivery): IMLSubscription;
+var
+  key: TGuid;
+  obj: TMLTopicBase;
+  topic: TTypedTopic<T>;
+  token: TMLSubscriptionToken;
+  send: Boolean;
+  last: T;
+  lMetric: TMLString;
+begin
+  key := GetTypeData(TypeInfo(T))^.Guid;
+  lMetric := GuidMetricName(key);
+  TMonitor.Enter(fLock);
+  try
+    if not fGuid.TryGetValue(key, obj) then
+    begin
+      topic := TTypedTopic<T>.Create;
+      topic.SetMetricName(lMetric);
+      if fStickyTypes.ContainsKey(TypeInfo(T)) then
+        topic.SetSticky(True);
+      fGuid.Add(key, topic);
+    end
+    else
+      topic := TTypedTopic<T>(obj);
+    topic.SetMetricName(lMetric);
+    token := topic.Add(aHandler, aMode);
+    send := topic.TryGetCached(last);
+  finally
+    TMonitor.Exit(fLock);
+  end;
+  if send then
+    topic.Enqueue(
+      procedure
+      var
+        val: T;
+      begin
+        val := last;
+        Dispatch(lMetric, aMode,
+          procedure
+          begin
+            try
+              aHandler(val);
+              topic.AddDelivered(1);
+            except
+              on e: Exception do
+              begin
+                if (e is EAccessViolation) or (e is EInvalidPointer) then
+                  topic.RemoveByToken(token);
+                raise;
+              end;
+            end;
+          end,
+          procedure
+          begin
+            topic.AddException;
+          end);
+      end);
+  Result := TMLTypedSubscription<T>.Create(topic, token);
+end;
+
+
+procedure TMLBus.PostGuidOf<T{$IFDEF ML_DELPHI}: IInterface{$ENDIF}>(const aEvent: T);
+var
+  lKey: TGuid;
+  lObj: TMLTopicBase;
+  lTopic: TTypedTopic<T>;
+  lSubs: TArray<TTypedSubscriber<T>>;
+  lIsNew: Boolean;
+  lKeyStr: TMLString;
+  lDrop: T;
+  lMetric: TMLString;
+begin
+  lKey := GetTypeData(TypeInfo(T))^.Guid;
+  lMetric := GuidMetricName(lKey);
+  TMonitor.Enter(fLock);
+  try
+    if not fGuid.TryGetValue(lKey, lObj) then
+    begin
+      if fStickyTypes.ContainsKey(TypeInfo(T)) then
+      begin
+        lTopic := TTypedTopic<T>.Create;
+        lTopic.SetMetricName(lMetric);
+        lTopic.SetSticky(True);
+        fGuid.Add(lKey, lTopic);
+      end
+      else
+        Exit;
+    end
+    else
+      lTopic := TTypedTopic<T>(lObj);
+    lTopic.SetMetricName(lMetric);
+    lSubs := lTopic.Snapshot;
+    lTopic.Cache(aEvent);
+    if lTopic.HasCoalesce then
+    begin
+      lKeyStr := lTopic.CoalesceKey(aEvent);
+      lIsNew := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
+    end;
+  finally
+    TMonitor.Exit(fLock);
+  end;
+  lTopic.AddPost;
+  if Length(lSubs) = 0 then
+    Exit;
+  if lTopic.HasCoalesce then
+  begin
+    if not lIsNew then
+      Exit;
+    if not ScheduleTypedCoalesce<T>(lMetric, lTopic, lSubs, lKeyStr) then
+    begin
+      lTopic.AddDropped;
+      lTopic.PopPending(lKeyStr, lDrop);
+    end;
+    Exit;
+  end;
+  if not lTopic.Enqueue(
+    procedure
+    var
+      lSub: TTypedSubscriber<T>;
+      lVal: T;
+      lErrs: TMLExceptionList;
+    begin
+      lVal := aEvent;
+      lErrs := nil;
+      for lSub in lSubs do
+      begin
+        if not lSub.Target.IsAlive then
+        begin
+          lTopic.RemoveByToken(lSub.Token);
+          Continue;
+        end;
+        try
+          Dispatch(lMetric, lSub.Mode,
+            procedure
+            begin
+              try
+                lSub.Handler(lVal);
+                lTopic.AddDelivered(1);
+              except
+                on e: Exception do
+                begin
+                  if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    lTopic.RemoveByToken(lSub.Token);
+                  raise;
+                end;
+              end;
+            end,
+            procedure
+            begin
+              lTopic.AddException;
+            end);
+        except
+          on e: Exception do
+          begin
+            if lErrs = nil then
+              lErrs := TMLExceptionList.Create(True);
+            lErrs.Add(e);
+          end;
+        end;
+      end;
       if lErrs <> nil then
         raise EMLAggregateException.Create(lErrs);
     end) then
     lTopic.AddDropped;
 end;
-{$ENDIF}
 
-  procedure TMLBus.EnableSticky<T>(aEnable: Boolean);
+procedure TMLBus.EnableSticky<T>(aEnable: Boolean);
 var
   key: PTypeInfo;
   obj: TMLTopicBase;
-    kvName: TPair<TMLString, TMLTypeTopicDict>;
-  typeDict: TMLTypeTopicDict;
+  kvName: TPair<TMLString, TMLTypeTopicDict>;
+  kvInner: TPair<PTypeInfo, TMLTopicBase>;
   guid: TGuid;
+  metric: TMLString;
 begin
   key := TypeInfo(T);
+  metric := TypeMetricName(key);
   TMonitor.Enter(fLock);
   try
     if aEnable then
@@ -2720,13 +2460,22 @@ begin
     else
       fStickyTypes.Remove(key);
     if fTyped.TryGetValue(key, obj) then
+    begin
+      obj.SetMetricName(metric);
       obj.SetSticky(aEnable);
+    end;
     for kvName in fNamedTyped do
       if kvName.Value.TryGetValue(key, obj) then
+      begin
+        obj.SetMetricName(NamedTypeMetricName(kvName.Key, key));
         obj.SetSticky(aEnable);
+      end;
     guid := GetTypeData(key)^.Guid;
     if fGuid.TryGetValue(guid, obj) then
+    begin
+      obj.SetMetricName(GuidMetricName(guid));
       obj.SetSticky(aEnable);
+    end;
   finally
     TMonitor.Exit(fLock);
   end;
@@ -2738,8 +2487,10 @@ var
   typeDict: TMLTypeTopicDict;
   kvInner: TPair<PTypeInfo, TMLTopicBase>;
   lNameKey: TMLString;
+  metric: TMLString;
 begin
   lNameKey := NormalizeName(aName);
+  metric := NamedMetricName(lNameKey);
   TMonitor.Enter(fLock);
   try
     if aEnable then
@@ -2747,33 +2498,43 @@ begin
     else
       fStickyNames.Remove(lNameKey);
     if fNamed.TryGetValue(lNameKey, obj) then
+    begin
+      obj.SetMetricName(metric);
       obj.SetSticky(aEnable);
+    end;
     if fNamedTyped.TryGetValue(lNameKey, typeDict) then
       for kvInner in typeDict do
+      begin
+        kvInner.Value.SetMetricName(NamedTypeMetricName(lNameKey, kvInner.Key));
         kvInner.Value.SetSticky(aEnable);
+      end;
   finally
     TMonitor.Exit(fLock);
   end;
 end;
 
-  procedure TMLBus.EnableCoalesceOf<T>(const aKeyOf: TMLKeyFunc<T>; aWindowUs: Integer);
+procedure TMLBus.EnableCoalesceOf<T>(const aKeyOf: TMLKeyFunc<T>; aWindowUs: Integer);
 var
   key: PTypeInfo;
   obj: TMLTopicBase;
-    topic: TTypedTopic<T>;
+  topic: TTypedTopic<T>;
+  metric: TMLString;
 begin
   key := TypeInfo(T);
+  metric := TypeMetricName(key);
   TMonitor.Enter(fLock);
   try
     if not fTyped.TryGetValue(key, obj) then
     begin
       topic := TTypedTopic<T>.Create;
+      topic.SetMetricName(metric);
       if fStickyTypes.ContainsKey(key) then
         topic.SetSticky(True);
       fTyped.Add(key, topic);
     end
     else
       topic := TTypedTopic<T>(obj);
+    topic.SetMetricName(metric);
     topic.SetCoalesce(aKeyOf, aWindowUs);
   finally
     TMonitor.Exit(fLock);
@@ -2786,8 +2547,12 @@ var
   obj: TMLTopicBase;
   topic: TTypedTopic<T>;
   lNameKey: TMLString;
+  metric: TMLString;
+  key: PTypeInfo;
 begin
+  key := TypeInfo(T);
   lNameKey := NormalizeName(aName);
+  metric := NamedTypeMetricName(lNameKey, key);
   TMonitor.Enter(fLock);
   try
     if not fNamedTyped.TryGetValue(lNameKey, typeDict) then
@@ -2795,15 +2560,17 @@ begin
       typeDict := TMLTypeTopicDict.Create([doOwnsValues]);
       fNamedTyped.Add(lNameKey, typeDict);
     end;
-    if not typeDict.TryGetValue(TypeInfo(T), obj) then
+    if not typeDict.TryGetValue(key, obj) then
     begin
       topic := TTypedTopic<T>.Create;
-      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(TypeInfo(T)) then
+      topic.SetMetricName(metric);
+      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(key) then
         topic.SetSticky(True);
-      typeDict.Add(TypeInfo(T), topic);
+      typeDict.Add(key, topic);
     end
     else
       topic := TTypedTopic<T>(obj);
+    topic.SetMetricName(metric);
     topic.SetCoalesce(aKeyOf, aWindowUs);
   finally
     TMonitor.Exit(fLock);
@@ -2812,12 +2579,14 @@ end;
 
 procedure TMLBus.UnsubscribeAllFor(const aTarget: TObject);
 var
-    kvTyped: TPair<PTypeInfo, TMLTopicBase>;
-    kvNamed: TPair<TMLString, TMLTopicBase>;
-    kvName: TPair<TMLString, TMLTypeTopicDict>;
-    kvInner: TPair<PTypeInfo, TMLTopicBase>;
-    kvGuid: TPair<TGuid, TMLTopicBase>;
+  kvTyped: TPair<PTypeInfo, TMLTopicBase>;
+  kvNamed: TPair<TMLString, TMLTopicBase>;
+  kvName: TPair<TMLString, TMLTypeTopicDict>;
+  kvInner: TPair<PTypeInfo, TMLTopicBase>;
+  kvGuid: TPair<TGuid, TMLTopicBase>;
 begin
+  if aTarget = nil then
+    Exit;
   TMonitor.Enter(fLock);
   try
     for kvTyped in fTyped do
@@ -2852,17 +2621,21 @@ var
   lKey: PTypeInfo;
   lObj: TMLTopicBase;
   lTopic: TTypedTopic<T>;
+  metric: TMLString;
 begin
   lKey := TypeInfo(T);
+  metric := TypeMetricName(lKey);
   TMonitor.Enter(fLock);
   try
     if not fTyped.TryGetValue(lKey, lObj) then
     begin
       lTopic := TTypedTopic<T>.Create;
+      lTopic.SetMetricName(metric);
       fTyped.Add(lKey, lTopic);
     end
     else
       lTopic := TTypedTopic<T>(lObj);
+    lTopic.SetMetricName(metric);
     lTopic.SetPolicy(aPolicy);
   finally
     TMonitor.Exit(fLock);
@@ -2873,15 +2646,20 @@ procedure TMLBus.SetPolicyNamed(const aName: string; const aPolicy: TMLQueuePoli
 var
   lTopic: TMLTopicBase;
   lNameKey: TMLString;
+  metric: TMLString;
 begin
   lNameKey := NormalizeName(aName);
+  metric := NamedMetricName(lNameKey);
   TMonitor.Enter(fLock);
   try
     if not fNamed.TryGetValue(lNameKey, lTopic) then
     begin
       lTopic := TNamedTopic.Create;
+      TNamedTopic(lTopic).SetMetricName(metric);
       fNamed.Add(lNameKey, lTopic);
-    end;
+    end
+    else if lTopic is TNamedTopic then
+      TNamedTopic(lTopic).SetMetricName(metric);
     lTopic.SetPolicy(aPolicy);
   finally
     TMonitor.Exit(fLock);
@@ -2996,6 +2774,7 @@ begin
     TMonitor.Exit(fLock);
   end;
 end;
+
 
 {$IFDEF ML_DELPHI}
 initialization
