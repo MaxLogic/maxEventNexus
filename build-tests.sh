@@ -4,4 +4,4 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-"${SCRIPT_DIR}/build-delphi.sh" tests/MaxEventNexusTests.dpr
+"${SCRIPT_DIR}/build-delphi.sh" tests/MaxEventNexusTests.dproj

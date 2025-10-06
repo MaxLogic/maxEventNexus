@@ -11,7 +11,7 @@ program MaxEventNexusTests;
 uses
   mormot.core.test,
   SysUtils, Classes, Generics.Collections, SyncObjs,
-  maxLogic.EventNexus;
+  maxLogic.EventNexus in '..\maxLogic.EventNexus.pas';
 
 type
   TKeyed = record

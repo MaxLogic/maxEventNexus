@@ -98,7 +98,7 @@ end;
 * Replace `GetTickCount64`/`QWord` timing with `TStopwatch` from `lib/MaxLogicFoundation/maxlogic.fpc.diagnostics.pas` and `UInt64` counters.
 * Implement case‑insensitive topic lookup via `SysUtils.CompareText` or a delegated comparer rather than `TStringComparer.OrdinalIgnoreCase`.
 * Hide `TThread.Queue/Synchronize` differences behind `IMLAsync` so dispatching code is compiler‑agnostic.
-* **Weak‑target shim:** Delphi uses `System.WeakReference.TWeakReference<TObject>` for method targets; FPC uses a `{Ptr, Gen}` registry. Both paths share the same dispatch‑time "rehydrate‑or‑skip" logic.
+* **Weak‑target shim**: Delphi uses `System.WeakReference.TWeakReference<TObject>` for method targets; FPC uses a `{Ptr, Gen}` registry. Both paths share the same dispatch‑time “rehydrate‑or‑skip” logic.
 
 ---
 
@@ -171,7 +171,8 @@ type
   end;
 ```
 
-**Token semantics:** `IMLSubscription` is a disposable *token*. Releasing the last reference (i.e., letting the interface go out of scope or assigning it to `nil`) automatically calls `Unsubscribe` (idempotent). This is the recommended usage pattern over calling `Unsubscribe` directly.
+> **Token semantics:** `IMLSubscription` is a disposable *token*. Releasing the last reference (letting the interface go out of scope or assigning it to `nil`) automatically calls `Unsubscribe` (idempotent). This is the recommended pattern over calling `Unsubscribe` directly.
+
 
 > **Rationale:**
 >
@@ -210,11 +211,10 @@ function MLBus: IMLBus; // Unit: maxLogic.EventNexus // thread‑safe singleton 
 1. **Handler lifetime**
 
    * Returned `IMLSubscription` is reference‑counted; releasing it auto‑unsubscribes.
-   * **Object-method liveness:** For object-method handlers, the bus stores `{CodePtr, WeakTarget}` and reconstructs the method pointer at dispatch time.
-
-     * **Delphi 12+:** `WeakTarget` = `System.WeakReference.TWeakReference<TObject>`. On invoke, `TryGetTarget` must succeed; otherwise the call is skipped and the subscription is pruned lazily.
-     * **FPC 3.2.2:** `WeakTarget` = lightweight registry (pointer → generation). On object finalization, its generation increments. On invoke, if `{Ptr, GenAtSubscribe}` ≠ current generation, the call is skipped and the subscription is pruned lazily.
-   * **Already-queued work:** Events queued before `Unsubscribe` or token release may still reach the dispatcher. The liveness check above guarantees such invocations are **no-ops** if the target is dead; otherwise they proceed. (This makes teardown race-safe without imposing global locks.)
+   * **Object-method liveness:** For object‑method handlers, the bus stores `{CodePtr, WeakTarget}` and reconstructs the method pointer at dispatch time.
+     - **Delphi 12+**: `WeakTarget` = `System.WeakReference.TWeakReference<TObject>`. On invoke, `TryGetTarget` must succeed; otherwise the call is skipped and the subscription is **pruned lazily**.
+     - **FPC 3.2.2**: `WeakTarget` = lightweight registry (pointer → generation). On object finalization, the instance’s generation increments. On invoke, if `{Ptr, GenAtSubscribe}` ≠ current generation, skip and **prune lazily**.
+   * **Already‑queued work:** Events queued *before* `Unsubscribe` or token release may still reach the dispatcher. The liveness check above guarantees such invocations are **no‑ops** if the target is dead; otherwise they proceed.
 
 2. **Reentrancy**
 
@@ -293,7 +293,10 @@ When `Main` delivery is requested on platforms without a GUI main thread, `Main`
 
 ### 8.6 Cancellation
 
-`IMLSubscription.Unsubscribe` is idempotent and thread‑safe. Cancelling during dispatch skips remaining invocations for that handler. Work already enqueued prior to `Unsubscribe`/token release may still be dequeued; dispatch applies the **weak-target liveness** check from §6.1, so dead targets are skipped. Implementations should **prune** dead subscriptions on first observed liveness failure to keep the copy‑on‑write arrays tight.
+`IMLSubscription.Unsubscribe` is idempotent and thread‑safe. Cancelling during dispatch skips remaining invocations for that handler.
+
+
+> **Queued work:** Items enqueued prior to `Unsubscribe`/token release may still be dequeued; dispatch applies the **weak‑target liveness** check from §6, so dead targets are skipped. Implementations should **prune** dead subscriptions on first observed liveness failure to keep copy‑on‑write arrays compact.
 
 ### 8.7 Back‑Pressure & Bounded Queues (**required, with defaults**)
 
@@ -435,10 +438,9 @@ end;
 * **Data Races**: The bus’s internal structures are protected by fine‑grained locks (per‑topic). Reader‑heavy paths use atomic snapshots + hazard pointers or versioned arrays to avoid long locks during `Post`.
 * **Handler Node Pool**: Lock‑free freelist per topic to recycle nodes.
 * **Weak Targets**: For method handlers, store `{TargetPtr(weak), CodePtr}`.
-
-  * **Delphi 12+:** use `System.WeakReference.TWeakReference<TObject>`; invoke only if `TryGetTarget` succeeds.
-  * **FPC 3.2.2:** use a registry + generation counter to detect finalized instances; invoke only if generation matches.
-    No try/except probing is allowed on the hot path.
+  - **Delphi 12+**: use `System.WeakReference.TWeakReference<TObject>`; invoke only if `TryGetTarget` succeeds.
+  - **FPC 3.2.2**: use a registry + generation counter to detect finalized instances; invoke only if generation matches.
+  No try/except probing on the hot path.
 
 ---
 
@@ -651,9 +653,11 @@ procedure MLSetMetricCallback(const aSampler: TOnMetricSample);
 
 * **Compilers**: Delphi 12 Win64, Win32; FPC 3.2.2 Win64/Linux64.
 * **Scenarios**: subscribe/unsubscribe churn; burst posting; cross‑thread posting; main‑thread marshaling; exception aggregation; object lifetime auto‑cleanup; stress with 1M posts; **queue overflow policies**; **sticky/coalesce correctness**; metrics accuracy.
-* token **auto‑unsub on `_Release`** (set interface field to `nil`); no residual deliveries.
-* **queued‑prior‑to‑cancel**: ensure queued tasks observe **liveness check**; dead targets are skipped and subscription is pruned.
-* **ABA guard**: allocate/free/allocate at same address; ensure generation/weak ref prevents accidental delivery to a different object.
+
+
+* **Token auto‑unsubscribe**: dropping the last `ISubscription` reference cancels the subscription; verify no residual deliveries.
+* **Queued‑prior‑to‑cancel**: ensure queued tasks observe the liveness check; dead targets are skipped and the subscription is pruned.
+* **ABA guard**: allocate/free/allocate at same address; verify generation/weak ref prevents delivery to a different object.
 
 ---
 

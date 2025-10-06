@@ -1,0 +1,96 @@
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <ProjectGuid>{7A6A33B6-E0FF-4D94-AD6D-49B90BB1563C}</ProjectGuid>
+    </PropertyGroup>
+    <ItemGroup>
+        <Projects Include="tests\MaxEventNexusTests.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="samples\AutoSubscribeSample.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="samples\ConsoleSample.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="samples\ManualSubscribeSample.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="samples\UISample.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="samples\UISampleConsole.dproj">
+            <Dependencies/>
+        </Projects>
+    </ItemGroup>
+    <ProjectExtensions>
+        <Borland.Personality>Default.Personality.12</Borland.Personality>
+        <Borland.ProjectType/>
+        <BorlandProject>
+            <Default.Personality/>
+        </BorlandProject>
+    </ProjectExtensions>
+    <Target Name="MaxEventNexusTests">
+        <MSBuild Projects="tests\MaxEventNexusTests.dproj"/>
+    </Target>
+    <Target Name="MaxEventNexusTests:Clean">
+        <MSBuild Projects="tests\MaxEventNexusTests.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="MaxEventNexusTests:Make">
+        <MSBuild Projects="tests\MaxEventNexusTests.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="AutoSubscribeSample">
+        <MSBuild Projects="samples\AutoSubscribeSample.dproj"/>
+    </Target>
+    <Target Name="AutoSubscribeSample:Clean">
+        <MSBuild Projects="samples\AutoSubscribeSample.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="AutoSubscribeSample:Make">
+        <MSBuild Projects="samples\AutoSubscribeSample.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="ConsoleSample">
+        <MSBuild Projects="samples\ConsoleSample.dproj"/>
+    </Target>
+    <Target Name="ConsoleSample:Clean">
+        <MSBuild Projects="samples\ConsoleSample.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ConsoleSample:Make">
+        <MSBuild Projects="samples\ConsoleSample.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="ManualSubscribeSample">
+        <MSBuild Projects="samples\ManualSubscribeSample.dproj"/>
+    </Target>
+    <Target Name="ManualSubscribeSample:Clean">
+        <MSBuild Projects="samples\ManualSubscribeSample.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ManualSubscribeSample:Make">
+        <MSBuild Projects="samples\ManualSubscribeSample.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="UISample">
+        <MSBuild Projects="samples\UISample.dproj"/>
+    </Target>
+    <Target Name="UISample:Clean">
+        <MSBuild Projects="samples\UISample.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="UISample:Make">
+        <MSBuild Projects="samples\UISample.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="UISampleConsole">
+        <MSBuild Projects="samples\UISampleConsole.dproj"/>
+    </Target>
+    <Target Name="UISampleConsole:Clean">
+        <MSBuild Projects="samples\UISampleConsole.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="UISampleConsole:Make">
+        <MSBuild Projects="samples\UISampleConsole.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="Build">
+        <CallTarget Targets="MaxEventNexusTests;AutoSubscribeSample;ConsoleSample;ManualSubscribeSample;UISample;UISampleConsole"/>
+    </Target>
+    <Target Name="Clean">
+        <CallTarget Targets="MaxEventNexusTests:Clean;AutoSubscribeSample:Clean;ConsoleSample:Clean;ManualSubscribeSample:Clean;UISample:Clean;UISampleConsole:Clean"/>
+    </Target>
+    <Target Name="Make">
+        <CallTarget Targets="MaxEventNexusTests:Make;AutoSubscribeSample:Make;ConsoleSample:Make;ManualSubscribeSample:Make;UISample:Make;UISampleConsole:Make"/>
+    </Target>
+    <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
+</Project>
