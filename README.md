@@ -1,5 +1,16 @@
 # EventNexus
 
+
+## What's New (2025-10-06)
+
+* **Subscription tokens** — `Subscribe*` returns an `ISubscription` token. Releasing the last reference auto‑unsubscribes (idempotent).
+* **Weak‑target liveness guard** — For object‑method handlers we store `{CodePtr, WeakTarget}` and rehydrate at dispatch:
+  * **Delphi 12+**: `System.WeakReference.TWeakReference<TObject>`; invoke only if `TryGetTarget` succeeds.
+  * **FPC 3.2.2**: lightweight `(Ptr → Generation)` registry; invoke only if generation matches.
+* **Queued‑before‑cancel safety** — Enqueued work prior to cancel uses the liveness check; dead targets are skipped and subscriptions are pruned lazily.
+* **Design & Spec updated** — See [`DESIGN.md`](DESIGN.md) and [`spec.md`](spec.md) for full details (tokens, pruning, dispatch path, executors).
+
+
 EventNexus is a type‑safe, high‑performance event bus for Delphi 12+ and FPC 3.2.2. It decouples publishers and subscribers across typed, GUID, and string‑named topics while remaining thread‑safe and allocation‑light.
 
 ## Quick start

@@ -73,3 +73,5 @@ todo.md
 
 .aider*
 reference/
+*.otares
+*.cmds
