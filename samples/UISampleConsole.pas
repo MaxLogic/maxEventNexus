@@ -8,7 +8,7 @@ uses
   Classes,
   maxLogic.EventNexus;
 
-function KeyOf(const aValue: Integer): TMLString;
+function KeyOf(const aValue: Integer): TmaxString;
 begin
   Result := '';
 end;
@@ -35,17 +35,17 @@ var
 begin
   for i := 1 to 1000 do
   begin
-    MLBus.Post<Integer>(i);
+    maxBus.Post<Integer>(i);
     Sleep(1);
   end;
 end;
 
 var
   lProd: TProducer;
-  lSub: IMLSubscription;
+  lSub: ImaxSubscription;
 begin
-  (MLBus as IMLBusAdvanced).EnableCoalesceOf<Integer>(@KeyOf, 100000);
-  lSub := MLBus.Subscribe<Integer>(@OnValue, TMLDelivery.Main);
+  (maxBus as ImaxBusAdvanced).EnableCoalesceOf<Integer>(@KeyOf, 100000);
+  lSub := maxBus.Subscribe<Integer>(@OnValue, TmaxDelivery.Main);
   lProd := TProducer.Create(False);
   while not gDone do
     CheckSynchronize(10);

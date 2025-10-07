@@ -30,7 +30,7 @@ This guide helps transition existing iPub Messaging or NX Horizon code to EventN
 | `Post(type)` | `Post<T>(payload)` |
 | `Subscribe(name, handler)` | `SubscribeNamed(name, handler)` |
 | `Subscribe(type, handler)` | `Subscribe<T>(handler)` |
-| Attributes for auto-wiring | `MLSubscribeAttribute` with `AutoSubscribe`/`AutoUnsubscribe` |
+| Attributes for auto-wiring | `maxSubscribeAttribute` with `AutoSubscribe`/`AutoUnsubscribe` |
 
 ## From NX Horizon
 
@@ -39,6 +39,6 @@ This guide helps transition existing iPub Messaging or NX Horizon code to EventN
 | `Publish<T>` / `Subscribe<T>` | `Post<T>` / `Subscribe<T>` |
 | Delivery modes (Immediate/Main/Background) | `Posting`, `Main`, `Async`, `Background` |
 | Sticky events | `EnableSticky<T>(True)` or `EnableStickyNamed` |
-| Queue throttling | `TMLQueuePolicy` via `SetPolicyFor` or `SetPolicyNamed` |
+| Queue throttling | `TmaxQueuePolicy` via `SetPolicyFor` or `SetPolicyNamed` |
 
 EventNexus keeps manual registration APIs available across compilers while offering optional Delphi attributes for convenience.

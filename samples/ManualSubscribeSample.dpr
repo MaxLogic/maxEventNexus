@@ -19,12 +19,12 @@ end;
 
 var
   lWorker: TWorker;
-  lSub: IMLSubscription;
+  lSub: ImaxSubscription;
 begin
   lWorker := TWorker.Create;
   try
-    lSub := MLBus.Subscribe<Integer>(lWorker.OnPing);
-    MLBus.Post<Integer>(42);
+    lSub := maxBus.Subscribe<Integer>(lWorker.OnPing);
+    maxBus.Post<Integer>(42);
     lSub.Unsubscribe;
   finally
     lWorker.Free;

@@ -22,11 +22,11 @@
 - KPI thresholds documented for benchmark harness. (spec-bus.md#16-final-review--proposed-extensions)
 - `MaxLogic.fpc.compatibility` unit and `delphimode.inc` copied from GlobalLib for cross-compiler anonymous method support. (spec-bus.md#3-platform--compiler-support)
 
-- Defined `ML_BUS_VERSION` constant and VERSION file to start SemVer at v0.1.0. (spec-bus.md#1.1-goals)
+- Defined `max_BUS_VERSION` constant and VERSION file to start SemVer at v0.1.0. (spec-bus.md#1.1-goals)
 
 
 ### Fixed
- - Defined `TMLProc` as plain procedure on FPC to align cross-compiler handler types. (spec-bus.md#3-platform--compiler-support)
+ - Defined `TmaxProc` as plain procedure on FPC to align cross-compiler handler types. (spec-bus.md#3-platform--compiler-support)
 - Replaced TMethod-based target lookup with explicit subscriber target field for FPC compatibility. (spec-bus.md#3-platform--compiler-support)
 - Corrected `SyncObjs` unit casing to `syncobjs` for FPC Linux builds. (spec-bus.md#3-platform--compiler-support)
 - Removed obsolete `specialize` keywords so generics compile under FPC 3.2.2 Delphi mode. (spec-bus.md#3-platform--compiler-support)
@@ -45,7 +45,7 @@
 
 ### Added
 - Repository skeleton with src/, tests/, samples/, bench, docs, and .ci directories.
-- Core type definitions and interfaces for the bus (`TMLProc`, `IMLBus`, and related).
+- Core type definitions and interfaces for the bus (`TmaxProc`, `ImaxBus`, and related).
 - Default async adapter wrapping maxAsync for thread marshaling.
 - Topic registry with copy-on-write subscriber storage and weak target handling.
 - Public API for subscribe/post/unsubscribe with `TryPost*` variants.
@@ -60,13 +60,13 @@
 - Documented branching strategy with `dev` and `main` branches and SemVer `vX.Y.Z` tags. (spec-bus.md#1.1-goals)
 - Definition of Done outlining test, lint, documentation, and sample criteria. (spec-bus.md#1.1-goals)
 - README with quick-start usage example and links to bus specification. (spec-bus.md#1.1-goals)
-- Delphi-only `MLSubscribeAttribute` with `AutoSubscribe`/`AutoUnsubscribe` helpers and example sample. (spec-bus.md#5.3-attribute-delphi-only)
+- Delphi-only `maxSubscribeAttribute` with `AutoSubscribe`/`AutoUnsubscribe` helpers and example sample. (spec-bus.md#5.3-attribute-delphi-only)
 - Manual subscription sample demonstrating parity with attribute-based registration. (spec-bus.md#3.2-language-features)
 - Migration guide mapping iPub and NX Horizon concepts to EventNexus APIs. (spec-bus.md#13-interop--migration)
 
 ### Changed
 - Added `RunDelayed` to async adapter and replaced blocking sleeps in coalescing with scheduler-based dispatch, unifying implementation across posting functions. (spec-bus.md#8-coalescing)
 - Clarified `aWindowUs` edge-case behavior for negative or sub-millisecond windows. (spec-bus.md#8-coalescing)
-- Aggregated synchronous handler exceptions via `EMLAggregateException`, ensuring all Posting-mode errors surface after dispatch. (spec-bus.md#11-error-semantics)
+- Aggregated synchronous handler exceptions via `EmaxAggregateException`, ensuring all Posting-mode errors surface after dispatch. (spec-bus.md#11-error-semantics)
 - Count handler exceptions in metrics totals. (spec-bus.md#11-error-semantics)
-- Wrapped Delphi-only procedure types and tests with ML_DELPHI conditionals to prep FPC builds. (spec-bus.md#3-platform--compiler-support)
+- Wrapped Delphi-only procedure types and tests with max_DELPHI conditionals to prep FPC builds. (spec-bus.md#3-platform--compiler-support)
