@@ -2,7 +2,7 @@
 
 **Status:** Draft v0.2 • **Targets:** Delphi 12+ (Win/OSX/iOS/Android) and FPC 3.2.2 (Win/Linux/macOS) • **Priority:** Performance, correctness, portability
 
-> This document specifies the API, semantics, threading model, and performance constraints for the new MaxLogic Event Bus ("ML Bus"). It intentionally **does not** provide a drop‑in reimplementation of third‑party code. Design is inspired by concepts from iPub Messaging and NX Horizon, but the API and behavior are our own.
+> This document specifies the API, semantics, threading model, and performance constraints for the new MaxLogic Event Bus ("maxBus"). It intentionally **does not** provide a drop‑in reimplementation of third‑party code. Design is inspired by concepts from iPub Messaging and NX Horizon, but the API and behavior are our own.
 
 ---
 
@@ -34,7 +34,7 @@
 * **Topic**: an identifier used to route events. Can be a **type**, a **GUID**, or a **string** name.
 * **Subscriber**: a method callback or procedure reference receiving events.
 * **Delivery Mode**: execution context for handlers: `Posting`, `Main`, `Async`, `Background`.
-* **Bus**: the dispatcher instance (`IMLBus`) coordinating subscriptions and posts.
+* **Bus**: the dispatcher instance (`ImaxBus`) coordinating subscriptions and posts.
 
 ---
 
@@ -47,15 +47,15 @@ Use the following feature flags:
 ```pascal
 {$IFDEF FPC}
   {$MODE DELPHI}
-  {$DEFINE ML_FPC}
+  {$DEFINE max_FPC}
 {$ELSE}
-  {$DEFINE ML_DELPHI}
+  {$DEFINE max_DELPHI}
 {$ENDIF}
 
-{$IFDEF MSWINDOWS} {$DEFINE ML_HAS_MAINTHREAD} {$ENDIF}
-{$IFDEF MACOS}     {$DEFINE ML_HAS_MAINTHREAD} {$ENDIF}
-{$IFDEF ANDROID}   {$DEFINE ML_HAS_MAINTHREAD} {$ENDIF}
-{$IFDEF IOS}       {$DEFINE ML_HAS_MAINTHREAD} {$ENDIF}
+{$IFDEF MSWINDOWS} {$DEFINE max_HAS_MAINTHREAD} {$ENDIF}
+{$IFDEF MACOS}     {$DEFINE max_HAS_MAINTHREAD} {$ENDIF}
+{$IFDEF ANDROID}   {$DEFINE max_HAS_MAINTHREAD} {$ENDIF}
+{$IFDEF IOS}       {$DEFINE max_HAS_MAINTHREAD} {$ENDIF}
 ```
 
 ### 3.2 Language Features
@@ -66,26 +66,26 @@ Use the following feature flags:
 #### 3.2.1 Cross‑compiler handler types
 
 ```pascal
-{$IFDEF ML_FPC}
-  type TMLProc = procedure;                 // nested allowed
-  type TMLProcOf<T> = procedure(const aValue: T);
+{$IFDEF max_FPC}
+  type TmaxProc = procedure;                 // nested allowed
+  type TmaxProcOf<T> = procedure(const aValue: T);
 {$ELSE}
-  type TMLProc = reference to procedure;    // Delphi anonymous method
-  type TMLProcOf<T> = reference to procedure(const aValue: T);
+  type TmaxProc = reference to procedure;    // Delphi anonymous method
+  type TmaxProcOf<T> = reference to procedure(const aValue: T);
 {$ENDIF}
 ```
 
 When targeting FPC, samples using anonymous methods translate to nested procedures:
 
 ```pascal
-{$IFDEF ML_FPC}
-var lSub: IMLSubscription;
+{$IFDEF max_FPC}
+var lSub: ImaxSubscription;
 procedure HandleOrder(const aEvt: TOrderPlaced);
 begin
   // handle
 end;
 begin
-  lSub := MLBus.Subscribe<TOrderPlaced>(@HandleOrder, Posting);
+  lSub := maxBus.Subscribe<TOrderPlaced>(@HandleOrder, Posting);
 end;
 {$ENDIF}
 ```
@@ -97,7 +97,7 @@ end;
 * Swap Delphi‑only RTTI helpers (`TRttiMethod.IsGeneric`, `MakeGenericMethod`) for simple `PTypeInfo` enumeration inspired by `reference/iPub.Rtl.Messaging.pas`.
 * Replace `GetTickCount64`/`QWord` timing with `TStopwatch` from `lib/MaxLogicFoundation/maxlogic.fpc.diagnostics.pas` and `UInt64` counters.
 * Implement case‑insensitive topic lookup via `SysUtils.CompareText` or a delegated comparer rather than `TStringComparer.OrdinalIgnoreCase`.
-* Hide `TThread.Queue/Synchronize` differences behind `IMLAsync` so dispatching code is compiler‑agnostic.
+* Hide `TThread.Queue/Synchronize` differences behind `ImaxAsync` so dispatching code is compiler‑agnostic.
 * **Weak‑target shim**: Delphi uses `System.WeakReference.TWeakReference<TObject>` for method targets; FPC uses a `{Ptr, Gen}` registry. Both paths share the same dispatch‑time “rehydrate‑or‑skip” logic.
 
 ---
@@ -110,7 +110,7 @@ end;
 
 ```pascal
 type
-  IMLAsync = interface
+  ImaxAsync = interface
     ['{02AB5A8B-8A3F-4F29-9C1E-1A31B8E7B6A9}']
     procedure RunAsync(const aProc: TProc);
     procedure RunOnMain(const aProc: TProc);
@@ -119,14 +119,14 @@ type
   end;
 ```
 
-**Requirement:** Provide a default adapter `TMLAsync` that wraps maxAsync. On FPC, supply platform equivalents (e.g., `TThread.Queue/Synchronize` on Lazarus, or custom main‑loop dispatcher).
+**Requirement:** Provide a default adapter `TmaxNexusAsync` that wraps maxAsync. On FPC, supply platform equivalents (e.g., `TThread.Queue/Synchronize` on Lazarus, or custom main‑loop dispatcher).
 
 ### 4.2 Delivery Modes
 
 * `Posting`: invoke in the caller thread.
-* `Main`: marshal to main/UI thread via `IMLAsync.RunOnMain`.
-* `Async`: dispatch on a worker (thread‑pool) via `IMLAsync.RunAsync`.
-* Coalescing delays schedule via `IMLAsync.RunDelayed` to avoid blocking sleeps.
+* `Main`: marshal to main/UI thread via `ImaxAsync.RunOnMain`.
+* `Async`: dispatch on a worker (thread‑pool) via `ImaxAsync.RunAsync`.
+* Coalescing delays schedule via `ImaxAsync.RunDelayed` to avoid blocking sleeps.
 * `Background`: if caller is main thread, use `RunAsync`; else invoke inline.
 
 **Note:** Delivery ordering per subscriber is preserved **per topic**; cross‑topic ordering is not guaranteed.
@@ -139,30 +139,30 @@ type
 
 ```pascal
 type
-  TMLDelivery = (Posting, Main, Async, Background);
+  TmaxDelivery = (Posting, Main, Async, Background);
 
-  IMLSubscription = interface
+  ImaxSubscription = interface
     ['{79C1B0D9-6A9E-4C6B-8E96-88A84E4F1E03}']
     procedure Unsubscribe;
     function  IsActive: Boolean;
   end;
 
-  IMLBus = interface
+  ImaxBus = interface
     ['{1B8E6C9E-5F96-4F0C-9F88-0B7B8E885D4A}']
     // Type‑routed events (by compile‑time type)
-    function Subscribe<T>(const aHandler: TProc<T>; aMode: TMLDelivery = Posting): IMLSubscription;
+    function Subscribe<T>(const aHandler: TProc<T>; aMode: TmaxDelivery = Posting): ImaxSubscription;
     procedure Post<T>(const aEvent: T);
 
     // Named topics (case‑insensitive)
-    function SubscribeNamed(const aName: string; const aHandler: TProc; aMode: TMLDelivery = Posting): IMLSubscription;
+    function SubscribeNamed(const aName: string; const aHandler: TProc; aMode: TmaxDelivery = Posting): ImaxSubscription;
     procedure PostNamed(const aName: string); // fire‑and‑forget
 
     // Named + payload
-    function SubscribeNamedOf<T>(const aName: string; const aHandler: TProc<T>; aMode: TMLDelivery = Posting): IMLSubscription;
+    function SubscribeNamedOf<T>(const aName: string; const aHandler: TProc<T>; aMode: TmaxDelivery = Posting): ImaxSubscription;
     procedure PostNamedOf<T>(const aName: string; const aEvent: T);
 
     // GUID‑keyed topics (typically for interface types)
-    function SubscribeGuidOf<T: IInterface>(const aHandler: TProc<T>; aMode: TMLDelivery = Posting): IMLSubscription; // key = T.GUID
+    function SubscribeGuidOf<T: IInterface>(const aHandler: TProc<T>; aMode: TmaxDelivery = Posting): ImaxSubscription; // key = T.GUID
     procedure PostGuidOf<T: IInterface>(const aEvent: T);
 
     // Maintenance
@@ -171,7 +171,7 @@ type
   end;
 ```
 
-> **Token semantics:** `IMLSubscription` is a disposable *token*. Releasing the last reference (letting the interface go out of scope or assigning it to `nil`) automatically calls `Unsubscribe` (idempotent). This is the recommended pattern over calling `Unsubscribe` directly.
+> **Token semantics:** `ImaxSubscription` is a disposable *token*. Releasing the last reference (letting the interface go out of scope or assigning it to `nil`) automatically calls `Unsubscribe` (idempotent). This is the recommended pattern over calling `Unsubscribe` directly.
 
 
 > **Rationale:**
@@ -182,19 +182,19 @@ type
 ### 5.2 Default Instance
 
 ```pascal
-function MLBus: IMLBus; // Unit: maxLogic.EventNexus // thread‑safe singleton factory
+function maxBus: ImaxBus; // Unit: maxLogic.EventNexus // thread‑safe singleton factory
 ```
 
 ### 5.3 Attribute (Delphi‑only, optional)
 
 ```pascal
-{$IFDEF ML_DELPHI}
-  MLSubscribeAttribute = class(TCustomAttribute)
+{$IFDEF max_DELPHI}
+  maxSubscribeAttribute = class(TCustomAttribute)
   public
     Name: string;               // empty for type/GUID subscription
-    Delivery: TMLDelivery;
-    constructor Create(aDelivery: TMLDelivery); overload;
-    constructor Create(const aName: string; aDelivery: TMLDelivery = Posting); overload;
+    Delivery: TmaxDelivery;
+    constructor Create(aDelivery: TmaxDelivery); overload;
+    constructor Create(const aName: string; aDelivery: TmaxDelivery = Posting); overload;
   end;
 
   procedure AutoSubscribe(const aInstance: TObject); // scans public+protected by explicit RTTI
@@ -210,7 +210,7 @@ function MLBus: IMLBus; // Unit: maxLogic.EventNexus // thread‑safe singleton 
 
 1. **Handler lifetime**
 
-   * Returned `IMLSubscription` is reference‑counted; releasing it auto‑unsubscribes.
+   * Returned `ImaxSubscription` is reference‑counted; releasing it auto‑unsubscribes.
    * **Object-method liveness:** For object‑method handlers, the bus stores `{CodePtr, WeakTarget}` and reconstructs the method pointer at dispatch time.
      - **Delphi 12+**: `WeakTarget` = `System.WeakReference.TWeakReference<TObject>`. On invoke, `TryGetTarget` must succeed; otherwise the call is skipped and the subscription is **pruned lazily**.
      - **FPC 3.2.2**: `WeakTarget` = lightweight registry (pointer → generation). On object finalization, the instance’s generation increments. On invoke, if `{Ptr, GenAtSubscribe}` ≠ current generation, skip and **prune lazily**.
@@ -227,12 +227,12 @@ function MLBus: IMLBus; // Unit: maxLogic.EventNexus // thread‑safe singleton 
 
 4. **Error handling**
 
-   * Exceptions in handlers are **captured** and aggregated into an `EMLDispatchError` containing per‑handler errors. Sync paths re‑raise after dispatch; async paths forward errors to a global error hook:
+   * Exceptions in handlers are **captured** and aggregated into an `EmaxDispatchError` containing per‑handler errors. Sync paths re‑raise after dispatch; async paths forward errors to a global error hook:
 
    ```pascal
    type
      TOnAsyncError = reference to procedure(const aTopic: string; const aE: Exception);
-   procedure MLSetAsyncErrorHandler(const aHandler: TOnAsyncError);
+   procedure maxSetAsyncErrorHandler(const aHandler: TOnAsyncError);
    ```
 
 5. **Back‑pressure**
@@ -276,7 +276,7 @@ Allow dynamic names such as `product_105346_changed`. See API in §5.1 (`Subscri
 
 ```pascal
 type
-  IMLBusAdvanced = interface(IMLBus)
+  ImaxBusAdvanced = interface(ImaxBus)
     ['{AB5E6E6D-8B1F-4B63-8B59-8A3B9D8C71B1}']
     procedure EnableSticky<T>(aEnable: Boolean);
     procedure EnableStickyNamed(const aName: string; aEnable: Boolean);
@@ -285,7 +285,7 @@ type
   end;
 ```
 
-*`aWindowUs=0` means coalesce within a single dispatch cycle; `>0` uses a time window. Values <1000 µs or negative are treated as 0. Coalesced dispatch must be scheduled via `IMLAsync.RunDelayed` rather than blocking sleeps.*
+*`aWindowUs=0` means coalesce within a single dispatch cycle; `>0` uses a time window. Values <1000 µs or negative are treated as 0. Coalesced dispatch must be scheduled via `ImaxAsync.RunDelayed` rather than blocking sleeps.*
 
 ### 8.5 Main‑Thread Assurance
 
@@ -293,7 +293,7 @@ When `Main` delivery is requested on platforms without a GUI main thread, `Main`
 
 ### 8.6 Cancellation
 
-`IMLSubscription.Unsubscribe` is idempotent and thread‑safe. Cancelling during dispatch skips remaining invocations for that handler.
+`ImaxSubscription.Unsubscribe` is idempotent and thread‑safe. Cancelling during dispatch skips remaining invocations for that handler.
 
 
 > **Queued work:** Items enqueued prior to `Unsubscribe`/token release may still be dequeued; dispatch applies the **weak‑target liveness** check from §6, so dead targets are skipped. Implementations should **prune** dead subscriptions on first observed liveness failure to keep copy‑on‑write arrays compact.
@@ -306,19 +306,19 @@ When `Main` delivery is requested on platforms without a GUI main thread, `Main`
 
 ```pascal
 type
-  TMLOverflow = (DropNewest, DropOldest, Block, Deadline);
+  TmaxOverflow = (DropNewest, DropOldest, Block, Deadline);
 
-  TMLQueuePolicy = record
+  TmaxQueuePolicy = record
     MaxDepth: Integer;        // 0 = unbounded (default for generic topics)
-    Overflow: TMLOverflow;    // behavior when queue is full
+    Overflow: TmaxOverflow;    // behavior when queue is full
     DeadlineUs: Int64;        // used when Overflow=Deadline; 0 = immediate drop
   end;
 
-  IMLBusQueues = interface
+  ImaxBusQueues = interface
     ['{E55F7B60-9B31-4C80-9B2C-8D1F0E26FF9C}']
-    procedure SetPolicyFor<T>(const aPolicy: TMLQueuePolicy);
-    procedure SetPolicyNamed(const aName: string; const aPolicy: TMLQueuePolicy);
-    function  GetPolicyFor<T>: TMLQueuePolicy;
+    procedure SetPolicyFor<T>(const aPolicy: TmaxQueuePolicy);
+    procedure SetPolicyNamed(const aName: string; const aPolicy: TmaxQueuePolicy);
+    function  GetPolicyFor<T>: TmaxQueuePolicy;
   end;
 ```
 
@@ -343,11 +343,11 @@ Return `False` when dropped by policy.
 
 ### 8.8 Unit & Naming
 
-**Primary unit name:** `maxLogic.EventNexus.pas`. Public entry point `MLBus` lives here for both Delphi and FPC.
+**Primary unit name:** `maxLogic.EventNexus.pas`. Public entry point `maxBus` lives here for both Delphi and FPC.
 
 **Rationale:** Bounded policies keep memory predictable and let callers choose semantics per topic.
 
-`IMLSubscription.Unsubscribe` is idempotent and thread‑safe. Cancelling during dispatch skips remaining invocations for that handler.
+`ImaxSubscription.Unsubscribe` is idempotent and thread‑safe. Cancelling during dispatch skips remaining invocations for that handler.
 
 ---
 
@@ -362,16 +362,16 @@ type
   end;
 
 var
-  lSub: IMLSubscription;
+  lSub: ImaxSubscription;
 begin
-  lSub := MLBus.Subscribe<TOrderPlaced>(
+  lSub := maxBus.Subscribe<TOrderPlaced>(
     procedure (const aEvt: TOrderPlaced)
     begin
       // handle
     end,
     Main);
 
-  MLBus.Post<TOrderPlaced>(TOrderPlaced.Create(42));
+  maxBus.Post<TOrderPlaced>(TOrderPlaced.Create(42));
 end;
 ```
 
@@ -384,38 +384,38 @@ type
   end;
 
 begin
-  MLBus.SubscribeGuidOf<ILogOutMessage>(
+  maxBus.SubscribeGuidOf<ILogOutMessage>(
     procedure (const aMsg: ILogOutMessage)
     begin
       // react
     end,
     Async);
 
-  MLBus.PostGuidOf<ILogOutMessage>(TLogOutMessage.Create);
+  maxBus.PostGuidOf<ILogOutMessage>(TLogOutMessage.Create);
 end;
 ```
 
 ### 9.3 Named topic + payload
 
 ```pascal
-MLBus.SubscribeNamedOf<string>('product_105346_changed',
+maxBus.SubscribeNamedOf<string>('product_105346_changed',
   procedure (const aSku: string)
   begin
     // update UI
   end,
   Posting);
 
-MLBus.PostNamedOf<string>('product_105346_changed', '105346');
+maxBus.PostNamedOf<string>('product_105346_changed', '105346');
 ```
 
 ### 9.4 Attribute sugar (Delphi‑only)
 
 ```pascal
-{$IFDEF ML_DELPHI}
+{$IFDEF max_DELPHI}
   {$RTTI EXPLICIT METHODS([vcProtected, vcPublic, vcPublished])}
   TForm1 = class(TForm)
   public
-    [MLSubscribe(Main)]
+    [maxSubscribe(Main)]
     procedure OnLogout(const aMsg: ILogOutMessage);
   end;
 
@@ -447,7 +447,7 @@ end;
 ## 11. Error Semantics
 
 * Sync dispatch (`Posting`, non‑main) collects handler errors and raises
-  `EMLAggregateException` with all inner exceptions after all handlers run.
+  `EmaxAggregateException` with all inner exceptions after all handlers run.
 * `Main/Async` errors are forwarded to the global async hook. Implementers must not swallow exceptions silently.
 * Add diagnostic counters: posts, deliveries, exceptions, queue depth (if any). Each handler exception increments `ExceptionsTotal`.
 
@@ -459,7 +459,7 @@ Provide a minimal, zero‑GC metrics façade always available; reading is lock�
 
 ```pascal
 type
-  TMLTopicStats = record
+  TmaxTopicStats = record
     PostsTotal: UInt64;
     DeliveredTotal: UInt64;
     DroppedTotal: UInt64;         // due to overflow policy
@@ -468,11 +468,11 @@ type
     CurrentQueueDepth: UInt32;
   end;
 
-  IMLBusMetrics = interface
+  ImaxBusMetrics = interface
     ['{2C4B91E3-1C0A-4B5C-B8B0-0C1A5C3E6D10}']
-    function GetStatsFor<T>: TMLTopicStats;
-    function GetStatsNamed(const aName: string): TMLTopicStats;
-    function GetTotals: TMLTopicStats; // aggregate across all topics
+    function GetStatsFor<T>: TmaxTopicStats;
+    function GetStatsNamed(const aName: string): TmaxTopicStats;
+    function GetTotals: TmaxTopicStats; // aggregate across all topics
   end;
 ```
 
@@ -480,8 +480,8 @@ type
 
 ```pascal
 type
-  TOnMetricSample = reference to procedure(const aName: string; const aStats: TMLTopicStats);
-procedure MLSetMetricCallback(const aSampler: TOnMetricSample); // sampling is caller-driven
+  TOnMetricSample = reference to procedure(const aName: string; const aStats: TmaxTopicStats);
+procedure maxSetMetricCallback(const aSampler: TOnMetricSample); // sampling is caller-driven
 ```
 
 **Note:** The metrics API must be available and cheap even when unused; no background timers.
@@ -540,40 +540,40 @@ These guidelines are advisory; validate with microbenchmarks that mirror your re
 
 ```pascal
 type
-  TMLString = type UnicodeString;
+  TmaxString = type UnicodeString;
 
-{$IFDEF ML_FPC}
-  TMLProc      = procedure;                  // nested procvars
-  TMLProcOf<T> = procedure(const aValue: T);
+{$IFDEF max_FPC}
+  TmaxProc      = procedure;                  // nested procvars
+  TmaxProcOf<T> = procedure(const aValue: T);
 {$ELSE}
-  TMLProc      = reference to procedure;     // anonymous methods
-  TMLProcOf<T> = reference to procedure(const aValue: T);
+  TmaxProc      = reference to procedure;     // anonymous methods
+  TmaxProcOf<T> = reference to procedure(const aValue: T);
 {$ENDIF}
 
-  TMLDelivery = (Posting, Main, Async, Background);
-  TMLOverflow = (DropNewest, DropOldest, Block, Deadline);
+  TmaxDelivery = (Posting, Main, Async, Background);
+  TmaxOverflow = (DropNewest, DropOldest, Block, Deadline);
 
-  IMLSubscription = interface
+  ImaxSubscription = interface
     ['{79C1B0D9-6A9E-4C6B-8E96-88A84E4F1E03}']
     procedure Unsubscribe;
     function  IsActive: Boolean;
   end;
 
-  IMLBus = interface
+  ImaxBus = interface
     ['{1B8E6C9E-5F96-4F0C-9F88-0B7B8E885D4A}']
-    function Subscribe<T>(const aHandler: TMLProcOf<T>; aMode: TMLDelivery = Posting): IMLSubscription;
+    function Subscribe<T>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = Posting): ImaxSubscription;
     procedure Post<T>(const aEvent: T);
     function TryPost<T>(const aEvent: T): Boolean; overload;
 
-    function SubscribeNamed(const aName: TMLString; const aHandler: TMLProc; aMode: TMLDelivery = Posting): IMLSubscription;
-    procedure PostNamed(const aName: TMLString);
-    function TryPostNamed(const aName: TMLString): Boolean; overload;
+    function SubscribeNamed(const aName: TmaxString; const aHandler: TmaxProc; aMode: TmaxDelivery = Posting): ImaxSubscription;
+    procedure PostNamed(const aName: TmaxString);
+    function TryPostNamed(const aName: TmaxString): Boolean; overload;
 
-    function SubscribeNamedOf<T>(const aName: TMLString; const aHandler: TMLProcOf<T>; aMode: TMLDelivery = Posting): IMLSubscription;
-    procedure PostNamedOf<T>(const aName: TMLString; const aEvent: T);
-    function TryPostNamedOf<T>(const aName: TMLString; const aEvent: T): Boolean; overload;
+    function SubscribeNamedOf<T>(const aName: TmaxString; const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = Posting): ImaxSubscription;
+    procedure PostNamedOf<T>(const aName: TmaxString; const aEvent: T);
+    function TryPostNamedOf<T>(const aName: TmaxString; const aEvent: T): Boolean; overload;
 
-    function SubscribeGuidOf<T: IInterface>(const aHandler: TMLProcOf<T>; aMode: TMLDelivery = Posting): IMLSubscription;
+    function SubscribeGuidOf<T: IInterface>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = Posting): ImaxSubscription;
     procedure PostGuidOf<T: IInterface>(const aEvent: T);
 
     procedure UnsubscribeAllFor(const aTarget: TObject);
@@ -581,7 +581,7 @@ type
   end;
 
   // Advanced controls (sticky/coalesce/queues)
-  IMLBusAdvanced = interface(IMLBus)
+  ImaxBusAdvanced = interface(ImaxBus)
     ['{AB5E6E6D-8B1F-4B63-8B59-8A3B9D8C71B1}']
     procedure EnableSticky<T>(aEnable: Boolean);
     procedure EnableStickyNamed(const aName: string; aEnable: Boolean);
@@ -590,21 +590,21 @@ type
   end;
 
   // Queue policy control
-  TMLQueuePolicy = record
+  TmaxQueuePolicy = record
     MaxDepth: Integer;
-    Overflow: TMLOverflow;
+    Overflow: TmaxOverflow;
     DeadlineUs: Int64;
   end;
 
-  IMLBusQueues = interface
+  ImaxBusQueues = interface
     ['{E55F7B60-9B31-4C80-9B2C-8D1F0E26FF9C}']
-    procedure SetPolicyFor<T>(const aPolicy: TMLQueuePolicy);
-    procedure SetPolicyNamed(const aName: string; const aPolicy: TMLQueuePolicy);
-    function  GetPolicyFor<T>: TMLQueuePolicy;
+    procedure SetPolicyFor<T>(const aPolicy: TmaxQueuePolicy);
+    procedure SetPolicyNamed(const aName: string; const aPolicy: TmaxQueuePolicy);
+    function  GetPolicyFor<T>: TmaxQueuePolicy;
   end;
 
   // Metrics
-  TMLTopicStats = record
+  TmaxTopicStats = record
     PostsTotal: UInt64;
     DeliveredTotal: UInt64;
     DroppedTotal: UInt64;
@@ -613,22 +613,22 @@ type
     CurrentQueueDepth: UInt32;
   end;
 
-  IMLBusMetrics = interface
+  ImaxBusMetrics = interface
     ['{2C4B91E3-1C0A-4B5C-B8B0-0C1A5C3E6D10}']
-    function GetStatsFor<T>: TMLTopicStats;
-    function GetStatsNamed(const aName: string): TMLTopicStats;
-    function GetTotals: TMLTopicStats;
+    function GetStatsFor<T>: TmaxTopicStats;
+    function GetStatsNamed(const aName: string): TmaxTopicStats;
+    function GetTotals: TmaxTopicStats;
   end;
 
-function MLBus: IMLBus; // thread-safe singleton factory
+function maxBus: ImaxBus; // thread-safe singleton factory
 
 // Optional hooks
 type
   TOnAsyncError = reference to procedure(const aTopic: string; const aE: Exception);
-  TOnMetricSample = reference to procedure(const aName: string; const aStats: TMLTopicStats);
+  TOnMetricSample = reference to procedure(const aName: string; const aStats: TmaxTopicStats);
 
-procedure MLSetAsyncErrorHandler(const aHandler: TOnAsyncError);
-procedure MLSetMetricCallback(const aSampler: TOnMetricSample);
+procedure maxSetAsyncErrorHandler(const aHandler: TOnAsyncError);
+procedure maxSetMetricCallback(const aSampler: TOnMetricSample);
 ```
 
 **FPC Notes:** Where anonymous methods are not supported, the implementation will provide overloads taking procvars/nested procedures and will avoid Delphi‑only units or attributes in core paths.
@@ -637,7 +637,7 @@ procedure MLSetMetricCallback(const aSampler: TOnMetricSample);
 
 ## 13. Interop & Migration
 
-* From iPub: map `Post(name, payload)` → `PostNamedOf<T>`; `Post(interface)` → `PostGuidOf<T>`; attribute usage → `MLSubscribe` (Delphi only). Case‑insensitive names retained. fileciteturn2file0L60-L92
+* From iPub: map `Post(name, payload)` → `PostNamedOf<T>`; `Post(interface)` → `PostGuidOf<T>`; attribute usage → `maxSubscribe` (Delphi only). Case‑insensitive names retained. fileciteturn2file0L60-L92
 * From NX Horizon: `Publish<T>`/`Subscribe<T>` features and delivery modes available; type‑categorized events are first class. citeturn0search1
 
 ---

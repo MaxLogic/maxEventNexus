@@ -3,16 +3,16 @@ unit mormot.core.test;
 {$I ../fpc_delphimode.inc}
 
 {$IFDEF FPC}
-  {$DEFINE ML_FPC}
+  {$DEFINE max_FPC}
 {$ELSE}
-  {$DEFINE ML_DELPHI}
+  {$DEFINE max_DELPHI}
 {$ENDIF}
 
 interface
 
 uses
   SysUtils, Classes, Generics.Collections
-  {$IFDEF ML_DELPHI}, System.Rtti{$ENDIF};
+  {$IFDEF max_DELPHI}, System.Rtti{$ENDIF};
 
 type
   TSynTestCase = class
@@ -123,7 +123,7 @@ begin
 end;
 
 procedure TSynTests.Run;
-{$IFDEF ML_DELPHI}
+{$IFDEF max_DELPHI}
 var
   Ctx: TRttiContext;
   TestClass: TSynTestCaseClass;

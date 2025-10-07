@@ -10,7 +10,7 @@ uses
 type
   TWorker = class
   public
-    [MLSubscribe]
+    [maxSubscribe]
     procedure OnPing(const aValue: Integer);
   end;
 
@@ -25,7 +25,7 @@ begin
   LWorker := TWorker.Create;
   try
     AutoSubscribe(LWorker);
-    MLBus.Post<Integer>(42);
+    maxBus.Post<Integer>(42);
     AutoUnsubscribe(LWorker);
   finally
     LWorker.Free;

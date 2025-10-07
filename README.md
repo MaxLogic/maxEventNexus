@@ -24,28 +24,28 @@ type
   end;
 
 var
-  Sub: IMLSubscription;
+  Sub: ImaxSubscription;
 begin
-  Sub := MLBus.Subscribe<TOrderPlaced>(
+  Sub := maxBus.Subscribe<TOrderPlaced>(
     procedure(const E: TOrderPlaced)
     begin
       // handle event
     end,
     Posting);
 
-  MLBus.Post<TOrderPlaced>(Default(TOrderPlaced));
+  maxBus.Post<TOrderPlaced>(Default(TOrderPlaced));
 end;
 ```
 
-On Delphi, you can tag methods with `MLSubscribe` and register them automatically:
+On Delphi, you can tag methods with `maxSubscribe` and register them automatically:
 
 ```pascal
-{$IFDEF ML_DELPHI}
+{$IFDEF max_DELPHI}
 {$RTTI EXPLICIT METHODS([vcPublic, vcProtected])}
 type
   TWorker = class
   public
-    [MLSubscribe]
+    [maxSubscribe]
     procedure OnPing(const aValue: Integer);
   end;
 
@@ -58,7 +58,7 @@ var LWorker: TWorker;
 begin
   LWorker := TWorker.Create;
   AutoSubscribe(LWorker);
-  MLBus.Post<Integer>(42);
+  maxBus.Post<Integer>(42);
   AutoUnsubscribe(LWorker);
   LWorker.Free;
 end;
@@ -71,14 +71,14 @@ Manual registration offers identical behavior on all compilers:
 
 ```pascal
 var
-  lSub: IMLSubscription;
+  lSub: ImaxSubscription;
 begin
-  lSub := MLBus.Subscribe<Integer>(
+  lSub := maxBus.Subscribe<Integer>(
     procedure(const aValue: Integer)
     begin
       Writeln('ping ', aValue);
     end);
-  MLBus.Post<Integer>(42);
+  maxBus.Post<Integer>(42);
   lSub.Unsubscribe;
 end;
 ```

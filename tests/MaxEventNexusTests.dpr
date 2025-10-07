@@ -3,9 +3,9 @@ program MaxEventNexusTests;
 {$I ../fpc_delphimode.inc}
 
 {$IFDEF FPC}
-  {$DEFINE ML_FPC}
+  {$DEFINE max_FPC}
 {$ELSE}
-  {$DEFINE ML_DELPHI}
+  {$DEFINE max_DELPHI}
 {$ENDIF}
 
 uses
@@ -27,8 +27,8 @@ type
 
 procedure TTestAggregateException.AggregatesMultiple;
 var
-  bus: IMLBus;
-{$IFDEF ML_FPC}
+  bus: ImaxBus;
+{$IFDEF max_FPC}
   procedure First(const aValue: Integer);
   begin
     raise Exception.Create('first');
@@ -39,8 +39,8 @@ var
   end;
 {$ENDIF}
 begin
-  bus := MLBus;
-{$IFDEF ML_FPC}
+  bus := maxBus;
+{$IFDEF max_FPC}
   bus.Subscribe<Integer>(@First);
   bus.Subscribe<Integer>(@Second);
 {$ELSE}
@@ -59,7 +59,7 @@ begin
     bus.Post<Integer>(42);
     Check(False, 'Expected aggregate exception');
   except
-    on e: EMLAggregateException do
+    on e: EmaxAggregateException do
     begin
       CheckEquals(2, e.Inner.Count);
       CheckEquals('first', e.Inner[0].Message);
@@ -75,10 +75,10 @@ end;
 
 procedure TTestAsyncDelivery.AsyncAndBackgroundRunOffPostingThread;
 var
-  bus: IMLBus;
+  bus: ImaxBus;
   mainId, asyncId, bgId: TThreadID;
   evAsync, evBg: TEvent;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   procedure AsyncHandler(const aVal: Integer);
   begin
     asyncId := TThread.CurrentThread.ThreadID;
@@ -91,13 +91,13 @@ var
   end;
 {$ENDIF}
 begin
-  bus := MLBus;
+  bus := maxBus;
   bus.Clear;
   mainId := TThread.CurrentThread.ThreadID;
   evAsync := TEvent.Create(nil, True, False, '');
   evBg := TEvent.Create(nil, True, False, '');
   try
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
     bus.Subscribe<Integer>(@AsyncHandler, Async);
     bus.Subscribe<Integer>(@BgHandler, Background);
 {$ELSE}
@@ -135,11 +135,11 @@ end;
 
 procedure TTestCoalesce.DropsIntermediateDeliversLatest;
 var
-  bus: IMLBusAdvanced;
-  sub: IMLSubscription;
-{$IFDEF ML_FPC}
+  bus: ImaxBusAdvanced;
+  sub: ImaxSubscription;
+{$IFDEF max_FPC}
   values: TList<TKeyed>;
-  function KeyOf(const aEvt: TKeyed): TMLString;
+  function KeyOf(const aEvt: TKeyed): TmaxString;
   begin
     Result := aEvt.Key;
   end;
@@ -165,15 +165,15 @@ var
     Result := -1;
   end;
 begin
-  bus := MLBus as IMLBusAdvanced;
+  bus := maxBus as ImaxBusAdvanced;
   bus.Clear;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   bus.EnableCoalesceOf<TKeyed>(@KeyOf, 10000);
   values := TList<TKeyed>.Create;
   sub := bus.Subscribe<TKeyed>(@Handler);
 {$ELSE}
   bus.EnableCoalesceOf<TKeyed>(
-    function(const aEvt: TKeyed): TMLString
+    function(const aEvt: TKeyed): TmaxString
     begin
       Result := aEvt.Key;
     end,
@@ -202,11 +202,11 @@ end;
 
 procedure TTestCoalesce.ZeroWindowBatchesPosts;
 var
-  bus: IMLBusAdvanced;
-  sub: IMLSubscription;
-{$IFDEF ML_FPC}
+  bus: ImaxBusAdvanced;
+  sub: ImaxSubscription;
+{$IFDEF max_FPC}
   values: TList<TKeyed>;
-  function KeyOf(const aEvt: TKeyed): TMLString;
+  function KeyOf(const aEvt: TKeyed): TmaxString;
   begin
     Result := aEvt.Key;
   end;
@@ -223,15 +223,15 @@ var
     Result.Value := v;
   end;
 begin
-  bus := MLBus as IMLBusAdvanced;
+  bus := maxBus as ImaxBusAdvanced;
   bus.Clear;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   bus.EnableCoalesceOf<TKeyed>(@KeyOf, 0);
   values := TList<TKeyed>.Create;
   sub := bus.Subscribe<TKeyed>(@Handler);
 {$ELSE}
   bus.EnableCoalesceOf<TKeyed>(
-    function(const aEvt: TKeyed): TMLString
+    function(const aEvt: TKeyed): TmaxString
     begin
       Result := aEvt.Key;
     end,
@@ -262,14 +262,14 @@ end;
 
   TPostBurstThread = class(TThread)
   public
-    Bus: IMLBus;
+    Bus: ImaxBus;
     Count: Integer;
-    constructor Create(const aBus: IMLBus; aCount: Integer);
+    constructor Create(const aBus: ImaxBus; aCount: Integer);
   protected
     procedure Execute; override;
   end;
 
-constructor TPostBurstThread.Create(const aBus: IMLBus; aCount: Integer);
+constructor TPostBurstThread.Create(const aBus: ImaxBus; aCount: Integer);
 begin
   inherited Create(True);
   FreeOnTerminate := False;
@@ -290,12 +290,12 @@ const
   THREADS = 4;
   POSTS_PER_THREAD = 50;
 var
-  bus: IMLBus;
-  subs: array[0..3] of IMLSubscription;
+  bus: ImaxBus;
+  subs: array[0..3] of ImaxSubscription;
   threads: array of TPostBurstThread;
   delivered: Integer;
   i: Integer;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   procedure Handler(const aValue: Integer);
   begin
     TInterlocked.Increment(delivered);
@@ -303,20 +303,20 @@ var
 {$ENDIF}
 begin
   Randomize;
-  bus := MLBus;
+  bus := maxBus;
   bus.Clear;
   delivered := 0;
   for i := Low(subs) to High(subs) do
   begin
-{$IFDEF ML_FPC}
-    subs[i] := bus.Subscribe<Integer>(@Handler, TMLDelivery(Random(Ord(High(TMLDelivery)) + 1)));
+{$IFDEF max_FPC}
+    subs[i] := bus.Subscribe<Integer>(@Handler, TmaxDelivery(Random(Ord(High(TmaxDelivery)) + 1)));
 {$ELSE}
     subs[i] := bus.Subscribe<Integer>(
       procedure(const aValue: Integer)
       begin
         TInterlocked.Increment(delivered);
       end,
-      TMLDelivery(Random(Ord(High(TMLDelivery)) + 1)));
+      TmaxDelivery(Random(Ord(High(TmaxDelivery)) + 1)));
 {$ENDIF}
   end;
   SetLength(threads, THREADS);
@@ -366,19 +366,19 @@ end;
 
 procedure TTestGuidTopics.GuidPublishDelivers;
 var
-  bus: IMLBus;
+  bus: ImaxBus;
   got: Integer;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   procedure Handler(const aEvt: IIntEvent);
   begin
     got := aEvt.GetValue;
   end;
 {$ENDIF}
 begin
-  bus := MLBus;
+  bus := maxBus;
   bus.Clear;
   got := 0;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   bus.SubscribeGuidOf<IIntEvent>(@Handler);
 {$ELSE}
   bus.SubscribeGuidOf<IIntEvent>(
@@ -394,21 +394,21 @@ end;
 
 procedure TTestGuidTopics.StickyGuidDeliversLast;
 var
-  bus: IMLBus;
+  bus: ImaxBus;
   got: Integer;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   procedure Handler(const aEvt: IIntEvent);
   begin
     got := aEvt.GetValue;
   end;
 {$ENDIF}
 begin
-  bus := MLBus;
+  bus := maxBus;
   bus.Clear;
   bus.EnableSticky<IIntEvent>(True);
   bus.PostGuidOf<IIntEvent>(TIntEvent.Create(7));
   got := 0;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   bus.SubscribeGuidOf<IIntEvent>(@Handler);
 {$ELSE}
   bus.SubscribeGuidOf<IIntEvent>(
@@ -431,14 +431,14 @@ end;
 
   TPostThread = class(TThread)
   public
-    Bus: IMLBus;
+    Bus: ImaxBus;
     Value: Integer;
-    constructor Create(const aBus: IMLBus; aValue: Integer);
+    constructor Create(const aBus: ImaxBus; aValue: Integer);
   protected
     procedure Execute; override;
   end;
 
-constructor TPostThread.Create(const aBus: IMLBus; aValue: Integer);
+constructor TPostThread.Create(const aBus: ImaxBus; aValue: Integer);
 begin
   inherited Create(True);
   FreeOnTerminate := False;
@@ -453,21 +453,21 @@ end;
 
 procedure TTestMetrics.CountsPostsAndDelivered;
 var
-  bus: IMLBus;
-  metrics: IMLBusMetrics;
-  stats: TMLTopicStats;
+  bus: ImaxBus;
+  metrics: ImaxBusMetrics;
+  stats: TmaxTopicStats;
   got: Integer;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   procedure Handler(const aValue: Integer);
   begin
     got := aValue;
   end;
 {$ENDIF}
 begin
-  bus := MLBus;
+  bus := maxBus;
   bus.Clear;
   got := 0;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   bus.Subscribe<Integer>(@Handler);
 {$ELSE}
   bus.Subscribe<Integer>(
@@ -477,7 +477,7 @@ begin
     end);
 {$ENDIF}
   bus.Post<Integer>(1);
-  metrics := bus as IMLBusMetrics;
+  metrics := bus as ImaxBusMetrics;
   stats := metrics.GetStatsFor<Integer>;
   CheckEquals(1, stats.PostsTotal);
   CheckEquals(1, stats.DeliveredTotal);
@@ -487,15 +487,15 @@ end;
 
 procedure TTestMetrics.CountsDropped;
 var
-  bus: IMLBus;
-  queues: IMLBusQueues;
-  policy: TMLQueuePolicy;
+  bus: ImaxBus;
+  queues: ImaxBusQueues;
+  policy: TmaxQueuePolicy;
   t: TPostThread;
   ok: Boolean;
-  metrics: IMLBusMetrics;
-  stats: TMLTopicStats;
+  metrics: ImaxBusMetrics;
+  stats: TmaxTopicStats;
   count: Integer;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   procedure Handler(const aValue: Integer);
   begin
     Sleep(100);
@@ -503,15 +503,15 @@ var
   end;
 {$ENDIF}
 begin
-  bus := MLBus;
+  bus := maxBus;
   bus.Clear;
-  queues := bus as IMLBusQueues;
+  queues := bus as ImaxBusQueues;
   policy.MaxDepth := 1;
   policy.Overflow := DropNewest;
   policy.DeadlineUs := 0;
   queues.SetPolicyFor<Integer>(policy);
   count := 0;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   bus.Subscribe<Integer>(@Handler);
 {$ELSE}
   bus.Subscribe<Integer>(
@@ -530,7 +530,7 @@ begin
   Check(not ok);
   t.WaitFor;
   t.Free;
-  metrics := bus as IMLBusMetrics;
+  metrics := bus as ImaxBusMetrics;
   stats := metrics.GetStatsFor<Integer>;
   CheckEquals(3, stats.PostsTotal);
   CheckEquals(2, stats.DeliveredTotal);
@@ -539,19 +539,19 @@ end;
 
 procedure TTestMetrics.CountsExceptions;
 var
-  bus: IMLBus;
-  metrics: IMLBusMetrics;
-  stats: TMLTopicStats;
-{$IFDEF ML_FPC}
+  bus: ImaxBus;
+  metrics: ImaxBusMetrics;
+  stats: TmaxTopicStats;
+{$IFDEF max_FPC}
   procedure Failer(const aValue: Integer);
   begin
     raise Exception.Create('boom');
   end;
 {$ENDIF}
 begin
-  bus := MLBus;
+  bus := maxBus;
   bus.Clear;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   bus.Subscribe<Integer>(@Failer);
 {$ELSE}
   bus.Subscribe<Integer>(
@@ -563,9 +563,9 @@ begin
   try
     bus.Post<Integer>(1);
   except
-    on EMLAggregateException do;
+    on EmaxAggregateException do;
   end;
-  metrics := bus as IMLBusMetrics;
+  metrics := bus as ImaxBusMetrics;
   stats := metrics.GetStatsFor<Integer>;
   CheckEquals(1, stats.ExceptionsTotal);
 end;
@@ -578,15 +578,15 @@ end;
 
   TNamedPostThread = class(TThread)
   public
-    Bus: IMLBus;
-    Name: TMLString;
+    Bus: ImaxBus;
+    Name: TmaxString;
     Value: Integer;
-    constructor Create(const aBus: IMLBus; const aName: TMLString; aValue: Integer);
+    constructor Create(const aBus: ImaxBus; const aName: TmaxString; aValue: Integer);
   protected
     procedure Execute; override;
   end;
 
-constructor TNamedPostThread.Create(const aBus: IMLBus; const aName: TMLString; aValue: Integer);
+constructor TNamedPostThread.Create(const aBus: ImaxBus; const aName: TmaxString; aValue: Integer);
 begin
   inherited Create(True);
   FreeOnTerminate := False;
@@ -602,18 +602,18 @@ end;
 
 procedure TTestNamedTopics.StickyAndCoalesceNamed;
 var
-  bus: IMLBus;
-  name: TMLString;
+  bus: ImaxBus;
+  name: TmaxString;
   values: array of Integer;
   count: Integer;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   procedure Handler(const aValue: Integer);
   begin
     SetLength(values, count + 1);
     values[count] := aValue;
     Inc(count);
   end;
-  function KeyOf(const aValue: Integer): TMLString;
+  function KeyOf(const aValue: Integer): TmaxString;
   begin
     if aValue mod 2 = 0 then
       Result := 'even'
@@ -624,15 +624,15 @@ var
   // Delphi uses anonymous function for key selection
 {$ENDIF}
 begin
-  bus := MLBus;
+  bus := maxBus;
   bus.Clear;
   name := 'named';
   bus.EnableStickyNamed(name, True);
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   bus.EnableCoalesceNamedOf<Integer>(name, @KeyOf);
 {$ELSE}
   bus.EnableCoalesceNamedOf<Integer>(name,
-    function(const aValue: Integer): TMLString
+    function(const aValue: Integer): TmaxString
     begin
       if aValue mod 2 = 0 then
         Result := 'even'
@@ -642,7 +642,7 @@ begin
 {$ENDIF}
   bus.PostNamedOf<Integer>(name, 10);
   count := 0;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   bus.SubscribeNamedOf<Integer>(name, @Handler);
 {$ELSE}
   bus.SubscribeNamedOf<Integer>(name,
@@ -664,16 +664,16 @@ end;
 
 procedure TTestNamedTopics.QueuePolicyAndMetricsNamed;
 var
-  bus: IMLBus;
-  queues: IMLBusQueues;
-  metrics: IMLBusMetrics;
-  policy: TMLQueuePolicy;
-  stats: TMLTopicStats;
-  name: TMLString;
+  bus: ImaxBus;
+  queues: ImaxBusQueues;
+  metrics: ImaxBusMetrics;
+  policy: TmaxQueuePolicy;
+  stats: TmaxTopicStats;
+  name: TmaxString;
   t: TNamedPostThread;
   ok: Boolean;
   count: Integer;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   procedure Handler(const aValue: Integer);
   begin
     Sleep(100);
@@ -681,16 +681,16 @@ var
   end;
 {$ENDIF}
 begin
-  bus := MLBus;
+  bus := maxBus;
   bus.Clear;
   name := 'named';
-  queues := bus as IMLBusQueues;
+  queues := bus as ImaxBusQueues;
   policy.MaxDepth := 1;
   policy.Overflow := DropNewest;
   policy.DeadlineUs := 0;
   queues.SetPolicyNamed(name, policy);
   count := 0;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   bus.SubscribeNamedOf<Integer>(name, @Handler);
 {$ELSE}
   bus.SubscribeNamedOf<Integer>(name,
@@ -710,7 +710,7 @@ begin
   t.WaitFor;
   t.Free;
   CheckEquals(2, count);
-  metrics := bus as IMLBusMetrics;
+  metrics := bus as ImaxBusMetrics;
   stats := metrics.GetStatsNamed(name);
   CheckEquals(3, stats.PostsTotal);
   CheckEquals(2, stats.DeliveredTotal);
@@ -727,14 +727,14 @@ end;
 
 procedure TTestQueuePolicy.DropNewestDrops;
 var
-  bus: IMLBus;
-  queues: IMLBusQueues;
-  policy: TMLQueuePolicy;
+  bus: ImaxBus;
+  queues: ImaxBusQueues;
+  policy: TmaxQueuePolicy;
   t: TPostThread;
   ok: Boolean;
   delivered: array of Integer;
   count: Integer;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   procedure Handler(const aValue: Integer);
   begin
     Sleep(100);
@@ -744,14 +744,14 @@ var
   end;
 {$ENDIF}
 begin
-  bus := MLBus;
+  bus := maxBus;
   bus.Clear;
-  queues := bus as IMLBusQueues;
+  queues := bus as ImaxBusQueues;
   policy.MaxDepth := 1;
   policy.Overflow := DropNewest;
   policy.DeadlineUs := 0;
   queues.SetPolicyFor<Integer>(policy);
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   bus.Subscribe<Integer>(@Handler);
 {$ELSE}
   bus.Subscribe<Integer>(
@@ -779,14 +779,14 @@ end;
 
 procedure TTestQueuePolicy.DropOldestRemoves;
 var
-  bus: IMLBus;
-  queues: IMLBusQueues;
-  policy: TMLQueuePolicy;
+  bus: ImaxBus;
+  queues: ImaxBusQueues;
+  policy: TmaxQueuePolicy;
   t: TPostThread;
   ok: Boolean;
   delivered: array of Integer;
   count: Integer;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   procedure Handler(const aValue: Integer);
   begin
     Sleep(100);
@@ -796,14 +796,14 @@ var
   end;
 {$ENDIF}
 begin
-  bus := MLBus;
+  bus := maxBus;
   bus.Clear;
-  queues := bus as IMLBusQueues;
+  queues := bus as ImaxBusQueues;
   policy.MaxDepth := 1;
   policy.Overflow := DropOldest;
   policy.DeadlineUs := 0;
   queues.SetPolicyFor<Integer>(policy);
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   bus.Subscribe<Integer>(@Handler);
 {$ELSE}
   bus.Subscribe<Integer>(
@@ -831,14 +831,14 @@ end;
 
 procedure TTestQueuePolicy.BlockWaits;
 var
-  bus: IMLBus;
-  queues: IMLBusQueues;
-  policy: TMLQueuePolicy;
+  bus: ImaxBus;
+  queues: ImaxBusQueues;
+  policy: TmaxQueuePolicy;
   t: TPostThread;
   ok: Boolean;
   delivered: array of Integer;
   count: Integer;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   procedure Handler(const aValue: Integer);
   begin
     Sleep(100);
@@ -848,14 +848,14 @@ var
   end;
 {$ENDIF}
 begin
-  bus := MLBus;
+  bus := maxBus;
   bus.Clear;
-  queues := bus as IMLBusQueues;
+  queues := bus as ImaxBusQueues;
   policy.MaxDepth := 1;
   policy.Overflow := Block;
   policy.DeadlineUs := 0;
   queues.SetPolicyFor<Integer>(policy);
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   bus.Subscribe<Integer>(@Handler);
 {$ELSE}
   bus.Subscribe<Integer>(
@@ -885,14 +885,14 @@ end;
 
 procedure TTestQueuePolicy.DeadlineDrops;
 var
-  bus: IMLBus;
-  queues: IMLBusQueues;
-  policy: TMLQueuePolicy;
+  bus: ImaxBus;
+  queues: ImaxBusQueues;
+  policy: TmaxQueuePolicy;
   t: TPostThread;
   ok: Boolean;
   delivered: array of Integer;
   count: Integer;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   procedure Handler(const aValue: Integer);
   begin
     Sleep(200);
@@ -902,14 +902,14 @@ var
   end;
 {$ENDIF}
 begin
-  bus := MLBus;
+  bus := maxBus;
   bus.Clear;
-  queues := bus as IMLBusQueues;
+  queues := bus as ImaxBusQueues;
   policy.MaxDepth := 1;
   policy.Overflow := Deadline;
   policy.DeadlineUs := 50000;
   queues.SetPolicyFor<Integer>(policy);
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   bus.Subscribe<Integer>(@Handler);
 {$ELSE}
   bus.Subscribe<Integer>(
@@ -942,9 +942,9 @@ end;
 
 procedure TTestSticky.LateSubscriberGetsLastEvent;
 var
-  bus: IMLBus;
-  sub: IMLSubscription;
-{$IFDEF ML_FPC}
+  bus: ImaxBus;
+  sub: ImaxSubscription;
+{$IFDEF max_FPC}
   values: TList<Integer>;
   procedure Handler(const aValue: Integer);
   begin
@@ -954,12 +954,12 @@ var
   values: TList<Integer>;
 {$ENDIF}
 begin
-  bus := MLBus;
+  bus := maxBus;
   bus.Clear;
   bus.EnableSticky<Integer>(True);
   try
     bus.Post<Integer>(42);
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
     values := TList<Integer>.Create;
     sub := bus.Subscribe<Integer>(@Handler);
 {$ELSE}
@@ -991,9 +991,9 @@ end;
 
 procedure TTestSubscribeOrdering.PreservesOrderAndHandlesChurn;
 var
-  bus: IMLBus;
-  sub: IMLSubscription;
-{$IFDEF ML_FPC}
+  bus: ImaxBus;
+  sub: ImaxSubscription;
+{$IFDEF max_FPC}
   values: TList<Integer>;
   procedure Handler(const aValue: Integer);
   begin
@@ -1004,9 +1004,9 @@ var
 {$ENDIF}
   i: Integer;
 begin
-  bus := MLBus;
+  bus := maxBus;
   bus.Clear;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
   values := TList<Integer>.Create;
   sub := bus.Subscribe<Integer>(@Handler);
 {$ELSE}
@@ -1025,7 +1025,7 @@ begin
       CheckEquals(i, values[i-1]);
     sub.Unsubscribe;
     values.Clear;
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
     sub := bus.Subscribe<Integer>(@Handler);
 {$ELSE}
     sub := bus.Subscribe<Integer>(
@@ -1062,14 +1062,14 @@ end;
 
 procedure TTestUnsubscribeAll.RemovesAllHandlers;
 var
-  bus: IMLBus;
+  bus: ImaxBus;
   tgt: TTarget;
-  sub1, sub2: IMLSubscription;
+  sub1, sub2: ImaxSubscription;
 begin
-  bus := MLBus;
+  bus := maxBus;
   tgt := TTarget.Create;
   try
-{$IFDEF ML_FPC}
+{$IFDEF max_FPC}
     sub1 := bus.Subscribe<Integer>(@tgt.Handle);
     sub2 := bus.Subscribe<Integer>(@tgt.Handle);
 {$ELSE}

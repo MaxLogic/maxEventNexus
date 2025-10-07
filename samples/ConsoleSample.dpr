@@ -33,9 +33,9 @@ begin
 end;
 
   var
-    lBus: IMLBus;
-    lPolicy: TMLQueuePolicy;
-    lSub: IMLSubscription;
+    lBus: ImaxBus;
+    lPolicy: TmaxQueuePolicy;
+    lSub: ImaxSubscription;
 
 procedure OnInt(const aValue: Integer);
 begin
@@ -57,31 +57,31 @@ begin
   Writeln('async: ', aValue);
 end;
 
-function KeyOfInt(const aValue: Integer): TMLString;
+function KeyOfInt(const aValue: Integer): TmaxString;
 begin
   Result := IntToStr(aValue mod 10);
 end;
 
   begin
-    lBus := MLBus;
+    lBus := maxBus;
 
   lPolicy.MaxDepth := 1;
   lPolicy.Overflow := DropOldest;
   lPolicy.DeadlineUs := 0;
-    (lBus as IMLBusQueues).SetPolicyFor<Integer>(lPolicy);
-    (lBus as IMLBusAdvanced).EnableSticky<Integer>(True);
+    (lBus as ImaxBusQueues).SetPolicyFor<Integer>(lPolicy);
+    (lBus as ImaxBusAdvanced).EnableSticky<Integer>(True);
 {$IFDEF FPC}
-    (lBus as IMLBusAdvanced).EnableCoalesceOf<Integer>(@KeyOfInt);
+    (lBus as ImaxBusAdvanced).EnableCoalesceOf<Integer>(@KeyOfInt);
     lSub := lBus.Subscribe<Integer>(@OnInt);
     lBus.SubscribeNamed('tick', @OnNamed);
     lBus.SubscribeGuidOf<ITextMsg>(@OnGuid);
-    lBus.Subscribe<string>(@OnAsync, TMLDelivery.Async);
+    lBus.Subscribe<string>(@OnAsync, TmaxDelivery.Async);
 {$ELSE}
-    (lBus as IMLBusAdvanced).EnableCoalesceOf<Integer>(KeyOfInt);
+    (lBus as ImaxBusAdvanced).EnableCoalesceOf<Integer>(KeyOfInt);
     lSub := lBus.Subscribe<Integer>(OnInt);
     lBus.SubscribeNamed('tick', OnNamed);
     lBus.SubscribeGuidOf<ITextMsg>(OnGuid);
-    lBus.Subscribe<string>(OnAsync, TMLDelivery.Async);
+    lBus.Subscribe<string>(OnAsync, TmaxDelivery.Async);
 {$ENDIF}
 
   lBus.Post<Integer>(1);

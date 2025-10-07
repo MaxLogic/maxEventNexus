@@ -15,7 +15,7 @@ type
     fLabel: TLabel;
     fButton: TButton;
     fWorker: TThread;
-    fSub: IMLSubscription;
+    fSub: ImaxSubscription;
     procedure StartClicked(Sender: TObject);
     procedure OnValue(const aValue: Integer);
   public
@@ -57,19 +57,19 @@ end;
 
 procedure TMainForm.StartClicked(Sender: TObject);
 var
-  lAdv: IMLBusAdvanced;
+  lAdv: ImaxBusAdvanced;
 begin
   if Assigned(fWorker) then
     Exit;
   fButton.Enabled := False;
-  lAdv := MLBus as IMLBusAdvanced;
+  lAdv := maxBus as ImaxBusAdvanced;
   lAdv.EnableCoalesceOf<Integer>(
-    function(const aValue: Integer): TMLString
+    function(const aValue: Integer): TmaxString
     begin
       Result := '';
     end,
     100000);
-  fSub := MLBus.Subscribe<Integer>(OnValue, TMLDelivery.Main);
+  fSub := maxBus.Subscribe<Integer>(OnValue, TmaxDelivery.Main);
   fWorker := TProducer.Create(False);
 end;
 
@@ -84,7 +84,7 @@ var
 begin
   for i := 1 to 1000 do
   begin
-    MLBus.Post<Integer>(i);
+    maxBus.Post<Integer>(i);
     Sleep(1);
   end;
 end;

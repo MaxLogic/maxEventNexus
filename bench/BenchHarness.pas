@@ -45,7 +45,7 @@ var
   i: Integer;
 begin
   for i := 1 to fEvents do
-    MLBus.Post<TPayload>(fPayload);
+    maxBus.Post<TPayload>(fPayload);
 end;
 
 procedure ParseArgs(var aCfg: TBenchmarkConfig);
@@ -86,11 +86,11 @@ procedure RunBenchmark(const aCfg: TBenchmarkConfig);
 var
   payload: TPayload;
   producers: array of TProducer;
-  subs: array of IMLSubscription;
+  subs: array of ImaxSubscription;
   i: Integer;
   startTick, stopTick: QWord;
-  metrics: IMLBusMetrics;
-  stats: TMLTopicStats;
+  metrics: ImaxBusMetrics;
+  stats: TmaxTopicStats;
 {$IFDEF FPC}
   procedure Consume(const aValue: TPayload);
   begin
@@ -103,10 +103,10 @@ begin
     payload.Data[i] := Byte(i);
 
   if aCfg.Sticky then
-    MLBus.EnableSticky<TPayload>(True);
+    maxBus.EnableSticky<TPayload>(True);
   if aCfg.Coalesce then
-    (MLBus as IMLBusAdvanced).EnableCoalesceOf<TPayload>(
-      function(const aValue: TPayload): TMLString
+    (maxBus as ImaxBusAdvanced).EnableCoalesceOf<TPayload>(
+      function(const aValue: TPayload): TmaxString
       begin
         Result := 'k';
       end);
@@ -114,16 +114,16 @@ begin
   SetLength(subs, aCfg.Consumers);
 {$IFDEF FPC}
   for i := 0 to High(subs) do
-    subs[i] := MLBus.Subscribe<TPayload>(@Consume);
+    subs[i] := maxBus.Subscribe<TPayload>(@Consume);
 {$ELSE}
-  var lHandler: TMLProcOf<TPayload>;
+  var lHandler: TmaxProcOf<TPayload>;
   lHandler :=
     procedure(const aValue: TPayload)
     begin
       // no-op
     end;
   for i := 0 to High(subs) do
-    subs[i] := MLBus.Subscribe<TPayload>(lHandler);
+    subs[i] := maxBus.Subscribe<TPayload>(lHandler);
 {$ENDIF}
 
   startTick := GetTickCount64;
@@ -137,7 +137,7 @@ begin
   end;
   stopTick := GetTickCount64;
 
-  metrics := MLBus as IMLBusMetrics;
+  metrics := maxBus as ImaxBusMetrics;
   stats := metrics.GetStatsFor<TPayload>;
 
   Writeln('Producers: ', aCfg.Producers);
