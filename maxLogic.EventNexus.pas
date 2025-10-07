@@ -114,6 +114,26 @@ type
     function GetTotals: TMLTopicStats;
   end;
 
+  IMLSubscriptionState = interface
+    ['{6B8BCC86-7AC3-4B6F-9CF9-2F3EE0A5F913}']
+    function TryEnter: Boolean;
+    procedure Leave;
+    procedure Deactivate;
+    function IsActive: Boolean;
+  end;
+
+  TMLSubscriptionState = class(TInterfacedObject, IMLSubscriptionState)
+  private
+    fActive: Boolean;
+    fInFlight: Integer;
+  public
+    constructor Create;
+    function TryEnter: Boolean;
+    procedure Leave;
+    procedure Deactivate;
+    function IsActive: Boolean;
+  end;
+
   EMLAggregateException = class(Exception)
   private
     fInner: TMLExceptionList;
@@ -205,6 +225,7 @@ type
     Mode: TMLDelivery;
     Token: TMLSubscriptionToken;
     Target: TMLWeakTarget;
+    State: IMLSubscriptionState;
   end;
 
   TTypedTopic<T> = class(TMLTopicBase)
@@ -221,7 +242,7 @@ type
     procedure PruneDead;
   public
     constructor Create;
-    function Add(const aHandler: TMLProcOf<T>; aMode: TMLDelivery): TMLSubscriptionToken;
+    function Add(const aHandler: TMLProcOf<T>; aMode: TMLDelivery; out aState: IMLSubscriptionState): TMLSubscriptionToken;
     procedure RemoveByToken(aToken: TMLSubscriptionToken);
     function Snapshot: TArray<TTypedSubscriber<T>>;
     procedure RemoveByTarget(const aTarget: TObject); override;
@@ -464,6 +485,60 @@ begin
 {$ENDIF}
 end;
 
+{ TMLSubscriptionState }
+
+constructor TMLSubscriptionState.Create;
+begin
+  inherited Create;
+  fActive := True;
+  fInFlight := 0;
+end;
+
+function TMLSubscriptionState.TryEnter: Boolean;
+begin
+  TMonitor.Enter(Self);
+  try
+    if not fActive then
+      Exit(False);
+    Inc(fInFlight);
+    Result := True;
+  finally
+    TMonitor.Exit(Self);
+  end;
+end;
+
+procedure TMLSubscriptionState.Leave;
+begin
+  TMonitor.Enter(Self);
+  try
+    if fInFlight > 0 then
+      Dec(fInFlight);
+  finally
+    TMonitor.Exit(Self);
+  end;
+end;
+
+procedure TMLSubscriptionState.Deactivate;
+begin
+  TMonitor.Enter(Self);
+  try
+    if fActive then
+      fActive := False;
+  finally
+    TMonitor.Exit(Self);
+  end;
+end;
+
+function TMLSubscriptionState.IsActive: Boolean;
+begin
+  TMonitor.Enter(Self);
+  try
+    Result := fActive;
+  finally
+    TMonitor.Exit(Self);
+  end;
+end;
+
 { TMLTopicBase }
 
 constructor TMLTopicBase.Create;
@@ -652,6 +727,7 @@ end;
       Mode: TMLDelivery;
       Token: TMLSubscriptionToken;
       Target: TMLWeakTarget;
+      State: IMLSubscriptionState;
     end;
 
   TNamedTopic = class(TMLTopicBase)
@@ -661,7 +737,7 @@ end;
     fNextToken: TMLSubscriptionToken;
     procedure PruneDead;
   public
-    function Add(const aHandler: TMLProc; aMode: TMLDelivery): TMLSubscriptionToken;
+    function Add(const aHandler: TMLProc; aMode: TMLDelivery; out aState: IMLSubscriptionState): TMLSubscriptionToken;
     procedure RemoveByToken(aToken: TMLSubscriptionToken);
     function Snapshot: TArray<TNamedSubscriber>;
     procedure RemoveByTarget(const aTarget: TObject); override;
@@ -673,8 +749,10 @@ end;
   TMLSubscriptionBase = class(TInterfacedObject, IMLSubscription)
   protected
     fActive: Boolean;
+    fState: IMLSubscriptionState;
   public
-    constructor Create;
+    constructor Create(const aState: IMLSubscriptionState);
+    destructor Destroy; override;
     procedure Unsubscribe; virtual; abstract;
     function IsActive: Boolean;
   end;
@@ -684,7 +762,7 @@ end;
     fTopic: TTypedTopic<T>;
     fToken: TMLSubscriptionToken;
   public
-    constructor Create(aTopic: TTypedTopic<T>; aToken: TMLSubscriptionToken);
+    constructor Create(aTopic: TTypedTopic<T>; aToken: TMLSubscriptionToken; const aState: IMLSubscriptionState);
     procedure Unsubscribe; override;
   end;
 
@@ -693,7 +771,7 @@ end;
     fTopic: TNamedTopic;
     fToken: TMLSubscriptionToken;
   public
-    constructor Create(aTopic: TNamedTopic; aToken: TMLSubscriptionToken);
+    constructor Create(aTopic: TNamedTopic; aToken: TMLSubscriptionToken; const aState: IMLSubscriptionState);
     procedure Unsubscribe; override;
   end;
 
@@ -828,33 +906,41 @@ var
   lNeedsPrune: Boolean;
   lIdx, lCount, lOut: Integer;
   lCopy: TArray<TTypedSubscriber<T>>;
+  lKeep: Boolean;
 begin
   lCount := Length(fSubs);
   if lCount = 0 then
     Exit;
   lNeedsPrune := False;
   for lIdx := 0 to lCount - 1 do
-    if not fSubs[lIdx].Target.IsAlive then
+    if (not fSubs[lIdx].Target.IsAlive) or
+       (Assigned(fSubs[lIdx].State) and not fSubs[lIdx].State.IsActive) then
     begin
       lNeedsPrune := True;
       Break;
     end;
   if not lNeedsPrune then
     Exit;
-  lCopy := nil;
   SetLength(lCopy, lCount);
   lOut := 0;
   for lIdx := 0 to lCount - 1 do
-    if fSubs[lIdx].Target.IsAlive then
+  begin
+    lKeep := fSubs[lIdx].Target.IsAlive;
+    if lKeep and Assigned(fSubs[lIdx].State) then
+      lKeep := fSubs[lIdx].State.IsActive;
+    if lKeep then
     begin
       lCopy[lOut] := fSubs[lIdx];
       Inc(lOut);
-    end;
+    end
+    else if Assigned(fSubs[lIdx].State) then
+      fSubs[lIdx].State.Deactivate;
+  end;
   SetLength(lCopy, lOut);
   fSubs := lCopy;
 end;
 
-function TTypedTopic<T>.Add(const aHandler: TMLProcOf<T>; aMode: TMLDelivery): TMLSubscriptionToken;
+function TTypedTopic<T>.Add(const aHandler: TMLProcOf<T>; aMode: TMLDelivery; out aState: IMLSubscriptionState): TMLSubscriptionToken;
 var
   lMethod: TMethod;
   lNew: TArray<TTypedSubscriber<T>>;
@@ -867,6 +953,8 @@ begin
   lSub.Mode := aMode;
   lSub.Token := fNextToken;
   lSub.Target := TMLWeakTarget.Create(TObject(lMethod.Data));
+  lSub.State := TMLSubscriptionState.Create;
+  aState := lSub.State;
   Inc(fNextToken);
   lNew := Copy(fSubs);
   SetLength(lNew, Length(lNew) + 1);
@@ -891,7 +979,9 @@ begin
     begin
       lNew[lOut] := fSubs[lIdx];
       Inc(lOut);
-    end;
+    end
+    else if Assigned(fSubs[lIdx].State) then
+      fSubs[lIdx].State.Deactivate;
   if lOut = lCount then
   begin
     SetLength(lNew, 0);
@@ -926,7 +1016,9 @@ begin
     begin
       lNew[lOut] := fSubs[lIdx];
       Inc(lOut);
-    end;
+    end
+    else if Assigned(fSubs[lIdx].State) then
+      fSubs[lIdx].State.Deactivate;
   SetLength(lNew, lOut);
   fSubs := lNew;
 end;
@@ -1043,7 +1135,7 @@ end;
 
 { TNamedTopic }
 
-function TNamedTopic.Add(const aHandler: TMLProc; aMode: TMLDelivery): TMLSubscriptionToken;
+function TNamedTopic.Add(const aHandler: TMLProc; aMode: TMLDelivery; out aState: IMLSubscriptionState): TMLSubscriptionToken;
 var
   lMethod: TMethod;
   lSub: TNamedSubscriber;
@@ -1056,6 +1148,8 @@ begin
   lSub.Mode := aMode;
   lSub.Token := fNextToken;
   lSub.Target := TMLWeakTarget.Create(TObject(lMethod.Data));
+  lSub.State := TMLSubscriptionState.Create;
+  aState := lSub.State;
   Inc(fNextToken);
   lNew := Copy(fSubs);
   SetLength(lNew, Length(lNew) + 1);
@@ -1080,7 +1174,9 @@ begin
     begin
       lNew[lOut] := fSubs[lIdx];
       Inc(lOut);
-    end;
+    end
+    else if Assigned(fSubs[lIdx].State) then
+      fSubs[lIdx].State.Deactivate;
   if lOut = lCount then
   begin
     SetLength(lNew, 0);
@@ -1095,28 +1191,36 @@ var
   lNeedsPrune: Boolean;
   lIdx, lCount, lOut: Integer;
   lCopy: TArray<TNamedSubscriber>;
+  lKeep: Boolean;
 begin
   lCount := Length(fSubs);
   if lCount = 0 then
     Exit;
   lNeedsPrune := False;
   for lIdx := 0 to lCount - 1 do
-    if not fSubs[lIdx].Target.IsAlive then
+    if (not fSubs[lIdx].Target.IsAlive) or
+       (Assigned(fSubs[lIdx].State) and not fSubs[lIdx].State.IsActive) then
     begin
       lNeedsPrune := True;
       Break;
     end;
   if not lNeedsPrune then
     Exit;
-  lCopy := nil;
   SetLength(lCopy, lCount);
   lOut := 0;
   for lIdx := 0 to lCount - 1 do
-    if fSubs[lIdx].Target.IsAlive then
+  begin
+    lKeep := fSubs[lIdx].Target.IsAlive;
+    if lKeep and Assigned(fSubs[lIdx].State) then
+      lKeep := fSubs[lIdx].State.IsActive;
+    if lKeep then
     begin
       lCopy[lOut] := fSubs[lIdx];
       Inc(lOut);
-    end;
+    end
+    else if Assigned(fSubs[lIdx].State) then
+      fSubs[lIdx].State.Deactivate;
+  end;
   SetLength(lCopy, lOut);
   fSubs := lCopy;
 end;
@@ -1146,7 +1250,9 @@ begin
     begin
       lNew[lOut] := fSubs[lIdx];
       Inc(lOut);
-    end;
+    end
+    else if Assigned(fSubs[lIdx].State) then
+      fSubs[lIdx].State.Deactivate;
   SetLength(lNew, lOut);
   fSubs := lNew;
 end;
@@ -1171,22 +1277,31 @@ end;
 
 { TMLSubscriptionBase }
 
-constructor TMLSubscriptionBase.Create;
+constructor TMLSubscriptionBase.Create(const aState: IMLSubscriptionState);
 begin
   inherited Create;
   fActive := True;
+  fState := aState;
+end;
+
+destructor TMLSubscriptionBase.Destroy;
+begin
+  if fActive then
+    Unsubscribe;
+  fState := nil;
+  inherited Destroy;
 end;
 
 function TMLSubscriptionBase.IsActive: Boolean;
 begin
-  Result := fActive;
+  Result := fActive and Assigned(fState) and fState.IsActive;
 end;
 
 { TMLTypedSubscription<T> }
 
-constructor TMLTypedSubscription<T>.Create(aTopic: TTypedTopic<T>; aToken: TMLSubscriptionToken);
+constructor TMLTypedSubscription<T>.Create(aTopic: TTypedTopic<T>; aToken: TMLSubscriptionToken; const aState: IMLSubscriptionState);
 begin
-  inherited Create;
+  inherited Create(aState);
   fTopic := aTopic;
   fToken := aToken;
 end;
@@ -1195,16 +1310,19 @@ procedure TMLTypedSubscription<T>.Unsubscribe;
 begin
   if fActive then
   begin
+    if Assigned(fState) then
+      fState.Deactivate;
     fTopic.RemoveByToken(fToken);
+    fState := nil;
     fActive := False;
   end;
 end;
 
 { TMLNamedSubscription }
 
-constructor TMLNamedSubscription.Create(aTopic: TNamedTopic; aToken: TMLSubscriptionToken);
+constructor TMLNamedSubscription.Create(aTopic: TNamedTopic; aToken: TMLSubscriptionToken; const aState: IMLSubscriptionState);
 begin
-  inherited Create;
+  inherited Create(aState);
   fTopic := aTopic;
   fToken := aToken;
 end;
@@ -1213,7 +1331,10 @@ procedure TMLNamedSubscription.Unsubscribe;
 begin
   if fActive then
   begin
+    if Assigned(fState) then
+      fState.Deactivate;
     fTopic.RemoveByToken(fToken);
+    fState := nil;
     fActive := False;
   end;
 end;
@@ -1320,38 +1441,44 @@ begin
           lErrs := nil;
           for lSub in aSubs do
           begin
-            if not lSub.Target.IsAlive then
-            begin
-              aTopic.RemoveByToken(lSub.Token);
+            if (lSub.State = nil) or not lSub.State.TryEnter then
               Continue;
-            end;
             try
-              Dispatch(aTopicName, lSub.Mode,
-                procedure
-                begin
-                  try
-                    lSub.Handler(lInner);
-                    aTopic.AddDelivered(1);
-                  except
-                    on e: Exception do
-                    begin
-                      if (e is EAccessViolation) or (e is EInvalidPointer) then
-                        aTopic.RemoveByToken(lSub.Token);
-                      raise;
-                    end;
-                  end;
-                end,
-                procedure
-                begin
-                  aTopic.AddException;
-                end);
-            except
-              on e: Exception do
+              if not lSub.Target.IsAlive then
               begin
-                if lErrs = nil then
-                  lErrs := TMLExceptionList.Create(True);
-                lErrs.Add(e);
+                aTopic.RemoveByToken(lSub.Token);
+                Continue;
               end;
+              try
+                Dispatch(aTopicName, lSub.Mode,
+                  procedure
+                  begin
+                    try
+                      lSub.Handler(lInner);
+                      aTopic.AddDelivered(1);
+                    except
+                      on e: Exception do
+                      begin
+                        if (e is EAccessViolation) or (e is EInvalidPointer) then
+                          aTopic.RemoveByToken(lSub.Token);
+                        raise;
+                      end;
+                    end;
+                  end,
+                  procedure
+                  begin
+                    aTopic.AddException;
+                  end);
+              except
+                on e: Exception do
+                begin
+                  if lErrs = nil then
+                    lErrs := TMLExceptionList.Create(True);
+                  lErrs.Add(e);
+                end;
+              end;
+            finally
+              lSub.State.Leave;
             end;
           end;
           if lErrs <> nil then
@@ -1475,6 +1602,7 @@ var
   send: Boolean;
   last: T;
   metricName: TMLString;
+  lState: IMLSubscriptionState;
 begin
   key := TypeInfo(T);
   metricName := TypeMetricName(key);
@@ -1491,7 +1619,7 @@ begin
     else
       topic := TTypedTopic<T>(obj);
     topic.SetMetricName(metricName);
-    token := topic.Add(aHandler, aMode);
+    token := topic.Add(aHandler, aMode, lState);
     send := topic.TryGetCached(last);
   finally
     TMonitor.Exit(fLock);
@@ -1503,27 +1631,33 @@ begin
         val: T;
       begin
         val := last;
-        Dispatch(metricName, aMode,
-          procedure
-          begin
-            try
-              aHandler(val);
-              topic.AddDelivered(1);
-            except
-              on e: Exception do
-              begin
-                if (e is EAccessViolation) or (e is EInvalidPointer) then
-                  topic.RemoveByToken(token);
-                raise;
+        if (lState = nil) or not lState.TryEnter then
+          Exit;
+        try
+          Dispatch(metricName, aMode,
+            procedure
+            begin
+              try
+                aHandler(val);
+                topic.AddDelivered(1);
+              except
+                on e: Exception do
+                begin
+                  if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    topic.RemoveByToken(token);
+                  raise;
+                end;
               end;
-            end;
-          end,
-          procedure
-          begin
-            topic.AddException;
-          end);
+            end,
+            procedure
+            begin
+              topic.AddException;
+            end);
+        finally
+          lState.Leave;
+        end;
       end);
-  Result := TMLTypedSubscription<T>.Create(topic, token);
+  Result := TMLTypedSubscription<T>.Create(topic, token, lState);
 end;
 
 procedure TMLBus.Post<T>(const aEvent: T);
@@ -1591,38 +1725,44 @@ begin
       lErrs := nil;
       for lSub in lSubs do
       begin
-        if not lSub.Target.IsAlive then
-        begin
-          lTopic.RemoveByToken(lSub.Token);
+        if (lSub.State = nil) or not lSub.State.TryEnter then
           Continue;
-        end;
         try
-          Dispatch(lMetric, lSub.Mode,
-            procedure
-            begin
-              try
-                lSub.Handler(lVal);
-                lTopic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    lTopic.RemoveByToken(lSub.Token);
-                  raise;
-                end;
-              end;
-            end,
-            procedure
-            begin
-              lTopic.AddException;
-            end);
-        except
-          on e: Exception do
+          if not lSub.Target.IsAlive then
           begin
-            if lErrs = nil then
-              lErrs := TMLExceptionList.Create(True);
-            lErrs.Add(e);
+            lTopic.RemoveByToken(lSub.Token);
+            Continue;
           end;
+          try
+            Dispatch(lMetric, lSub.Mode,
+              procedure
+              begin
+                try
+                  lSub.Handler(lVal);
+                  lTopic.AddDelivered(1);
+                except
+                  on e: Exception do
+                  begin
+                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                      lTopic.RemoveByToken(lSub.Token);
+                    raise;
+                  end;
+                end;
+              end,
+              procedure
+              begin
+                lTopic.AddException;
+              end);
+          except
+            on e: Exception do
+            begin
+              if lErrs = nil then
+                lErrs := TMLExceptionList.Create(True);
+              lErrs.Add(e);
+            end;
+          end;
+        finally
+          lSub.State.Leave;
         end;
       end;
       if lErrs <> nil then
@@ -1697,38 +1837,44 @@ begin
       lErrs := nil;
       for lSub in lSubs do
       begin
-        if not lSub.Target.IsAlive then
-        begin
-          lTopic.RemoveByToken(lSub.Token);
+        if (lSub.State = nil) or not lSub.State.TryEnter then
           Continue;
-        end;
         try
-          Dispatch(lMetric, lSub.Mode,
-            procedure
-            begin
-              try
-                lSub.Handler(lVal);
-                lTopic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    lTopic.RemoveByToken(lSub.Token);
-                  raise;
-                end;
-              end;
-            end,
-            procedure
-            begin
-              lTopic.AddException;
-            end);
-        except
-          on e: Exception do
+          if not lSub.Target.IsAlive then
           begin
-            if lErrs = nil then
-              lErrs := TMLExceptionList.Create(True);
-            lErrs.Add(e);
+            lTopic.RemoveByToken(lSub.Token);
+            Continue;
           end;
+          try
+            Dispatch(lMetric, lSub.Mode,
+              procedure
+              begin
+                try
+                  lSub.Handler(lVal);
+                  lTopic.AddDelivered(1);
+                except
+                  on e: Exception do
+                  begin
+                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                      lTopic.RemoveByToken(lSub.Token);
+                    raise;
+                  end;
+                end;
+              end,
+              procedure
+              begin
+                lTopic.AddException;
+              end);
+          except
+            on e: Exception do
+            begin
+              if lErrs = nil then
+                lErrs := TMLExceptionList.Create(True);
+              lErrs.Add(e);
+            end;
+          end;
+        finally
+          lSub.State.Leave;
         end;
       end;
       if lErrs <> nil then
@@ -1746,6 +1892,7 @@ var
   send: Boolean;
   lNameKey: TMLString;
   lMetric: TMLString;
+  lState: IMLSubscriptionState;
 begin
   lNameKey := NormalizeName(aName);
   lMetric := NamedMetricName(lNameKey);
@@ -1762,7 +1909,7 @@ begin
     else
       topic := TNamedTopic(obj);
     topic.SetMetricName(lMetric);
-    token := topic.Add(aHandler, aMode);
+    token := topic.Add(aHandler, aMode, lState);
     send := topic.HasCached;
   finally
     TMonitor.Exit(fLock);
@@ -1771,27 +1918,33 @@ begin
     topic.Enqueue(
       procedure
       begin
-        Dispatch(lMetric, aMode,
-          procedure
-          begin
-            try
-              aHandler();
-              topic.AddDelivered(1);
-            except
-              on e: Exception do
-              begin
-                if (e is EAccessViolation) or (e is EInvalidPointer) then
-                  topic.RemoveByToken(token);
-                raise;
+        if (lState = nil) or not lState.TryEnter then
+          Exit;
+        try
+          Dispatch(lMetric, aMode,
+            procedure
+            begin
+              try
+                aHandler();
+                topic.AddDelivered(1);
+              except
+                on e: Exception do
+                begin
+                  if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    topic.RemoveByToken(token);
+                  raise;
+                end;
               end;
-            end;
-          end,
-          procedure
-          begin
-            topic.AddException;
-          end);
+            end,
+            procedure
+            begin
+              topic.AddException;
+            end);
+        finally
+          lState.Leave;
+        end;
       end);
-  Result := TMLNamedSubscription.Create(topic, token);
+  Result := TMLNamedSubscription.Create(topic, token, lState);
 end;
 
 
@@ -1839,38 +1992,44 @@ begin
       lErrs := nil;
       for sub in subs do
       begin
-        if not sub.Target.IsAlive then
-        begin
-          topic.RemoveByToken(sub.Token);
+        if (sub.State = nil) or not sub.State.TryEnter then
           Continue;
-        end;
         try
-          Dispatch(lMetric, sub.Mode,
-            procedure
-            begin
-              try
-                sub.Handler();
-                topic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    topic.RemoveByToken(sub.Token);
-                  raise;
-                end;
-              end;
-            end,
-            procedure
-            begin
-              topic.AddException;
-            end);
-        except
-          on e: Exception do
+          if not sub.Target.IsAlive then
           begin
-            if lErrs = nil then
-              lErrs := TMLExceptionList.Create(True);
-            lErrs.Add(e);
+            topic.RemoveByToken(sub.Token);
+            Continue;
           end;
+          try
+            Dispatch(lMetric, sub.Mode,
+              procedure
+              begin
+                try
+                  sub.Handler();
+                  topic.AddDelivered(1);
+                except
+                  on e: Exception do
+                  begin
+                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                      topic.RemoveByToken(sub.Token);
+                    raise;
+                  end;
+                end;
+              end,
+              procedure
+              begin
+                topic.AddException;
+              end);
+          except
+            on e: Exception do
+            begin
+              if lErrs = nil then
+                lErrs := TMLExceptionList.Create(True);
+              lErrs.Add(e);
+            end;
+          end;
+        finally
+          sub.State.Leave;
         end;
       end;
       if lErrs <> nil then
@@ -1924,38 +2083,44 @@ begin
       lErrs := nil;
       for sub in subs do
       begin
-        if not sub.Target.IsAlive then
-        begin
-          topic.RemoveByToken(sub.Token);
+        if (sub.State = nil) or not sub.State.TryEnter then
           Continue;
-        end;
         try
-          Dispatch(lMetric, sub.Mode,
-            procedure
-            begin
-              try
-                sub.Handler();
-                topic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    topic.RemoveByToken(sub.Token);
-                  raise;
-                end;
-              end;
-            end,
-            procedure
-            begin
-              topic.AddException;
-            end);
-        except
-          on e: Exception do
+          if not sub.Target.IsAlive then
           begin
-            if lErrs = nil then
-              lErrs := TMLExceptionList.Create(True);
-            lErrs.Add(e);
+            topic.RemoveByToken(sub.Token);
+            Continue;
           end;
+          try
+            Dispatch(lMetric, sub.Mode,
+              procedure
+              begin
+                try
+                  sub.Handler();
+                  topic.AddDelivered(1);
+                except
+                  on e: Exception do
+                  begin
+                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                      topic.RemoveByToken(sub.Token);
+                    raise;
+                  end;
+                end;
+              end,
+              procedure
+              begin
+                topic.AddException;
+              end);
+          except
+            on e: Exception do
+            begin
+              if lErrs = nil then
+                lErrs := TMLExceptionList.Create(True);
+              lErrs.Add(e);
+            end;
+          end;
+        finally
+          sub.State.Leave;
         end;
       end;
       if lErrs <> nil then
@@ -1979,6 +2144,7 @@ var
   last: T;
   lNameKey: TMLString;
   lMetric: TMLString;
+  lState: IMLSubscriptionState;
 begin
   key := TypeInfo(T);
   lNameKey := NormalizeName(aName);
@@ -2001,7 +2167,7 @@ begin
     else
       topic := TTypedTopic<T>(obj);
     topic.SetMetricName(lMetric);
-    token := topic.Add(aHandler, aMode);
+    token := topic.Add(aHandler, aMode, lState);
     send := topic.TryGetCached(last);
   finally
     TMonitor.Exit(fLock);
@@ -2013,27 +2179,33 @@ begin
         val: T;
       begin
         val := last;
-        Dispatch(lMetric, aMode,
-          procedure
-          begin
-            try
-              aHandler(val);
-              topic.AddDelivered(1);
-            except
-              on e: Exception do
-              begin
-                if (e is EAccessViolation) or (e is EInvalidPointer) then
-                  topic.RemoveByToken(token);
-                raise;
+        if (lState = nil) or not lState.TryEnter then
+          Exit;
+        try
+          Dispatch(lMetric, aMode,
+            procedure
+            begin
+              try
+                aHandler(val);
+                topic.AddDelivered(1);
+              except
+                on e: Exception do
+                begin
+                  if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    topic.RemoveByToken(token);
+                  raise;
+                end;
               end;
-            end;
-          end,
-          procedure
-          begin
-            topic.AddException;
-          end);
+            end,
+            procedure
+            begin
+              topic.AddException;
+            end);
+        finally
+          lState.Leave;
+        end;
       end);
-  Result := TMLTypedSubscription<T>.Create(topic, token);
+  Result := TMLTypedSubscription<T>.Create(topic, token, lState);
 end;
 
 
@@ -2115,38 +2287,44 @@ begin
       lErrs := nil;
       for lSub in lSubs do
       begin
-        if not lSub.Target.IsAlive then
-        begin
-          lTopic.RemoveByToken(lSub.Token);
+        if (lSub.State = nil) or not lSub.State.TryEnter then
           Continue;
-        end;
         try
-          Dispatch(lMetric, lSub.Mode,
-            procedure
-            begin
-              try
-                lSub.Handler(lVal);
-                lTopic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    lTopic.RemoveByToken(lSub.Token);
-                  raise;
-                end;
-              end;
-            end,
-            procedure
-            begin
-              lTopic.AddException;
-            end);
-        except
-          on e: Exception do
+          if not lSub.Target.IsAlive then
           begin
-            if lErrs = nil then
-              lErrs := TMLExceptionList.Create(True);
-            lErrs.Add(e);
+            lTopic.RemoveByToken(lSub.Token);
+            Continue;
           end;
+          try
+            Dispatch(lMetric, lSub.Mode,
+              procedure
+              begin
+                try
+                  lSub.Handler(lVal);
+                  lTopic.AddDelivered(1);
+                except
+                  on e: Exception do
+                  begin
+                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                      lTopic.RemoveByToken(lSub.Token);
+                    raise;
+                  end;
+                end;
+              end,
+              procedure
+              begin
+                lTopic.AddException;
+              end);
+          except
+            on e: Exception do
+            begin
+              if lErrs = nil then
+                lErrs := TMLExceptionList.Create(True);
+              lErrs.Add(e);
+            end;
+          end;
+        finally
+          lSub.State.Leave;
         end;
       end;
       if lErrs <> nil then
@@ -2234,38 +2412,44 @@ begin
       lErrs := nil;
       for lSub in lSubs do
       begin
-        if not lSub.Target.IsAlive then
-        begin
-          lTopic.RemoveByToken(lSub.Token);
+        if (lSub.State = nil) or not lSub.State.TryEnter then
           Continue;
-        end;
         try
-          Dispatch(lMetric, lSub.Mode,
-            procedure
-            begin
-              try
-                lSub.Handler(lVal);
-                lTopic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    lTopic.RemoveByToken(lSub.Token);
-                  raise;
-                end;
-              end;
-            end,
-            procedure
-            begin
-              lTopic.AddException;
-            end);
-        except
-          on e: Exception do
+          if not lSub.Target.IsAlive then
           begin
-            if lErrs = nil then
-              lErrs := TMLExceptionList.Create(True);
-            lErrs.Add(e);
+            lTopic.RemoveByToken(lSub.Token);
+            Continue;
           end;
+          try
+            Dispatch(lMetric, lSub.Mode,
+              procedure
+              begin
+                try
+                  lSub.Handler(lVal);
+                  lTopic.AddDelivered(1);
+                except
+                  on e: Exception do
+                  begin
+                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                      lTopic.RemoveByToken(lSub.Token);
+                    raise;
+                  end;
+                end;
+              end,
+              procedure
+              begin
+                lTopic.AddException;
+              end);
+          except
+            on e: Exception do
+            begin
+              if lErrs = nil then
+                lErrs := TMLExceptionList.Create(True);
+              lErrs.Add(e);
+            end;
+          end;
+        finally
+          lSub.State.Leave;
         end;
       end;
       if lErrs <> nil then
@@ -2285,6 +2469,7 @@ var
   send: Boolean;
   last: T;
   lMetric: TMLString;
+  lState: IMLSubscriptionState;
 begin
   key := GetTypeData(TypeInfo(T))^.Guid;
   lMetric := GuidMetricName(key);
@@ -2301,7 +2486,7 @@ begin
     else
       topic := TTypedTopic<T>(obj);
     topic.SetMetricName(lMetric);
-    token := topic.Add(aHandler, aMode);
+    token := topic.Add(aHandler, aMode, lState);
     send := topic.TryGetCached(last);
   finally
     TMonitor.Exit(fLock);
@@ -2313,27 +2498,33 @@ begin
         val: T;
       begin
         val := last;
-        Dispatch(lMetric, aMode,
-          procedure
-          begin
-            try
-              aHandler(val);
-              topic.AddDelivered(1);
-            except
-              on e: Exception do
-              begin
-                if (e is EAccessViolation) or (e is EInvalidPointer) then
-                  topic.RemoveByToken(token);
-                raise;
+        if (lState = nil) or not lState.TryEnter then
+          Exit;
+        try
+          Dispatch(lMetric, aMode,
+            procedure
+            begin
+              try
+                aHandler(val);
+                topic.AddDelivered(1);
+              except
+                on e: Exception do
+                begin
+                  if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    topic.RemoveByToken(token);
+                  raise;
+                end;
               end;
-            end;
-          end,
-          procedure
-          begin
-            topic.AddException;
-          end);
+            end,
+            procedure
+            begin
+              topic.AddException;
+            end);
+        finally
+          lState.Leave;
+        end;
       end);
-  Result := TMLTypedSubscription<T>.Create(topic, token);
+  Result := TMLTypedSubscription<T>.Create(topic, token, lState);
 end;
 
 
@@ -2784,4 +2975,3 @@ finalization
 {$ENDIF}
 
 end.
-
