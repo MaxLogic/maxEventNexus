@@ -187,9 +187,10 @@ type
   end;
 
 {$IFDEF max_FPC}
+  TmaxTypeTopicBaseDict = specialize TObjectDictionary<PTypeInfo, TmaxTopicBase>;
   TmaxTypeTopicDict = specialize TObjectDictionary<PTypeInfo, TmaxTopicBase>;
   TmaxNameTopicDict = specialize TObjectDictionary<TmaxString, TmaxTopicBase>;
-  TmaxNameTypeTopicDict = specialize TObjectDictionary<TmaxString, specialize TObjectDictionary<PTypeInfo, TmaxTopicBase>>;
+  TmaxNameTypeTopicDict = specialize TObjectDictionary<TmaxString, TmaxTypeTopicBaseDict>;
   TmaxGuidTopicDict = specialize TObjectDictionary<TGuid, TmaxTopicBase>;
   TmaxBoolDictOfTypeInfo = specialize TDictionary<PTypeInfo, Boolean>;
   TmaxBoolDictOfString = specialize TDictionary<TmaxString, Boolean>;
