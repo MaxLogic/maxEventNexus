@@ -1523,7 +1523,7 @@ begin
               if Assigned(aOnException) then
                 aOnException();
               if Assigned(gAsyncError) then
-                gAsyncError(string(aTopic), e);
+                gAsyncError(UnicodeString(aTopic), e);
             end;
           end;
         end);
