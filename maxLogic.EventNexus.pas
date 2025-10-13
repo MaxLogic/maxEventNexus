@@ -15,9 +15,8 @@ uses
   {$IFDEF max_FPC}
   Generics.Collections, TypInfo, maxLogic.EventNexus.Threading.Adapter, maxlogic.fpc.diagnostics, maxlogic.fpc.compatibility
   {$ELSE}
-  System.Generics.Collections, TypInfo, maxLogic.EventNexus.Threading.Adapter, maxlogic.fpc.diagnostics
-  {$ENDIF}
-  {$IFDEF max_DELPHI}{$ENDIF};
+  System.Generics.Collections, TypInfo, maxLogic.EventNexus.Threading.Adapter, System.Diagnostics
+  {$ENDIF};
 
 const
   max_BUS_VERSION = '0.1.0';
