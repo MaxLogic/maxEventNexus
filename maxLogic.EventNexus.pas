@@ -40,8 +40,13 @@ type
     TmaxProcOf<T> = reference to procedure(const aValue: T);
 {$ENDIF}
 
+{$IFDEF max_FPC}
+  TmaxProcQueue = specialize TQueue<TmaxProc>;
+  TmaxExceptionList = specialize TObjectList<Exception>;
+{$ELSE}
   TmaxProcQueue = TQueue<TmaxProc>;
   TmaxExceptionList = TObjectList<Exception>;
+{$ENDIF}
 
   TmaxMonitorObject = TObject;
 
@@ -181,6 +186,16 @@ type
     function GetStats: TmaxTopicStats; inline;
   end;
 
+{$IFDEF max_FPC}
+  TmaxTypeTopicDict = specialize TObjectDictionary<PTypeInfo, TmaxTopicBase>;
+  TmaxNameTopicDict = specialize TObjectDictionary<TmaxString, TmaxTopicBase>;
+  TmaxNameTypeTopicDict = specialize TObjectDictionary<TmaxString, specialize TObjectDictionary<PTypeInfo, TmaxTopicBase>>;
+  TmaxGuidTopicDict = specialize TObjectDictionary<TGuid, TmaxTopicBase>;
+  TmaxBoolDictOfTypeInfo = specialize TDictionary<PTypeInfo, Boolean>;
+  TmaxBoolDictOfString = specialize TDictionary<TmaxString, Boolean>;
+  TmaxSubList = specialize TList<ImaxSubscription>;
+  TmaxAutoSubDict = specialize TObjectDictionary<TObject, TmaxSubList>;
+{$ELSE}
   TmaxTypeTopicDict = TObjectDictionary<PTypeInfo, TmaxTopicBase>;
   TmaxNameTopicDict = TObjectDictionary<TmaxString, TmaxTopicBase>;
   TmaxNameTypeTopicDict = TObjectDictionary<TmaxString, TObjectDictionary<PTypeInfo, TmaxTopicBase>>;
@@ -189,6 +204,7 @@ type
   TmaxBoolDictOfString = TDictionary<TmaxString, Boolean>;
   TmaxSubList = TList<ImaxSubscription>;
   TmaxAutoSubDict = TObjectDictionary<TObject, TmaxSubList>;
+{$ENDIF}
 
   TmaxSubscriptionToken = UInt64;
 
@@ -220,7 +236,7 @@ type
     fCoalesce: Boolean;
     fKeyFunc: TmaxKeyFunc<T>;
     fWindowUs: Integer;
-    fPending: TDictionary<TmaxString, T>;
+    fPending: {$IFDEF max_FPC}specialize{$ENDIF} TDictionary<TmaxString, T>;
     fPendingLock: TmaxMonitorObject;
     fNextToken: TmaxSubscriptionToken;
     procedure PruneDead;
@@ -1089,7 +1105,13 @@ begin
   TMonitor.Enter(fPendingLock);
   try
     if fPending = nil then
+    begin
+      {$IFDEF max_FPC}
+      fPending := specialize TDictionary<TmaxString, T>.Create;
+      {$ELSE}
       fPending := TDictionary<TmaxString, T>.Create;
+      {$ENDIF}
+    end;
     Result := not fPending.ContainsKey(aKey);
     fPending.AddOrSetValue(aKey, aEvent);
   finally
