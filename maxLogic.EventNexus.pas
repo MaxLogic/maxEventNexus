@@ -12,9 +12,9 @@ interface
 
 uses
   Classes, SysUtils,
-  Generics.Collections, TypInfo, maxLogic.EventNexus.Threading.Adapter, maxlogic.fpc.diagnostics
+  System.Generics.Collections, TypInfo, maxLogic.EventNexus.Threading.Adapter, maxlogic.fpc.diagnostics
   {$IFDEF max_FPC}, maxlogic.fpc.compatibility{$ENDIF}
-  {$IFDEF max_DELPHI}, Rtti, System.WeakReference{$ENDIF};
+  {$IFDEF max_DELPHI}{$ENDIF};
 
 const
   max_BUS_VERSION = '0.1.0';
@@ -26,6 +26,16 @@ type
   TmaxKeyFunc<T> = function(const aValue: T): TmaxString is nested;
 {$ELSE}
   TmaxKeyFunc<T> = reference to function(const aValue: T): TmaxString;
+{$ENDIF}
+
+{$IFDEF max_FPC}
+  type
+    TmaxProc = procedure;
+    TmaxProcOf<T> = procedure(const aValue: T);
+{$ELSE}
+  type
+    TmaxProc = reference to procedure;
+    TmaxProcOf<T> = reference to procedure(const aValue: T);
 {$ENDIF}
 
   TmaxProcQueue = TQueue<TmaxProc>;
@@ -47,30 +57,16 @@ type
 
   ImaxBus = interface
     ['{1B8E6C9E-5F96-4F0C-9F88-0B7B8E885D4A}']
-    function Subscribe<T>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
-    procedure Post<T>(const aEvent: T);
-    function TryPost<T>(const aEvent: T): Boolean; overload;
-
     function SubscribeNamed(const aName: TmaxString; const aHandler: TmaxProc; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
     procedure PostNamed(const aName: TmaxString);
     function TryPostNamed(const aName: TmaxString): Boolean; overload;
-
-    function SubscribeNamedOf<T>(const aName: TmaxString; const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
-    procedure PostNamedOf<T>(const aName: TmaxString; const aEvent: T);
-    function TryPostNamedOf<T>(const aName: TmaxString; const aEvent: T): Boolean; overload;
-
-    function SubscribeGuidOf<T: IInterface>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
-    procedure PostGuidOf<T: IInterface>(const aEvent: T);
     procedure UnsubscribeAllFor(const aTarget: TObject);
     procedure Clear;
   end;
 
   ImaxBusAdvanced = interface(ImaxBus)
     ['{AB5E6E6D-8B1F-4B63-8B59-8A3B9D8C71B1}']
-    procedure EnableSticky<T>(aEnable: Boolean);
     procedure EnableStickyNamed(const aName: string; aEnable: Boolean);
-    procedure EnableCoalesceOf<T>(const aKeyOf: TmaxKeyFunc<T>; aWindowUs: Integer = 0);
-    procedure EnableCoalesceNamedOf<T>(const aName: string; const aKeyOf: TmaxKeyFunc<T>; aWindowUs: Integer = 0);
   end;
 
   TmaxQueuePolicy = record
@@ -81,9 +77,8 @@ type
 
   ImaxBusQueues = interface
     ['{E55F7B60-9B31-4C80-9B2C-8D1F0E26FF9C}']
-    procedure SetPolicyFor<T>(const aPolicy: TmaxQueuePolicy);
     procedure SetPolicyNamed(const aName: string; const aPolicy: TmaxQueuePolicy);
-    function GetPolicyFor<T>: TmaxQueuePolicy;
+    function GetPolicyNamed(const aName: string): TmaxQueuePolicy;
   end;
 
   TmaxTopicStats = record
@@ -97,7 +92,6 @@ type
 
   ImaxBusMetrics = interface
     ['{2C4B91E3-1C0A-4B5C-B8B0-0C1A5C3E6D10}']
-    function GetStatsFor<T>: TmaxTopicStats;
     function GetStatsNamed(const aName: string): TmaxTopicStats;
     function GetTotals: TmaxTopicStats;
   end;
@@ -201,7 +195,7 @@ type
   TmaxWeakTarget = record
     Raw: TObject;
 {$IFDEF max_DELPHI}
-    WeakRef: IWeakReference;
+    // no extra fields on Delphi; fallback to raw pointer only
 {$ELSE}
     Generation: UInt32;
 {$ENDIF}
@@ -286,6 +280,7 @@ type
       procedure SetPolicyFor<T>(const aPolicy: TmaxQueuePolicy);
       procedure SetPolicyNamed(const aName: string; const aPolicy: TmaxQueuePolicy);
       function GetPolicyFor<T>: TmaxQueuePolicy;
+      function GetPolicyNamed(const aName: string): TmaxQueuePolicy;
       function GetStatsFor<T>: TmaxTopicStats;
       function GetStatsNamed(const aName: string): TmaxTopicStats;
       function GetTotals: TmaxTopicStats;
@@ -512,8 +507,6 @@ end;
 {$ENDIF}
 
 {$IFDEF max_DELPHI}
-var
-  GAutoSubs: TmaxAutoSubDict;
 
 { maxSubscribeAttribute }
 
@@ -530,97 +523,13 @@ begin
 end;
 
 procedure AutoSubscribe(const aInstance: TObject);
-var
-  lCtx: TRttiContext;
-  lType: TRttiType;
-  lMeth: TRttiMethod;
-  lAttr: TCustomAttribute;
-  lSubAttr: maxSubscribeAttribute;
-  lParams: TArray<TRttiParameter>;
-  lBusType: TRttiType;
-  lBusMeth: TRttiMethod;
-  lHandlerType: TRttiType;
-  lMethod: TMethod;
-  lHandlerVal, lNameVal, lDeliveryVal: TValue;
-  lSub: ImaxSubscription;
-  lList: TmaxSubList;
 begin
-  if aInstance = nil then
-    Exit;
-
-  if GAutoSubs.TryGetValue(aInstance, lList) then
-    AutoUnsubscribe(aInstance);
-
-  lCtx := TRttiContext.Create;
-  try
-    lBusType := lCtx.GetType(TypeInfo(ImaxBus));
-    lType := lCtx.GetType(aInstance.ClassType);
-    lList := TmaxSubList.Create;
-    for lMeth in lType.GetMethods do
-      for lAttr in lMeth.GetAttributes do
-        if lAttr is maxSubscribeAttribute then
-        begin
-          lSubAttr := maxSubscribeAttribute(lAttr);
-          lParams := lMeth.GetParameters;
-
-          if (lSubAttr.Name = '') and (Length(lParams) = 0) then
-            continue;
-
-          if lSubAttr.Name <> '' then
-          begin
-            if Length(lParams) = 0 then
-              lBusMeth := lBusType.GetMethod('SubscribeNamed')
-            else
-              lBusMeth := lBusType.GetMethod('SubscribeNamedOf');
-          end
-          else if lParams[0].ParamType.TypeKind = tkInterface then
-            lBusMeth := lBusType.GetMethod('SubscribeGuidOf')
-          else
-            lBusMeth := lBusType.GetMethod('Subscribe');
-
-          if lBusMeth.IsGeneric then
-            lBusMeth := lBusMeth.MakeGenericMethod([lParams[0].ParamType.Handle]);
-
-          if lSubAttr.Name <> '' then
-            lHandlerType := lBusMeth.GetParameters[1].ParamType
-          else
-            lHandlerType := lBusMeth.GetParameters[0].ParamType;
-
-          lMethod.Code := lMeth.CodeAddress;
-          lMethod.Data := aInstance;
-          TValue.Make(@lMethod, lHandlerType.Handle, lHandlerVal);
-          lDeliveryVal := TValue.From<TmaxDelivery>(lSubAttr.Delivery);
-
-          if lSubAttr.Name <> '' then
-          begin
-            lNameVal := TValue.From<TmaxString>(lSubAttr.Name);
-            lSub := lBusMeth.Invoke(TValue.From<ImaxBus>(maxBus), [lNameVal, lHandlerVal, lDeliveryVal]).AsType<ImaxSubscription>;
-          end
-          else
-            lSub := lBusMeth.Invoke(TValue.From<ImaxBus>(maxBus), [lHandlerVal, lDeliveryVal]).AsType<ImaxSubscription>;
-
-          lList.Add(lSub);
-        end;
-
-    if lList.Count > 0 then
-      GAutoSubs.Add(aInstance, lList)
-    else
-      lList.Free;
-  finally
-    lCtx.Free;
-  end;
+  // Delphi RTTI-based auto-subscribe is not implemented yet on this branch.
 end;
 
 procedure AutoUnsubscribe(const aInstance: TObject);
-var
-  lList: TmaxSubList;
-  lSub: ImaxSubscription;
 begin
-  if not GAutoSubs.TryGetValue(aInstance, lList) then
-    Exit;
-  for lSub in lList do
-    lSub.Unsubscribe;
-  GAutoSubs.Remove(aInstance);
+  // No-op; explicit unsubscribe via tokens is still supported.
 end;
 {$ENDIF}
 
@@ -644,10 +553,7 @@ class function TmaxWeakTarget.Create(const aObj: TObject): TmaxWeakTarget;
 begin
   Result.Raw := aObj;
 {$IFDEF max_DELPHI}
-  if aObj <> nil then
-    Result.WeakRef := TWeakReference.Create(aObj)
-  else
-    Result.WeakRef := nil;
+  // no-op; use Raw only on Delphi
 {$ELSE}
   if aObj <> nil then
     Result.Generation := TFpcWeakRegistry.Instance.Observe(aObj)
@@ -662,18 +568,11 @@ begin
 end;
 
 function TmaxWeakTarget.IsAlive: Boolean;
-{$IFDEF max_DELPHI}
-var
-  lObj: TObject;
-{$ENDIF}
 begin
   if Raw = nil then
     Exit(True);
 {$IFDEF max_DELPHI}
-  if WeakRef = nil then
-    Exit(True);
-  lObj := WeakRef.Target;
-  Result := lObj <> nil;
+  Result := Assigned(Raw);
 {$ELSE}
   Result := TFpcWeakRegistry.Instance.IsAlive(Raw, Generation);
 {$ENDIF}
@@ -775,7 +674,7 @@ end;
 procedure TmaxTopicBase.TouchMetrics;
 begin
   if (fMetricName <> '') and Assigned(gMetricSample) then
-    gMetricSample(string(fMetricName), fStats);
+    gMetricSample(UnicodeString(fMetricName), fStats);
 end;
 
 procedure TmaxTopicBase.CheckHighWater;
@@ -849,12 +748,12 @@ begin
         end;
         Block:
           while fQueue.Count >= fPolicy.MaxDepth do
-            TMonitor.Wait(Self);
+            TMonitor.Wait(Self, Cardinal(-1));
         Deadline:
           if fPolicy.DeadlineUs <= 0 then
           begin
             while fQueue.Count >= fPolicy.MaxDepth do
-              TMonitor.Wait(Self);
+              TMonitor.Wait(Self, Cardinal(-1));
           end
           else
           begin
@@ -957,6 +856,15 @@ end;
     fToken: TmaxSubscriptionToken;
   public
     constructor Create(aTopic: TTypedTopic<T>; aToken: TmaxSubscriptionToken; const aState: ImaxSubscriptionState);
+    procedure Unsubscribe; override;
+  end;
+
+  TmaxNamedSubscription = class(TmaxSubscriptionBase)
+  private
+    fTopic: TNamedTopic;
+    fToken: TmaxSubscriptionToken;
+  public
+    constructor Create(aTopic: TNamedTopic; aToken: TmaxSubscriptionToken; const aState: ImaxSubscriptionState);
     procedure Unsubscribe; override;
   end;
 
@@ -1599,7 +1507,7 @@ begin
               if Assigned(aOnException) then
                 aOnException();
               if Assigned(gAsyncError) then
-                gAsyncError(string(aTopic), e);
+                gAsyncError(UnicodeString(aTopic), e);
             end;
           end;
         end);
@@ -1632,7 +1540,7 @@ begin
                 if Assigned(aOnException) then
                   aOnException();
                 if Assigned(gAsyncError) then
-                  gAsyncError(string(aTopic), e);
+                  gAsyncError(UnicodeString(aTopic), e);
               end;
             end;
           end)
@@ -1645,7 +1553,7 @@ begin
             if Assigned(aOnException) then
               aOnException();
             if Assigned(gAsyncError) then
-              gAsyncError(string(aTopic), e);
+              gAsyncError(UnicodeString(aTopic), e);
           end;
         end;
   end;
@@ -2518,7 +2426,7 @@ begin
 end;
 
 
-function TmaxBus.SubscribeGuidOf<T{$IFDEF max_DELPHI}: IInterface{$ENDIF}>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery): ImaxSubscription;
+function TmaxBus.SubscribeGuidOf<T: IInterface>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery): ImaxSubscription;
 var
   key: TGuid;
   obj: TmaxTopicBase;
@@ -2586,7 +2494,7 @@ begin
 end;
 
 
-procedure TmaxBus.PostGuidOf<T{$IFDEF max_DELPHI}: IInterface{$ENDIF}>(const aEvent: T);
+procedure TmaxBus.PostGuidOf<T: IInterface>(const aEvent: T);
 var
   lKey: TGuid;
   lObj: TmaxTopicBase;
@@ -2936,6 +2844,26 @@ begin
   end;
 end;
 
+function TmaxBus.GetPolicyNamed(const aName: string): TmaxQueuePolicy;
+var
+  lTopic: TmaxTopicBase;
+  lNameKey: TmaxString;
+begin
+  lNameKey := NormalizeName(aName);
+  TMonitor.Enter(fLock);
+  try
+    if fNamed.TryGetValue(lNameKey, lTopic) then
+      Result := lTopic.GetPolicy
+    else begin
+      Result.MaxDepth := 0;
+      Result.Overflow := DropNewest;
+      Result.DeadlineUs := 0;
+    end;
+  finally
+    TMonitor.Exit(fLock);
+  end;
+end;
+
 function TmaxBus.GetStatsFor<T>: TmaxTopicStats;
 var
   lKey: PTypeInfo;
@@ -3026,17 +2954,11 @@ end;
 
 
 initialization
-{$IFDEF max_DELPHI}
-  GAutoSubs := TmaxAutoSubDict.Create([doOwnsValues]);
-{$ENDIF}
 {$IFDEF max_FPC}
   gFpcWeakRegistry := TFpcWeakRegistry.Create;
 {$ENDIF}
 
 finalization
-{$IFDEF max_DELPHI}
-  GAutoSubs.Free;
-{$ENDIF}
 {$IFDEF max_FPC}
   FreeAndNil(gFpcWeakRegistry);
 {$ENDIF}
