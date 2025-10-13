@@ -2799,8 +2799,13 @@ procedure TmaxBus.EnableSticky<T>(aEnable: Boolean);
 var
   key: PTypeInfo;
   obj: TmaxTopicBase;
+{$IFDEF max_FPC}
+  kvName: specialize TPair<TmaxString, TmaxTypeTopicDict>;
+  kvInner: specialize TPair<PTypeInfo, TmaxTopicBase>;
+{$ELSE}
   kvName: TPair<TmaxString, TmaxTypeTopicDict>;
   kvInner: TPair<PTypeInfo, TmaxTopicBase>;
+{$ENDIF}
   guid: TGuid;
   metric: TmaxString;
 begin
@@ -2838,7 +2843,11 @@ procedure TmaxBus.EnableStickyNamed(const aName: string; aEnable: Boolean);
 var
   obj: TmaxTopicBase;
   typeDict: TmaxTypeTopicDict;
+{$IFDEF max_FPC}
+  kvInner: specialize TPair<PTypeInfo, TmaxTopicBase>;
+{$ELSE}
   kvInner: TPair<PTypeInfo, TmaxTopicBase>;
+{$ENDIF}
   lNameKey: TmaxString;
   metric: TmaxString;
 begin
@@ -2932,11 +2941,19 @@ end;
 
 procedure TmaxBus.UnsubscribeAllFor(const aTarget: TObject);
 var
+{$IFDEF max_FPC}
+  kvTyped: specialize TPair<PTypeInfo, TmaxTopicBase>;
+  kvNamed: specialize TPair<TmaxString, TmaxTopicBase>;
+  kvName: specialize TPair<TmaxString, TmaxTypeTopicDict>;
+  kvInner: specialize TPair<PTypeInfo, TmaxTopicBase>;
+  kvGuid: specialize TPair<TGuid, TmaxTopicBase>;
+{$ELSE}
   kvTyped: TPair<PTypeInfo, TmaxTopicBase>;
   kvNamed: TPair<TmaxString, TmaxTopicBase>;
   kvName: TPair<TmaxString, TmaxTypeTopicDict>;
   kvInner: TPair<PTypeInfo, TmaxTopicBase>;
   kvGuid: TPair<TGuid, TmaxTopicBase>;
+{$ENDIF}
 begin
   if aTarget = nil then
     Exit;
