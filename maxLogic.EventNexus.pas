@@ -1401,6 +1401,7 @@ begin
           lSub: TTypedSubscriber<T>;
           lInner: T;
           lErrs: TmaxExceptionList;
+          ex: EmaxAggregateException;
         begin
           if not aTopic.PopPending(lPendingKey, lInner) then
             Exit;
@@ -1448,7 +1449,20 @@ begin
             end;
           end;
           if lErrs <> nil then
-            raise EmaxAggregateException.Create(lErrs);
+          begin
+            // Forward async errors via global hook; avoid unhandled exception in scheduler thread.
+            if Assigned(gAsyncError) then
+            begin
+              ex := EmaxAggregateException.Create(lErrs);
+              try
+                gAsyncError(UnicodeString(aTopicName), ex);
+              finally
+                ex.Free;
+              end;
+            end
+            else
+              lErrs.Free;
+          end;
         end,
         aTopic.CoalesceWindow);
     end);
