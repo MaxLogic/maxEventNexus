@@ -15,7 +15,7 @@ uses
   {$IFDEF max_FPC}
   Generics.Collections, TypInfo, maxLogic.EventNexus.Threading.Adapter, maxlogic.fpc.diagnostics, maxlogic.fpc.compatibility
   {$ELSE}
-  System.Generics.Collections, TypInfo, maxLogic.EventNexus.Threading.Adapter, System.Diagnostics
+  System.Generics.Collections, System.TypInfo, maxLogic.EventNexus.Threading.Adapter, System.Diagnostics
   {$ENDIF};
 
 const
