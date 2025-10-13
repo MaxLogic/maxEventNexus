@@ -1075,7 +1075,13 @@ begin
     if fCoalesce then
     begin
       if fPending = nil then
+      begin
+        {$IFDEF max_FPC}
+        fPending := specialize TDictionary<TmaxString, T>.Create;
+        {$ELSE}
         fPending := TDictionary<TmaxString, T>.Create;
+        {$ENDIF}
+      end;
     end
     else if fPending <> nil then
     begin
