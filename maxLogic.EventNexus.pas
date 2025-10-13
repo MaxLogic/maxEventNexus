@@ -12,8 +12,11 @@ interface
 
 uses
   Classes, SysUtils,
+  {$IFDEF max_FPC}
+  Generics.Collections, TypInfo, maxLogic.EventNexus.Threading.Adapter, maxlogic.fpc.diagnostics, maxlogic.fpc.compatibility
+  {$ELSE}
   System.Generics.Collections, TypInfo, maxLogic.EventNexus.Threading.Adapter, maxlogic.fpc.diagnostics
-  {$IFDEF max_FPC}, maxlogic.fpc.compatibility{$ENDIF}
+  {$ENDIF}
   {$IFDEF max_DELPHI}{$ENDIF};
 
 const
@@ -30,8 +33,8 @@ type
 
 {$IFDEF max_FPC}
   type
-    TmaxProc = procedure;
-    TmaxProcOf<T> = procedure(const aValue: T);
+    TmaxProc = procedure is nested;
+    TmaxProcOf<T> = procedure(const aValue: T) is nested;
 {$ELSE}
   type
     TmaxProc = reference to procedure;
@@ -41,9 +44,7 @@ type
   TmaxProcQueue = TQueue<TmaxProc>;
   TmaxExceptionList = TObjectList<Exception>;
 
-{$IFNDEF max_FPC}
   TmaxMonitorObject = TObject;
-{$ENDIF}
 
 
   TmaxDelivery = (Posting, Main, Async, Background);
