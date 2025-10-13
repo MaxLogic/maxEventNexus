@@ -12,7 +12,7 @@ interface
 
 uses
   Classes, SysUtils,
-  Generics.Collections, TypInfo, maxlogic.fpc.diagnostics
+  Generics.Collections, TypInfo, maxLogic.EventNexus.Threading.Adapter, maxlogic.fpc.diagnostics
   {$IFDEF max_FPC}, maxlogic.fpc.compatibility{$ENDIF}
   {$IFDEF max_DELPHI}, Rtti, System.WeakReference{$ENDIF};
 
@@ -23,12 +23,8 @@ type
   TmaxString = type UnicodeString;
 
 {$IFDEF max_FPC}
-  TmaxProc = TProc;
-  TmaxProcOf<T> = TProc1<T>;
   TmaxKeyFunc<T> = function(const aValue: T): TmaxString is nested;
 {$ELSE}
-  TmaxProc = reference to procedure;
-  TmaxProcOf<T> = reference to procedure(const aValue: T);
   TmaxKeyFunc<T> = reference to function(const aValue: T): TmaxString;
 {$ENDIF}
 
@@ -42,14 +38,6 @@ type
 
   TmaxDelivery = (Posting, Main, Async, Background);
   TmaxOverflow = (DropNewest, DropOldest, Block, Deadline);
-
-  ImaxAsync = interface
-    ['{02AB5A8B-8A3F-4F29-9C1E-1A31B8E7B6A9}']
-    procedure RunAsync(const aProc: TmaxProc);
-    procedure RunOnMain(const aProc: TmaxProc);
-    procedure RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);
-    function IsMainThread: Boolean;
-  end;
 
   ImaxSubscription = interface
     ['{79C1B0D9-6A9E-4C6B-8E96-88A84E4F1E03}']
@@ -153,8 +141,8 @@ type
 function maxBus: ImaxBus;
 procedure maxSetAsyncErrorHandler(const aHandler: TOnAsyncError);
 procedure maxSetMetricCallback(const aSampler: TOnMetricSample);
-procedure maxSetAsyncScheduler(const aScheduler: ImaxAsync);
-function maxGetAsyncScheduler: ImaxAsync;
+procedure maxSetAsyncScheduler(const aScheduler: IEventNexusScheduler);
+function maxGetAsyncScheduler: IEventNexusScheduler;
 
 
 {$IFDEF max_DELPHI}
@@ -263,7 +251,7 @@ type
 
   TmaxBus = class(TInterfacedObject, ImaxBus, ImaxBusAdvanced, ImaxBusQueues, ImaxBusMetrics)
   private
-    fAsync: ImaxAsync;
+    fAsync: IEventNexusScheduler;
     fLock: TmaxMonitorObject;
     fTyped: TmaxTypeTopicDict;
     fNamed: TmaxNameTopicDict;
@@ -302,31 +290,22 @@ type
       function GetStatsNamed(const aName: string): TmaxTopicStats;
       function GetTotals: TmaxTopicStats;
   public
-    constructor Create(const aAsync: ImaxAsync);
+    constructor Create(const aAsync: IEventNexusScheduler);
     destructor Destroy; override;
     procedure Dispatch(const aTopic: TmaxString; aDelivery: TmaxDelivery; const aHandler: TmaxProc; const aOnException: TmaxProc = nil);
   end;
 
-  TmaxNexusAsync = class(TInterfacedObject, ImaxAsync)
-  public
-    procedure RunAsync(const aProc: TmaxProc);
-    procedure RunOnMain(const aProc: TmaxProc);
-    procedure RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);
-    function IsMainThread: Boolean;
-  end;
-
 implementation
-
-{$IFDEF max_FPC}
-uses SyncObjs;
-{$ENDIF}
+uses
+  maxLogic.EventNexus.Threading.RawThread
+  {$IFDEF max_FPC}, SyncObjs{$ENDIF};
 
 var
   gAsyncError: TOnAsyncError = nil;
   gMetricSample: TOnMetricSample = nil;
   gBus: ImaxBus = nil;
-  gAsyncScheduler: ImaxAsync = nil;
-  gAsyncFallback: ImaxAsync = nil;
+  gAsyncScheduler: IEventNexusScheduler = nil;
+  gAsyncFallback: IEventNexusScheduler = nil;
 
 {$IFDEF max_FPC}
 type
@@ -981,48 +960,9 @@ end;
     procedure Unsubscribe; override;
   end;
 
-  TmaxNamedSubscription = class(TmaxSubscriptionBase)
-  private
-    fTopic: TNamedTopic;
-    fToken: TmaxSubscriptionToken;
-  public
-    constructor Create(aTopic: TNamedTopic; aToken: TmaxSubscriptionToken; const aState: ImaxSubscriptionState);
-    procedure Unsubscribe; override;
-  end;
-
-type
-  TmaxProcAdapter = class
-  private
-    fProc: TmaxProc;
-  public
-    constructor Create(const aProc: TmaxProc);
-    procedure Invoke;
-  end;
-
-  TmaxProcThread = class(TThread)
-  private
-    fProc: TmaxProc;
-    fDelayUs: Integer;
-  protected
-    procedure Execute; override;
-  public
-    constructor Create(const aProc: TmaxProc; aDelayUs: Integer);
-    class procedure Start(const aProc: TmaxProc; aDelayUs: Integer = 0); static;
-  end;
-
-function ProcAssigned(const aProc: TmaxProc): Boolean; inline;
-
 function NormalizeName(const aName: TmaxString): TmaxString; inline;
 begin
   Result := TmaxString(UpperCase(UnicodeString(aName)));
-end;
-
-function ProcAssigned(const aProc: TmaxProc): Boolean;
-var
-  m: TMethod;
-begin
-  m := TMethod(aProc);
-  Result := m.Code <> nil;
 end;
 
 function TypeMetricName(const aInfo: PTypeInfo): TmaxString; inline;
@@ -1043,67 +983,6 @@ end;
 function GuidMetricName(const aGuid: TGuid): TmaxString; inline;
 begin
   Result := TmaxString(GuidToString(aGuid));
-end;
-
-{ TmaxProcAdapter }
-
-constructor TmaxProcAdapter.Create(const aProc: TmaxProc);
-begin
-  inherited Create;
-  fProc := aProc;
-end;
-
-procedure TmaxProcAdapter.Invoke;
-var
-  lProc: TmaxProc;
-begin
-  lProc := fProc;
-  try
-    if ProcAssigned(lProc) then
-      lProc();
-  finally
-    Free;
-  end;
-end;
-
-{ TmaxProcThread }
-
-constructor TmaxProcThread.Create(const aProc: TmaxProc; aDelayUs: Integer);
-begin
-  inherited Create(True);
-  FreeOnTerminate := True;
-  fProc := aProc;
-  if aDelayUs > 0 then
-    fDelayUs := aDelayUs
-  else
-    fDelayUs := 0;
-end;
-
-procedure TmaxProcThread.Execute;
-var
-  lProc: TmaxProc;
-  lDelayMs: Integer;
-begin
-  lProc := fProc;
-  fProc := nil;
-  if fDelayUs > 0 then
-  begin
-    lDelayMs := fDelayUs div 1000;
-    if lDelayMs > 0 then
-      TThread.Sleep(lDelayMs);
-  end;
-  if ProcAssigned(lProc) then
-    lProc();
-end;
-
-class procedure TmaxProcThread.Start(const aProc: TmaxProc; aDelayUs: Integer);
-var
-  lThread: TmaxProcThread;
-begin
-  if not ProcAssigned(aProc) then
-    Exit;
-  lThread := TmaxProcThread.Create(aProc, aDelayUs);
-  lThread.Start;
 end;
 
 { TTypedTopic<T> }
@@ -1554,12 +1433,12 @@ begin
   end;
 end;
 
-function DefaultAsync: ImaxAsync;
+function DefaultAsync: IEventNexusScheduler;
 begin
   if gAsyncScheduler <> nil then
     Exit(gAsyncScheduler);
   if gAsyncFallback = nil then
-    gAsyncFallback := TmaxNexusAsync.Create;
+    gAsyncFallback := TmaxRawThreadScheduler.Create;
   Result := gAsyncFallback;
 end;
 
@@ -1580,57 +1459,18 @@ begin
   gMetricSample := aSampler;
 end;
 
-procedure maxSetAsyncScheduler(const aScheduler: ImaxAsync);
+procedure maxSetAsyncScheduler(const aScheduler: IEventNexusScheduler);
 begin
   gAsyncScheduler := aScheduler;
 end;
 
-function maxGetAsyncScheduler: ImaxAsync;
+function maxGetAsyncScheduler: IEventNexusScheduler;
 begin
   if gAsyncScheduler <> nil then
     Result := gAsyncScheduler
   else
     Result := DefaultAsync;
 end;
-
-{ TmaxNexusAsync }
-
-procedure TmaxNexusAsync.RunAsync(const aProc: TmaxProc);
-begin
-  TmaxProcThread.Start(aProc);
-end;
-
-procedure TmaxNexusAsync.RunOnMain(const aProc: TmaxProc);
-var
-  lAdapter: TmaxProcAdapter;
-begin
-  if not ProcAssigned(aProc) then
-    Exit;
-  lAdapter := TmaxProcAdapter.Create(aProc);
-  try
-    TThread.ForceQueue(nil, lAdapter.Invoke);
-  except
-    lAdapter.Free;
-    raise;
-  end;
-end;
-
-procedure TmaxNexusAsync.RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);
-var
-  lDelay: Integer;
-begin
-  if aDelayUs < 0 then
-    lDelay := 0
-  else
-    lDelay := aDelayUs;
-  TmaxProcThread.Start(aProc, lDelay);
-end;
-
-function TmaxNexusAsync.IsMainThread: Boolean;
-begin
-  Result := TThread.CurrentThread.ThreadID = MainThreadID;
-end;
-
 { TmaxBus }
 
 
@@ -1708,7 +1548,7 @@ end;
 
 { TmaxBus }
 
-constructor TmaxBus.Create(const aAsync: ImaxAsync);
+constructor TmaxBus.Create(const aAsync: IEventNexusScheduler);
 begin
   inherited Create;
   fAsync := aAsync;
