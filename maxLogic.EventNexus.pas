@@ -164,7 +164,7 @@ type
     fStats: TmaxTopicStats;
     fMetricName: TmaxString;
     fWarnedHighWater: Boolean;
-    procedure TouchMetrics; inline;
+    procedure TouchMetrics;
     procedure CheckHighWater; inline;
   public
     constructor Create;
@@ -945,17 +945,15 @@ end;
 
 function TTypedTopic<T>.Add(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery; out aState: ImaxSubscriptionState): TmaxSubscriptionToken;
 var
-  lMethod: TMethod;
   lNew: TArray<TTypedSubscriber<T>>;
   lSub: TTypedSubscriber<T>;
 begin
   if fNextToken = 0 then
     fNextToken := 1;
-  lMethod := TMethod(aHandler);
   lSub.Handler := aHandler;
   lSub.Mode := aMode;
   lSub.Token := fNextToken;
-  lSub.Target := TmaxWeakTarget.Create(TObject(lMethod.Data));
+  lSub.Target := TmaxWeakTarget.Create(nil); // cannot derive target from an anonymous method; treat as always-alive
   lSub.State := TmaxSubscriptionState.Create;
   aState := lSub.State;
   Inc(fNextToken);
@@ -1140,17 +1138,15 @@ end;
 
 function TNamedTopic.Add(const aHandler: TmaxProc; aMode: TmaxDelivery; out aState: ImaxSubscriptionState): TmaxSubscriptionToken;
 var
-  lMethod: TMethod;
   lSub: TNamedSubscriber;
   lNew: TArray<TNamedSubscriber>;
 begin
   if fNextToken = 0 then
     fNextToken := 1;
-  lMethod := TMethod(aHandler);
   lSub.Handler := aHandler;
   lSub.Mode := aMode;
   lSub.Token := fNextToken;
-  lSub.Target := TmaxWeakTarget.Create(TObject(lMethod.Data));
+  lSub.Target := TmaxWeakTarget.Create(nil); // cannot derive target from an anonymous method; treat as always-alive
   lSub.State := TmaxSubscriptionState.Create;
   aState := lSub.State;
   Inc(fNextToken);
@@ -2441,7 +2437,7 @@ begin
 end;
 
 
-function TmaxBus.SubscribeGuidOf<T: IInterface>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery): ImaxSubscription;
+function TmaxBus.SubscribeGuidOf<T>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery): ImaxSubscription;
 var
   key: TGuid;
   obj: TmaxTopicBase;
@@ -2509,7 +2505,7 @@ begin
 end;
 
 
-procedure TmaxBus.PostGuidOf<T: IInterface>(const aEvent: T);
+procedure TmaxBus.PostGuidOf<T>(const aEvent: T);
 var
   lKey: TGuid;
   lObj: TmaxTopicBase;
