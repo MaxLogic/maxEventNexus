@@ -62,16 +62,31 @@ type
 
   ImaxBus = interface
     ['{1B8E6C9E-5F96-4F0C-9F88-0B7B8E885D4A}']
+    function Subscribe<T>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
+    procedure Post<T>(const aEvent: T);
+    function TryPost<T>(const aEvent: T): Boolean; overload;
+
     function SubscribeNamed(const aName: TmaxString; const aHandler: TmaxProc; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
     procedure PostNamed(const aName: TmaxString);
     function TryPostNamed(const aName: TmaxString): Boolean; overload;
+
+    function SubscribeNamedOf<T>(const aName: TmaxString; const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
+    procedure PostNamedOf<T>(const aName: TmaxString; const aEvent: T);
+    function TryPostNamedOf<T>(const aName: TmaxString; const aEvent: T): Boolean; overload;
+
+    function SubscribeGuidOf<T: IInterface>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
+    procedure PostGuidOf<T: IInterface>(const aEvent: T);
+
     procedure UnsubscribeAllFor(const aTarget: TObject);
     procedure Clear;
   end;
 
   ImaxBusAdvanced = interface(ImaxBus)
     ['{AB5E6E6D-8B1F-4B63-8B59-8A3B9D8C71B1}']
+    procedure EnableSticky<T>(aEnable: Boolean);
     procedure EnableStickyNamed(const aName: string; aEnable: Boolean);
+    procedure EnableCoalesceOf<T>(const aKeyOf: TmaxKeyFunc<T>; aWindowUs: Integer = 0);
+    procedure EnableCoalesceNamedOf<T>(const aName: string; const aKeyOf: TmaxKeyFunc<T>; aWindowUs: Integer = 0);
   end;
 
   TmaxQueuePolicy = record
@@ -82,8 +97,10 @@ type
 
   ImaxBusQueues = interface
     ['{E55F7B60-9B31-4C80-9B2C-8D1F0E26FF9C}']
+    procedure SetPolicyFor<T>(const aPolicy: TmaxQueuePolicy);
     procedure SetPolicyNamed(const aName: string; const aPolicy: TmaxQueuePolicy);
-    function GetPolicyNamed(const aName: string): TmaxQueuePolicy;
+    function  GetPolicyFor<T>: TmaxQueuePolicy;
+    function  GetPolicyNamed(const aName: string): TmaxQueuePolicy;
   end;
 
   TmaxTopicStats = record
@@ -97,6 +114,7 @@ type
 
   ImaxBusMetrics = interface
     ['{2C4B91E3-1C0A-4B5C-B8B0-0C1A5C3E6D10}']
+    function GetStatsFor<T>: TmaxTopicStats;
     function GetStatsNamed(const aName: string): TmaxTopicStats;
     function GetTotals: TmaxTopicStats;
   end;
