@@ -25,6 +25,7 @@ type
   TmaxString = type UnicodeString;
 
 {$IFDEF max_FPC}
+  TGuid = TGUID;
   TmaxKeyFunc<T> = function(const aValue: T): TmaxString is nested;
 {$ELSE}
   TmaxKeyFunc<T> = reference to function(const aValue: T): TmaxString;
