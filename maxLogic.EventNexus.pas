@@ -65,7 +65,7 @@ type
     ['{1B8E6C9E-5F96-4F0C-9F88-0B7B8E885D4A}']
     function SubscribeNamed(const aName: TmaxString; const aHandler: TmaxProc; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
     procedure PostNamed(const aName: TmaxString);
-    function TryPostNamed(const aName: TmaxString): Boolean; overload;
+    function TryPostNamed(const aName: TmaxString): Boolean;
 
     procedure UnsubscribeAllFor(const aTarget: TObject);
     procedure Clear;
@@ -341,7 +341,7 @@ type
 
       function SubscribeNamed(const aName: TmaxString; const aHandler: TmaxProc; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
       procedure PostNamed(const aName: TmaxString);
-      function TryPostNamed(const aName: TmaxString): Boolean; overload;
+      function TryPostNamed(const aName: TmaxString): Boolean;
 
       function SubscribeNamedOf<T>(const aName: TmaxString; const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
       procedure PostNamedOf<T>(const aName: TmaxString; const aEvent: T);
