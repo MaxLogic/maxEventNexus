@@ -259,7 +259,13 @@ type
     destructor Destroy; override;
   end;
 
+var
+  { moved to interface section to prevent this error:
+    E2506 Method of parameterized type declared in interface section must not use local symbol 'gAsyncError'
+    what that means: The Delphi compiler expands generics at the use site, not where they are declared. Any external reference must therefore be resolvable by any other unit including that interface. A symbol from the implementation section cannot be referenced during that process, hence the E2506 error.}
+  gAsyncError: TOnAsyncError = nil;
 
+type
   TmaxBus = class(TInterfacedObject, ImaxBus, ImaxBusAdvanced, ImaxBusQueues, ImaxBusMetrics)
   private
     fAsync: IEventNexusScheduler;
@@ -307,6 +313,63 @@ type
     procedure Dispatch(const aTopic: TmaxString; aDelivery: TmaxDelivery; const aHandler: TmaxProc; const aOnException: TmaxProc = nil);
   end;
 
+
+
+  type
+    TNamedSubscriber = record
+      Handler: TmaxProc;
+      Mode: TmaxDelivery;
+      Token: TmaxSubscriptionToken;
+      Target: TmaxWeakTarget;
+      State: ImaxSubscriptionState;
+    end;
+
+  TNamedTopic = class(TmaxTopicBase)
+  private
+    fSubs: TArray<TNamedSubscriber>;
+    fHasLast: Boolean;
+    fNextToken: TmaxSubscriptionToken;
+    procedure PruneDead;
+  public
+    function Add(const aHandler: TmaxProc; aMode: TmaxDelivery; out aState: ImaxSubscriptionState): TmaxSubscriptionToken;
+    procedure RemoveByToken(aToken: TmaxSubscriptionToken);
+    function Snapshot: TArray<TNamedSubscriber>;
+    procedure RemoveByTarget(const aTarget: TObject); override;
+    procedure SetSticky(aEnable: Boolean); override;
+    procedure Cache;
+    function HasCached: Boolean;
+  end;
+
+  TmaxSubscriptionBase = class(TInterfacedObject, ImaxSubscription)
+  protected
+    fActive: Boolean;
+    fState: ImaxSubscriptionState;
+  public
+    constructor Create(const aState: ImaxSubscriptionState);
+    destructor Destroy; override;
+    procedure Unsubscribe; virtual; abstract;
+    function IsActive: Boolean;
+  end;
+
+  TmaxTypedSubscription<T> = class(TmaxSubscriptionBase)
+  private
+    fTopic: TTypedTopic<T>;
+    fToken: TmaxSubscriptionToken;
+  public
+    constructor Create(aTopic: TTypedTopic<T>; aToken: TmaxSubscriptionToken; const aState: ImaxSubscriptionState);
+    procedure Unsubscribe; override;
+  end;
+
+  TmaxNamedSubscription = class(TmaxSubscriptionBase)
+  private
+    fTopic: TNamedTopic;
+    fToken: TmaxSubscriptionToken;
+  public
+    constructor Create(aTopic: TNamedTopic; aToken: TmaxSubscriptionToken; const aState: ImaxSubscriptionState);
+    procedure Unsubscribe; override;
+  end;
+
+
 implementation
 uses
   maxLogic.EventNexus.Threading.RawThread
@@ -314,7 +377,6 @@ uses
 
 
 var
-  gAsyncError: TOnAsyncError = nil;
   gMetricSample: TOnMetricSample = nil;
   gBus: ImaxBus = nil;
   gAsyncScheduler: IEventNexusScheduler = nil;
@@ -814,7 +876,7 @@ begin
         TouchMetrics;
         Exit;
       end;
-      lProc := fQueue.Dequeue;
+      lProc := fQueue.Dequeue();
       if fStats.CurrentQueueDepth > 0 then
         Dec(fStats.CurrentQueueDepth);
       CheckHighWater;
@@ -831,60 +893,6 @@ procedure TmaxTopicBase.SetSticky(aEnable: Boolean);
 begin
   fSticky := aEnable;
 end;
-
-  type
-    TNamedSubscriber = record
-      Handler: TmaxProc;
-      Mode: TmaxDelivery;
-      Token: TmaxSubscriptionToken;
-      Target: TmaxWeakTarget;
-      State: ImaxSubscriptionState;
-    end;
-
-  TNamedTopic = class(TmaxTopicBase)
-  private
-    fSubs: TArray<TNamedSubscriber>;
-    fHasLast: Boolean;
-    fNextToken: TmaxSubscriptionToken;
-    procedure PruneDead;
-  public
-    function Add(const aHandler: TmaxProc; aMode: TmaxDelivery; out aState: ImaxSubscriptionState): TmaxSubscriptionToken;
-    procedure RemoveByToken(aToken: TmaxSubscriptionToken);
-    function Snapshot: TArray<TNamedSubscriber>;
-    procedure RemoveByTarget(const aTarget: TObject); override;
-    procedure SetSticky(aEnable: Boolean); override;
-    procedure Cache;
-    function HasCached: Boolean;
-  end;
-
-  TmaxSubscriptionBase = class(TInterfacedObject, ImaxSubscription)
-  protected
-    fActive: Boolean;
-    fState: ImaxSubscriptionState;
-  public
-    constructor Create(const aState: ImaxSubscriptionState);
-    destructor Destroy; override;
-    procedure Unsubscribe; virtual; abstract;
-    function IsActive: Boolean;
-  end;
-
-  TmaxTypedSubscription<T> = class(TmaxSubscriptionBase)
-  private
-    fTopic: TTypedTopic<T>;
-    fToken: TmaxSubscriptionToken;
-  public
-    constructor Create(aTopic: TTypedTopic<T>; aToken: TmaxSubscriptionToken; const aState: ImaxSubscriptionState);
-    procedure Unsubscribe; override;
-  end;
-
-  TmaxNamedSubscription = class(TmaxSubscriptionBase)
-  private
-    fTopic: TNamedTopic;
-    fToken: TmaxSubscriptionToken;
-  public
-    constructor Create(aTopic: TNamedTopic; aToken: TmaxSubscriptionToken; const aState: ImaxSubscriptionState);
-    procedure Unsubscribe; override;
-  end;
 
 function NormalizeName(const aName: TmaxString): TmaxString; inline;
 begin
@@ -1677,6 +1685,8 @@ var
   lDropVal: T;
   lMetric: TmaxString;
 begin
+  lIsNew:= False; // prevent compiler warning: variable might not have been initialized
+
   lKey := TypeInfo(T);
   lMetric := TypeMetricName(lKey);
   TMonitor.Enter(fLock);
@@ -1788,6 +1798,8 @@ var
   lDropVal: T;
   lMetric: TmaxString;
 begin
+  lIsNew:= False; // prevent compiler warning: variable might not have been initialized
+
   Result := True;
   lKey := TypeInfo(T);
   lMetric := TypeMetricName(lKey);
@@ -2228,6 +2240,8 @@ var
   lMetric: TmaxString;
   key: PTypeInfo;
 begin
+  lIsNew:= False; // prevent compiler warning: variable might not have been initialized
+
   key := TypeInfo(T);
   lNameKey := NormalizeName(aName);
   lMetric := NamedTypeMetricName(lNameKey, key);
@@ -2353,6 +2367,8 @@ var
   lMetric: TmaxString;
   key: PTypeInfo;
 begin
+  lIsNew:= False; // prevent compiler warning: variable might not have been initialized
+
   Result := True;
   key := TypeInfo(T);
   lNameKey := NormalizeName(aName);
@@ -2545,6 +2561,8 @@ var
   lDrop: T;
   lMetric: TmaxString;
 begin
+  lIsNew:= False; // prevent compiler warning: variable might not have been initialized
+
   lKey := GetTypeData(TypeInfo(T))^.Guid;
   lMetric := GuidMetricName(lKey);
   TMonitor.Enter(fLock);
