@@ -903,7 +903,7 @@ end;
 
 function NamedTypeMetricName(const aName: TmaxString; const aInfo: PTypeInfo): TmaxString; inline;
 begin
-  Result := aName + ':' + TmaxString(GetTypeName(aInfo));
+  Result := TmaxString(UnicodeString(aName) + ':' + UnicodeString(GetTypeName(aInfo)));
 end;
 
 function GuidMetricName(const aGuid: TGuid): TmaxString; inline;
