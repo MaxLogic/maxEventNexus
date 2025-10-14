@@ -63,20 +63,9 @@ type
 
   ImaxBus = interface
     ['{1B8E6C9E-5F96-4F0C-9F88-0B7B8E885D4A}']
-    function Subscribe<T>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
-    procedure Post<T>(const aEvent: T);
-    function TryPost<T>(const aEvent: T): Boolean; overload;
-
     function SubscribeNamed(const aName: TmaxString; const aHandler: TmaxProc; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
     procedure PostNamed(const aName: TmaxString);
     function TryPostNamed(const aName: TmaxString): Boolean; overload;
-
-    function SubscribeNamedOf<T>(const aName: TmaxString; const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
-    procedure PostNamedOf<T>(const aName: TmaxString; const aEvent: T);
-    function TryPostNamedOf<T>(const aName: TmaxString; const aEvent: T): Boolean; overload;
-
-    function SubscribeGuidOf<T: IInterface>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
-    procedure PostGuidOf<T: IInterface>(const aEvent: T);
 
     procedure UnsubscribeAllFor(const aTarget: TObject);
     procedure Clear;
@@ -84,10 +73,7 @@ type
 
   ImaxBusAdvanced = interface(ImaxBus)
     ['{AB5E6E6D-8B1F-4B63-8B59-8A3B9D8C71B1}']
-    procedure EnableSticky<T>(aEnable: Boolean);
     procedure EnableStickyNamed(const aName: string; aEnable: Boolean);
-    procedure EnableCoalesceOf<T>(const aKeyOf: TmaxKeyFunc<T>; aWindowUs: Integer = 0);
-    procedure EnableCoalesceNamedOf<T>(const aName: string; const aKeyOf: TmaxKeyFunc<T>; aWindowUs: Integer = 0);
   end;
 
   TmaxQueuePolicy = record
@@ -98,9 +84,7 @@ type
 
   ImaxBusQueues = interface
     ['{E55F7B60-9B31-4C80-9B2C-8D1F0E26FF9C}']
-    procedure SetPolicyFor<T>(const aPolicy: TmaxQueuePolicy);
     procedure SetPolicyNamed(const aName: string; const aPolicy: TmaxQueuePolicy);
-    function  GetPolicyFor<T>: TmaxQueuePolicy;
     function  GetPolicyNamed(const aName: string): TmaxQueuePolicy;
   end;
 
@@ -115,9 +99,61 @@ type
 
   ImaxBusMetrics = interface
     ['{2C4B91E3-1C0A-4B5C-B8B0-0C1A5C3E6D10}']
-    function GetStatsFor<T>: TmaxTopicStats;
     function GetStatsNamed(const aName: string): TmaxTopicStats;
     function GetTotals: TmaxTopicStats;
+  end;
+
+  ImaxBusImpl = interface
+    ['{B6E03A95-642B-4F6A-AE2E-704F7E7E9A3E}']
+    function GetSelf: TObject;
+  end;
+
+  // Forward declare concrete bus for helpers
+  TmaxBus = class;
+
+  ImaxBusHelper = record helper for ImaxBus
+  private
+    function Impl: TmaxBus; inline;
+  public
+    // typed topics
+    function Subscribe<T>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; inline;
+    procedure Post<T>(const aEvent: T); inline;
+    function TryPost<T>(const aEvent: T): Boolean; inline;
+
+    // named + payload
+    function SubscribeNamedOf<T>(const aName: TmaxString; const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; inline;
+    procedure PostNamedOf<T>(const aName: TmaxString; const aEvent: T); inline;
+    function TryPostNamedOf<T>(const aName: TmaxString; const aEvent: T): Boolean; inline;
+
+    // GUID keyed
+    function SubscribeGuidOf<T: IInterface>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; inline;
+    procedure PostGuidOf<T: IInterface>(const aEvent: T); inline;
+
+    // sticky (typed)
+    procedure EnableSticky<T>(aEnable: Boolean); inline;
+  end;
+
+  ImaxBusAdvancedHelper = record helper for ImaxBusAdvanced
+  private
+    function Impl: TmaxBus; inline;
+  public
+    procedure EnableCoalesceOf<T>(const aKeyOf: TmaxKeyFunc<T>; aWindowUs: Integer = 0); inline;
+    procedure EnableCoalesceNamedOf<T>(const aName: string; const aKeyOf: TmaxKeyFunc<T>; aWindowUs: Integer = 0); inline;
+  end;
+
+  ImaxBusQueuesHelper = record helper for ImaxBusQueues
+  private
+    function Impl: TmaxBus; inline;
+  public
+    procedure SetPolicyFor<T>(const aPolicy: TmaxQueuePolicy); inline;
+    function  GetPolicyFor<T>: TmaxQueuePolicy; inline;
+  end;
+
+  ImaxBusMetricsHelper = record helper for ImaxBusMetrics
+  private
+    function Impl: TmaxBus; inline;
+  public
+    function GetStatsFor<T>: TmaxTopicStats; inline;
   end;
 
   ImaxSubscriptionState = interface
@@ -285,7 +321,7 @@ var
   gAsyncError: TOnAsyncError = nil;
 
 type
-  TmaxBus = class(TInterfacedObject, ImaxBus, ImaxBusAdvanced, ImaxBusQueues, ImaxBusMetrics)
+  TmaxBus = class(TInterfacedObject, ImaxBus, ImaxBusAdvanced, ImaxBusQueues, ImaxBusMetrics, ImaxBusImpl)
   private
     fAsync: IEventNexusScheduler;
     fLock: TmaxMonitorObject;
@@ -327,6 +363,7 @@ type
       function GetStatsNamed(const aName: string): TmaxTopicStats;
       function GetTotals: TmaxTopicStats;
   public
+    function GetSelf: TObject;
     constructor Create(const aAsync: IEventNexusScheduler);
     destructor Destroy; override;
     procedure Dispatch(const aTopic: TmaxString; aDelivery: TmaxDelivery; const aHandler: TmaxProc; const aOnException: TmaxProc = nil);
@@ -3052,6 +3089,116 @@ begin
   end;
 end;
 
+function TmaxBus.GetSelf: TObject;
+begin
+  Result := Self;
+end;
+
+function ImaxBusHelper.Impl: TmaxBus;
+var
+  x: ImaxBusImpl;
+begin
+  if not Supports(Self, ImaxBusImpl, x) then
+    raise Exception.Create('Invalid bus implementation');
+  Result := TmaxBus(x.GetSelf);
+end;
+
+function ImaxBusHelper.Subscribe<T>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery): ImaxSubscription;
+begin
+  Result := Impl.Subscribe<T>(aHandler, aMode);
+end;
+
+procedure ImaxBusHelper.Post<T>(const aEvent: T);
+begin
+  Impl.Post<T>(aEvent);
+end;
+
+function ImaxBusHelper.TryPost<T>(const aEvent: T): Boolean;
+begin
+  Result := Impl.TryPost<T>(aEvent);
+end;
+
+function ImaxBusHelper.SubscribeNamedOf<T>(const aName: TmaxString; const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery): ImaxSubscription;
+begin
+  Result := Impl.SubscribeNamedOf<T>(aName, aHandler, aMode);
+end;
+
+procedure ImaxBusHelper.PostNamedOf<T>(const aName: TmaxString; const aEvent: T);
+begin
+  Impl.PostNamedOf<T>(aName, aEvent);
+end;
+
+function ImaxBusHelper.TryPostNamedOf<T>(const aName: TmaxString; const aEvent: T): Boolean;
+begin
+  Result := Impl.TryPostNamedOf<T>(aName, aEvent);
+end;
+
+function ImaxBusHelper.SubscribeGuidOf<T>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery): ImaxSubscription;
+begin
+  Result := Impl.SubscribeGuidOf<T>(aHandler, aMode);
+end;
+
+procedure ImaxBusHelper.PostGuidOf<T>(const aEvent: T);
+begin
+  Impl.PostGuidOf<T>(aEvent);
+end;
+
+procedure ImaxBusHelper.EnableSticky<T>(aEnable: Boolean);
+begin
+  Impl.EnableSticky<T>(aEnable);
+end;
+
+function ImaxBusAdvancedHelper.Impl: TmaxBus;
+var
+  x: ImaxBusImpl;
+begin
+  if not Supports(Self, ImaxBusImpl, x) then
+    raise Exception.Create('Invalid bus implementation');
+  Result := TmaxBus(x.GetSelf);
+end;
+
+procedure ImaxBusAdvancedHelper.EnableCoalesceOf<T>(const aKeyOf: TmaxKeyFunc<T>; aWindowUs: Integer);
+begin
+  Impl.EnableCoalesceOf<T>(aKeyOf, aWindowUs);
+end;
+
+procedure ImaxBusAdvancedHelper.EnableCoalesceNamedOf<T>(const aName: string; const aKeyOf: TmaxKeyFunc<T>; aWindowUs: Integer);
+begin
+  Impl.EnableCoalesceNamedOf<T>(aName, aKeyOf, aWindowUs);
+end;
+
+function ImaxBusQueuesHelper.Impl: TmaxBus;
+var
+  x: ImaxBusImpl;
+begin
+  if not Supports(Self, ImaxBusImpl, x) then
+    raise Exception.Create('Invalid bus implementation');
+  Result := TmaxBus(x.GetSelf);
+end;
+
+procedure ImaxBusQueuesHelper.SetPolicyFor<T>(const aPolicy: TmaxQueuePolicy);
+begin
+  Impl.SetPolicyFor<T>(aPolicy);
+end;
+
+function ImaxBusQueuesHelper.GetPolicyFor<T>: TmaxQueuePolicy;
+begin
+  Result := Impl.GetPolicyFor<T>;
+end;
+
+function ImaxBusMetricsHelper.Impl: TmaxBus;
+var
+  x: ImaxBusImpl;
+begin
+  if not Supports(Self, ImaxBusImpl, x) then
+    raise Exception.Create('Invalid bus implementation');
+  Result := TmaxBus(x.GetSelf);
+end;
+
+function ImaxBusMetricsHelper.GetStatsFor<T>: TmaxTopicStats;
+begin
+  Result := Impl.GetStatsFor<T>;
+end;
 
 initialization
 {$IFDEF max_FPC}
