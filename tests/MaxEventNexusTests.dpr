@@ -47,19 +47,19 @@ begin
   bus.Subscribe<Integer>(@First);
   bus.Subscribe<Integer>(@Second);
 {$ELSE}
-  bus.Subscribe<Integer>(
+  maxSubscribe<Integer>(bus,
     procedure(const aValue: Integer)
     begin
       raise Exception.Create('first');
     end);
-  bus.Subscribe<Integer>(
+  maxSubscribe<Integer>(bus,
     procedure(const aValue: Integer)
     begin
       raise Exception.Create('second');
     end);
 {$ENDIF}
   try
-    bus.Post<Integer>(42);
+    maxPost<Integer>(bus, 42);
     Check(False, 'Expected aggregate exception');
   except
     on e: EmaxAggregateException do
@@ -104,14 +104,14 @@ begin
     bus.Subscribe<Integer>(@AsyncHandler, Async);
     bus.Subscribe<Integer>(@BgHandler, Background);
 {$ELSE}
-    bus.Subscribe<Integer>(
+    maxSubscribe<Integer>(bus,
       procedure(const aVal: Integer)
       begin
         asyncId := TThread.CurrentThread.ThreadID;
         evAsync.SetEvent;
       end,
       Async);
-    bus.Subscribe<Integer>(
+    maxSubscribe<Integer>(bus,
       procedure(const aVal: Integer)
       begin
         bgId := TThread.CurrentThread.ThreadID;
@@ -119,7 +119,7 @@ begin
       end,
       Background);
 {$ENDIF}
-    bus.Post<Integer>(1);
+    maxPost<Integer>(bus, 1);
     Check(evAsync.WaitFor(1000) = wrSignaled);
     Check(evBg.WaitFor(1000) = wrSignaled);
     Check(mainId <> asyncId);
@@ -175,31 +175,42 @@ begin
   values := TList<TKeyed>.Create;
   sub := bus.Subscribe<TKeyed>(@Handler);
 {$ELSE}
-  bus.EnableCoalesceOf<TKeyed>(
+  maxEnableCoalesceOf<TKeyed>(bus, 
     function(const aEvt: TKeyed): TmaxString
     begin
       Result := aEvt.Key;
     end,
     10000);
   values := TList<TKeyed>.Create;
-  sub := bus.Subscribe<TKeyed>(
+  sub := maxSubscribe<TKeyed>(bus as ImaxBus,
     procedure(const aEvt: TKeyed)
     begin
       values.Add(aEvt);
     end);
 {$ENDIF}
   try
+    {$IFDEF max_FPC}
     bus.Post<TKeyed>(Make('A', 1));
     bus.Post<TKeyed>(Make('A', 2));
     bus.Post<TKeyed>(Make('B', 10));
     bus.Post<TKeyed>(Make('B', 11));
+    {$ELSE}
+    maxPost<TKeyed>(bus as ImaxBus, Make('A', 1));
+    maxPost<TKeyed>(bus as ImaxBus, Make('A', 2));
+    maxPost<TKeyed>(bus as ImaxBus, Make('B', 10));
+    maxPost<TKeyed>(bus as ImaxBus, Make('B', 11));
+    {$ENDIF}
     Sleep(20);
     CheckEquals(2, values.Count);
     CheckEquals(2, FindVal('A'));
     CheckEquals(11, FindVal('B'));
   finally
     values.Free;
+    {$IFDEF max_FPC}
     bus.EnableCoalesceOf<TKeyed>(nil);
+    {$ELSE}
+    maxEnableCoalesceOf<TKeyed>(bus, nil);
+    {$ENDIF}
   end;
 end;
 
@@ -233,28 +244,37 @@ begin
   values := TList<TKeyed>.Create;
   sub := bus.Subscribe<TKeyed>(@Handler);
 {$ELSE}
-  bus.EnableCoalesceOf<TKeyed>(
+  maxEnableCoalesceOf<TKeyed>(bus,
     function(const aEvt: TKeyed): TmaxString
     begin
       Result := aEvt.Key;
     end,
     0);
   values := TList<TKeyed>.Create;
-  sub := bus.Subscribe<TKeyed>(
+  sub := maxSubscribe<TKeyed>(bus as ImaxBus,
     procedure(const aEvt: TKeyed)
     begin
       values.Add(aEvt);
     end);
 {$ENDIF}
   try
+    {$IFDEF max_FPC}
     bus.Post<TKeyed>(Make('A', 1));
     bus.Post<TKeyed>(Make('A', 2));
+    {$ELSE}
+    maxPost<TKeyed>(bus as ImaxBus, Make('A', 1));
+    maxPost<TKeyed>(bus as ImaxBus, Make('A', 2));
+    {$ENDIF}
     Sleep(1);
     CheckEquals(1, values.Count);
     CheckEquals(2, values[0].Value);
   finally
     values.Free;
+    {$IFDEF max_FPC}
     bus.EnableCoalesceOf<TKeyed>(nil);
+    {$ELSE}
+    maxEnableCoalesceOf<TKeyed>(bus, nil);
+    {$ENDIF}
   end;
 end;
 
@@ -285,7 +305,11 @@ var
   i: Integer;
 begin
   for i := 1 to Count do
+  {$IFDEF max_FPC}
     Bus.Post<Integer>(i);
+  {$ELSE}
+    maxPost<Integer>(Bus, i);
+  {$ENDIF}
 end;
 
 procedure TTestFuzz.RandomDeliveryNoDeadlock;
@@ -314,7 +338,7 @@ begin
 {$IFDEF max_FPC}
     subs[i] := bus.Subscribe<Integer>(@Handler, TmaxDelivery(Random(Ord(High(TmaxDelivery)) + 1)));
 {$ELSE}
-    subs[i] := bus.Subscribe<Integer>(
+    subs[i] := maxSubscribe<Integer>(bus,
       procedure(const aValue: Integer)
       begin
         TInterlocked.Increment(delivered);
@@ -384,13 +408,13 @@ begin
 {$IFDEF max_FPC}
   bus.SubscribeGuidOf<IIntEvent>(@Handler);
 {$ELSE}
-  bus.SubscribeGuidOf<IIntEvent>(
+  maxSubscribeGuidOf<IIntEvent>(bus,
     procedure(const aEvt: IIntEvent)
     begin
       got := aEvt.GetValue;
     end);
 {$ENDIF}
-  bus.PostGuidOf<IIntEvent>(TIntEvent.Create(5));
+  maxPostGuidOf<IIntEvent>(bus, TIntEvent.Create(5));
   Sleep(10);
   CheckEquals(5, got);
 end;
@@ -408,13 +432,18 @@ var
 begin
   bus := maxBus;
   bus.Clear;
+  {$IFDEF max_FPC}
   bus.EnableSticky<IIntEvent>(True);
   bus.PostGuidOf<IIntEvent>(TIntEvent.Create(7));
+  {$ELSE}
+  maxEnableSticky<IIntEvent>(bus, True);
+  maxPostGuidOf<IIntEvent>(bus, TIntEvent.Create(7));
+  {$ENDIF}
   got := 0;
 {$IFDEF max_FPC}
   bus.SubscribeGuidOf<IIntEvent>(@Handler);
 {$ELSE}
-  bus.SubscribeGuidOf<IIntEvent>(
+  maxSubscribeGuidOf<IIntEvent>(bus,
     procedure(const aEvt: IIntEvent)
     begin
       got := aEvt.GetValue;
@@ -422,7 +451,11 @@ begin
 {$ENDIF}
   Sleep(10);
   CheckEquals(7, got);
+  {$IFDEF max_FPC}
   bus.EnableSticky<IIntEvent>(False);
+  {$ELSE}
+  maxEnableSticky<IIntEvent>(bus, False);
+  {$ENDIF}
 end;
 
   TTestMetrics = class(TSynTestCase)
@@ -451,7 +484,11 @@ end;
 
 procedure TPostThread.Execute;
 begin
+{$IFDEF max_FPC}
   Bus.TryPost<Integer>(Value);
+{$ELSE}
+  maxTryPost<Integer>(Bus, Value);
+{$ENDIF}
 end;
 
 procedure TTestMetrics.CountsPostsAndDelivered;
@@ -473,15 +510,15 @@ begin
 {$IFDEF max_FPC}
   bus.Subscribe<Integer>(@Handler);
 {$ELSE}
-  bus.Subscribe<Integer>(
+  maxSubscribe<Integer>(bus,
     procedure(const aValue: Integer)
     begin
       got := aValue;
     end);
 {$ENDIF}
-  bus.Post<Integer>(1);
+  maxPost<Integer>(bus, 1);
   metrics := bus as ImaxBusMetrics;
-  stats := metrics.GetStatsFor<Integer>;
+  stats := maxGetStatsFor<Integer>(metrics);
   CheckEquals(1, stats.PostsTotal);
   CheckEquals(1, stats.DeliveredTotal);
   CheckEquals(0, stats.DroppedTotal);
@@ -512,12 +549,16 @@ begin
   policy.MaxDepth := 1;
   policy.Overflow := DropNewest;
   policy.DeadlineUs := 0;
+{$IFDEF max_FPC}
   queues.SetPolicyFor<Integer>(policy);
+{$ELSE}
+  maxSetPolicyFor<Integer>(queues, policy);
+{$ENDIF}
   count := 0;
 {$IFDEF max_FPC}
   bus.Subscribe<Integer>(@Handler);
 {$ELSE}
-  bus.Subscribe<Integer>(
+  maxSubscribe<Integer>(bus,
     procedure(const aValue: Integer)
     begin
       Sleep(100);
@@ -527,14 +568,30 @@ begin
   t := TPostThread.Create(bus, 1);
   t.Start;
   Sleep(10);
+{$IFDEF max_FPC}
   ok := bus.TryPost<Integer>(2);
+{$ELSE}
+  ok := maxTryPost<Integer>(bus, 2);
+{$ENDIF}
   Check(ok);
+{$IFDEF max_FPC}
   ok := bus.TryPost<Integer>(3);
+{$ELSE}
+  ok := maxTryPost<Integer>(bus, 3);
+{$ENDIF}
   Check(not ok);
   t.WaitFor;
   t.Free;
   metrics := bus as ImaxBusMetrics;
+{$IFDEF max_FPC}
+{$IFDEF max_FPC}
   stats := metrics.GetStatsFor<Integer>;
+{$ELSE}
+  stats := maxGetStatsFor<Integer>(metrics);
+{$ENDIF}
+{$ELSE}
+  stats := maxGetStatsFor<Integer>(metrics);
+{$ENDIF}
   CheckEquals(3, stats.PostsTotal);
   CheckEquals(2, stats.DeliveredTotal);
   CheckEquals(1, stats.DroppedTotal);
@@ -557,14 +614,18 @@ begin
 {$IFDEF max_FPC}
   bus.Subscribe<Integer>(@Failer);
 {$ELSE}
-  bus.Subscribe<Integer>(
+  maxSubscribe<Integer>(bus,
     procedure(const aValue: Integer)
     begin
       raise Exception.Create('boom');
     end);
 {$ENDIF}
   try
+  {$IFDEF max_FPC}
     bus.Post<Integer>(1);
+  {$ELSE}
+    maxPost<Integer>(bus, 1);
+  {$ENDIF}
   except
     on EmaxAggregateException do;
   end;
@@ -600,7 +661,11 @@ end;
 
 procedure TNamedPostThread.Execute;
 begin
+{$IFDEF max_FPC}
   Bus.TryPostNamedOf<Integer>(Name, Value);
+{$ELSE}
+  maxTryPostNamedOf<Integer>(Bus, Name, Value);
+{$ENDIF}
 end;
 
 procedure TTestNamedTopics.StickyAndCoalesceNamed;
@@ -630,11 +695,11 @@ begin
   bus := maxBus;
   bus.Clear;
   name := 'named';
-  bus.EnableStickyNamed(name, True);
+  (bus as ImaxBusAdvanced).EnableStickyNamed(name, True);
 {$IFDEF max_FPC}
   bus.EnableCoalesceNamedOf<Integer>(name, @KeyOf);
 {$ELSE}
-  bus.EnableCoalesceNamedOf<Integer>(name,
+  maxEnableCoalesceNamedOf<Integer>(bus as ImaxBusAdvanced, name,
     function(const aValue: Integer): TmaxString
     begin
       if aValue mod 2 = 0 then
@@ -643,12 +708,16 @@ begin
         Result := 'odd';
     end);
 {$ENDIF}
+{$IFDEF max_FPC}
   bus.PostNamedOf<Integer>(name, 10);
+{$ELSE}
+  maxPostNamedOf<Integer>(bus, name, 10);
+{$ENDIF}
   count := 0;
 {$IFDEF max_FPC}
   bus.SubscribeNamedOf<Integer>(name, @Handler);
 {$ELSE}
-  bus.SubscribeNamedOf<Integer>(name,
+  maxSubscribeNamedOf<Integer>(bus, name,
     procedure(const aValue: Integer)
     begin
       SetLength(values, count + 1);
@@ -656,13 +725,18 @@ begin
       Inc(count);
     end);
 {$ENDIF}
+{$IFDEF max_FPC}
   bus.PostNamedOf<Integer>(name, 1);
   bus.PostNamedOf<Integer>(name, 3);
+{$ELSE}
+  maxPostNamedOf<Integer>(bus, name, 1);
+  maxPostNamedOf<Integer>(bus, name, 3);
+{$ENDIF}
   Sleep(50);
   CheckEquals(2, count);
   CheckEquals(10, values[0]);
   CheckEquals(3, values[1]);
-  bus.EnableStickyNamed(name, False);
+  (bus as ImaxBusAdvanced).EnableStickyNamed(name, False);
 end;
 
 procedure TTestNamedTopics.QueuePolicyAndMetricsNamed;
@@ -696,7 +770,7 @@ begin
 {$IFDEF max_FPC}
   bus.SubscribeNamedOf<Integer>(name, @Handler);
 {$ELSE}
-  bus.SubscribeNamedOf<Integer>(name,
+  maxSubscribeNamedOf<Integer>(bus, name,
     procedure(const aValue: Integer)
     begin
       Sleep(100);
@@ -706,9 +780,17 @@ begin
   t := TNamedPostThread.Create(bus, name, 1);
   t.Start;
   Sleep(10);
+{$IFDEF max_FPC}
   ok := bus.TryPostNamedOf<Integer>(name, 2);
+{$ELSE}
+  ok := maxTryPostNamedOf<Integer>(bus, name, 2);
+{$ENDIF}
   Check(ok);
+{$IFDEF max_FPC}
   ok := bus.TryPostNamedOf<Integer>(name, 3);
+{$ELSE}
+  ok := maxTryPostNamedOf<Integer>(bus, name, 3);
+{$ENDIF}
   Check(not ok);
   t.WaitFor;
   t.Free;
@@ -753,11 +835,15 @@ begin
   policy.MaxDepth := 1;
   policy.Overflow := DropNewest;
   policy.DeadlineUs := 0;
+{$IFDEF max_FPC}
   queues.SetPolicyFor<Integer>(policy);
+{$ELSE}
+  maxSetPolicyFor<Integer>(queues, policy);
+{$ENDIF}
 {$IFDEF max_FPC}
   bus.Subscribe<Integer>(@Handler);
 {$ELSE}
-  bus.Subscribe<Integer>(
+  maxSubscribe<Integer>(bus,
     procedure(const aValue: Integer)
     begin
       Sleep(100);
@@ -769,9 +855,17 @@ begin
   t := TPostThread.Create(bus, 1);
   t.Start;
   Sleep(10);
+{$IFDEF max_FPC}
   ok := bus.TryPost<Integer>(2);
+{$ELSE}
+  ok := maxTryPost<Integer>(bus, 2);
+{$ENDIF}
   Check(ok);
+{$IFDEF max_FPC}
   ok := bus.TryPost<Integer>(3);
+{$ELSE}
+  ok := maxTryPost<Integer>(bus, 3);
+{$ENDIF}
   Check(not ok);
   t.WaitFor;
   CheckEquals(2, count);
@@ -805,11 +899,15 @@ begin
   policy.MaxDepth := 1;
   policy.Overflow := DropOldest;
   policy.DeadlineUs := 0;
+{$IFDEF max_FPC}
   queues.SetPolicyFor<Integer>(policy);
+{$ELSE}
+  maxSetPolicyFor<Integer>(queues, policy);
+{$ENDIF}
 {$IFDEF max_FPC}
   bus.Subscribe<Integer>(@Handler);
 {$ELSE}
-  bus.Subscribe<Integer>(
+  maxSubscribe<Integer>(bus,
     procedure(const aValue: Integer)
     begin
       Sleep(100);
@@ -821,9 +919,17 @@ begin
   t := TPostThread.Create(bus, 1);
   t.Start;
   Sleep(10);
+{$IFDEF max_FPC}
   ok := bus.TryPost<Integer>(2);
+{$ELSE}
+  ok := maxTryPost<Integer>(bus, 2);
+{$ENDIF}
   Check(ok);
+{$IFDEF max_FPC}
   ok := bus.TryPost<Integer>(3);
+{$ELSE}
+  ok := maxTryPost<Integer>(bus, 3);
+{$ENDIF}
   Check(not ok);
   t.WaitFor;
   CheckEquals(2, count);
@@ -857,11 +963,15 @@ begin
   policy.MaxDepth := 1;
   policy.Overflow := Block;
   policy.DeadlineUs := 0;
+{$IFDEF max_FPC}
   queues.SetPolicyFor<Integer>(policy);
+{$ELSE}
+  maxSetPolicyFor<Integer>(queues, policy);
+{$ENDIF}
 {$IFDEF max_FPC}
   bus.Subscribe<Integer>(@Handler);
 {$ELSE}
-  bus.Subscribe<Integer>(
+  maxSubscribe<Integer>(bus,
     procedure(const aValue: Integer)
     begin
       Sleep(100);
@@ -873,9 +983,17 @@ begin
   t := TPostThread.Create(bus, 1);
   t.Start;
   Sleep(10);
+{$IFDEF max_FPC}
   ok := bus.TryPost<Integer>(2);
+{$ELSE}
+  ok := maxTryPost<Integer>(bus, 2);
+{$ENDIF}
   Check(ok);
+{$IFDEF max_FPC}
   ok := bus.TryPost<Integer>(3);
+{$ELSE}
+  ok := maxTryPost<Integer>(bus, 3);
+{$ENDIF}
   Check(ok);
   t.WaitFor;
   Sleep(150);
@@ -911,11 +1029,15 @@ begin
   policy.MaxDepth := 1;
   policy.Overflow := Deadline;
   policy.DeadlineUs := 50000;
+{$IFDEF max_FPC}
   queues.SetPolicyFor<Integer>(policy);
+{$ELSE}
+  maxSetPolicyFor<Integer>(queues, policy);
+{$ENDIF}
 {$IFDEF max_FPC}
   bus.Subscribe<Integer>(@Handler);
 {$ELSE}
-  bus.Subscribe<Integer>(
+  maxSubscribe<Integer>(bus,
     procedure(const aValue: Integer)
     begin
       Sleep(200);
@@ -927,9 +1049,17 @@ begin
   t := TPostThread.Create(bus, 1);
   t.Start;
   Sleep(10);
+{$IFDEF max_FPC}
   ok := bus.TryPost<Integer>(2);
+{$ELSE}
+  ok := maxTryPost<Integer>(bus, 2);
+{$ENDIF}
   Check(ok);
+{$IFDEF max_FPC}
   ok := bus.TryPost<Integer>(3);
+{$ELSE}
+  ok := maxTryPost<Integer>(bus, 3);
+{$ENDIF}
   Check(not ok);
   t.WaitFor;
   Sleep(250);
@@ -1014,7 +1144,7 @@ begin
   sub := bus.Subscribe<Integer>(@Handler);
 {$ELSE}
   values := TList<Integer>.Create;
-  sub := bus.Subscribe<Integer>(
+  sub := maxSubscribe<Integer>(bus,
     procedure(const aValue: Integer)
     begin
       values.Add(aValue);
@@ -1022,7 +1152,11 @@ begin
 {$ENDIF}
   try
     for i := 1 to 5 do
+    {$IFDEF max_FPC}
       bus.Post<Integer>(i);
+    {$ELSE}
+      maxPost<Integer>(bus, i);
+    {$ENDIF}
     CheckEquals(5, values.Count);
     for i := 1 to 5 do
       CheckEquals(i, values[i-1]);
@@ -1031,14 +1165,18 @@ begin
 {$IFDEF max_FPC}
     sub := bus.Subscribe<Integer>(@Handler);
 {$ELSE}
-    sub := bus.Subscribe<Integer>(
+    sub := maxSubscribe<Integer>(bus,
       procedure(const aValue: Integer)
       begin
         values.Add(aValue);
       end);
 {$ENDIF}
     for i := 6 to 10 do
+    {$IFDEF max_FPC}
       bus.Post<Integer>(i);
+    {$ELSE}
+      maxPost<Integer>(bus, i);
+    {$ENDIF}
     CheckEquals(5, values.Count);
     for i := 0 to 4 do
       CheckEquals(6 + i, values[i]);
@@ -1076,11 +1214,15 @@ begin
     sub1 := bus.Subscribe<Integer>(@tgt.Handle);
     sub2 := bus.Subscribe<Integer>(@tgt.Handle);
 {$ELSE}
-    sub1 := bus.Subscribe<Integer>(tgt.Handle);
-    sub2 := bus.Subscribe<Integer>(tgt.Handle);
+    sub1 := maxSubscribeObj<Integer>(bus, tgt.Handle);
+    sub2 := maxSubscribeObj<Integer>(bus, tgt.Handle);
 {$ENDIF}
     bus.UnsubscribeAllFor(tgt);
+{$IFDEF max_FPC}
     bus.Post<Integer>(1);
+{$ELSE}
+    maxPost<Integer>(bus, 1);
+{$ENDIF}
     CheckEquals(0, tgt.Count);
     Check(not sub1.IsActive);
     Check(not sub2.IsActive);
