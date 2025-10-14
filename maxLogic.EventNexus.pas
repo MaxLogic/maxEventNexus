@@ -312,31 +312,6 @@ uses
   maxLogic.EventNexus.Threading.RawThread
   {$IFDEF max_FPC}, SyncObjs{$ENDIF};
 
-{$IFDEF max_DELPHI}
-type
-  TProcThunk = class
-  private
-    FProc: TmaxProc;
-  public
-    constructor Create(const AProc: TmaxProc);
-    procedure Invoke;
-  end;
-
-constructor TProcThunk.Create(const AProc: TmaxProc);
-begin
-  inherited Create;
-  FProc := AProc;
-end;
-
-procedure TProcThunk.Invoke;
-begin
-  try
-    FProc();
-  finally
-    Free;
-  end;
-end;
-{$ENDIF}
 
 var
   gAsyncError: TOnAsyncError = nil;
@@ -1446,79 +1421,6 @@ begin
       lPendingKey: TmaxString;
     begin
       lPendingKey := lKeyCopy;
-{$IFDEF max_DELPHI}
-      fAsync.RunDelayed(
-        TProcThunk.Create(
-          procedure
-          var
-            lSub: TTypedSubscriber<T>;
-            lInner: T;
-            lErrs: TmaxExceptionList;
-            ex: EmaxAggregateException;
-          begin
-            if not aTopic.PopPending(lPendingKey, lInner) then
-              Exit;
-            lErrs := nil;
-            for lSub in aSubs do
-            begin
-              if (lSub.State = nil) or not lSub.State.TryEnter then
-                Continue;
-              try
-                if not lSub.Target.IsAlive then
-                begin
-                  aTopic.RemoveByToken(lSub.Token);
-                  Continue;
-                end;
-                try
-                  Dispatch(aTopicName, lSub.Mode,
-                    procedure
-                    begin
-                      try
-                        lSub.Handler(lInner);
-                        aTopic.AddDelivered(1);
-                      except
-                        on e: Exception do
-                        begin
-                          if (e is EAccessViolation) or (e is EInvalidPointer) then
-                            aTopic.RemoveByToken(lSub.Token);
-                          raise;
-                        end;
-                      end;
-                    end,
-                    procedure
-                    begin
-                      aTopic.AddException;
-                    end);
-                except
-                  on e: Exception do
-                  begin
-                    if lErrs = nil then
-                      lErrs := TmaxExceptionList.Create(True);
-                    lErrs.Add(e);
-                  end;
-                end;
-              finally
-                lSub.State.Leave;
-              end;
-            end;
-            if lErrs <> nil then
-            begin
-              // Forward async errors via global hook; avoid unhandled exception in scheduler thread.
-              if Assigned(gAsyncError) then
-              begin
-                ex := EmaxAggregateException.Create(lErrs);
-                try
-                  gAsyncError(UnicodeString(aTopicName), ex);
-                finally
-                  ex.Free;
-                end;
-              end
-              else
-                lErrs.Free;
-            end;
-          end).Invoke,
-        aTopic.CoalesceWindow);
-{$ELSE}
       fAsync.RunDelayed(
         procedure
         var
@@ -1589,7 +1491,6 @@ begin
           end;
         end,
         aTopic.CoalesceWindow);
-{$ENDIF}
     end);
 end;
 
@@ -1635,24 +1536,6 @@ begin
         end;
       end;
     Main:
-{$IFDEF max_DELPHI}
-      fAsync.RunOnMain(
-        TProcThunk.Create(
-          procedure
-          begin
-            try
-              aHandler();
-            except
-              on e: Exception do
-              begin
-                if Assigned(aOnException) then
-                  aOnException();
-                if Assigned(gAsyncError) then
-                  gAsyncError(UnicodeString(aTopic), e);
-              end;
-            end;
-          end).Invoke);
-{$ELSE}
       fAsync.RunOnMain(
         procedure
         begin
@@ -1668,26 +1551,7 @@ begin
             end;
           end;
         end);
-{$ENDIF}
     Async:
-{$IFDEF max_DELPHI}
-      fAsync.RunAsync(
-        TProcThunk.Create(
-          procedure
-          begin
-            try
-              aHandler();
-            except
-              on e: Exception do
-              begin
-                if Assigned(aOnException) then
-                  aOnException();
-                if Assigned(gAsyncError) then
-                  gAsyncError(UnicodeString(aTopic), e);
-              end;
-            end;
-          end).Invoke);
-{$ELSE}
       fAsync.RunAsync(
         procedure
         begin
@@ -1703,27 +1567,8 @@ begin
             end;
           end;
         end);
-{$ENDIF}
     Background:
       if fAsync.IsMainThread then
-{$IFDEF max_DELPHI}
-        fAsync.RunAsync(
-          TProcThunk.Create(
-            procedure
-            begin
-              try
-                aHandler();
-              except
-                on e: Exception do
-                begin
-                  if Assigned(aOnException) then
-                    aOnException();
-                  if Assigned(gAsyncError) then
-                    gAsyncError(UnicodeString(aTopic), e);
-                end;
-              end;
-            end).Invoke)
-{$ELSE}
         fAsync.RunAsync(
           procedure
           begin
@@ -1739,7 +1584,6 @@ begin
               end;
             end;
           end)
-{$ENDIF}
       else
         try
           aHandler();
