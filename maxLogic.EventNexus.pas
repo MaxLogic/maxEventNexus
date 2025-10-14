@@ -114,7 +114,7 @@ type
   // Forward declare concrete bus for helpers
   TmaxBus = class;
 
-  ImaxBusHelper = record helper for ImaxBus
+  ImaxBusHelper = class helper for ImaxBus
   private
     function Impl: TmaxBus; inline;
   public
