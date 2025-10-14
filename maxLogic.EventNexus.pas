@@ -114,6 +114,7 @@ type
   // Forward declare concrete bus for helpers
   TmaxBus = class;
 
+  {$IFDEF max_FPC}
   ImaxBusHelper = class helper for ImaxBus
   private
     function Impl: TmaxBus; inline;
@@ -161,6 +162,7 @@ type
   public
     function GetStatsFor<T>: TmaxTopicStats; inline;
   end;
+  {$ENDIF}
 
   ImaxSubscriptionState = interface
     ['{6B8BCC86-7AC3-4B6F-9CF9-2F3EE0A5F913}']
@@ -203,6 +205,32 @@ procedure maxSetAsyncErrorHandler(const aHandler: TOnAsyncError);
 procedure maxSetMetricCallback(const aSampler: TOnMetricSample);
 procedure maxSetAsyncScheduler(const aScheduler: IEventNexusScheduler);
 function maxGetAsyncScheduler: IEventNexusScheduler;
+
+{$IFDEF max_DELPHI}
+// Delphi-safe generic wrappers (callers can use these instead of interface helpers)
+function maxSubscribe<T>(const aBus: ImaxBus; const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; inline;
+function maxSubscribeObj<T>(const aBus: ImaxBus; const aHandler: TmaxObjProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; inline;
+procedure maxPost<T>(const aBus: ImaxBus; const aEvent: T); inline;
+function maxTryPost<T>(const aBus: ImaxBus; const aEvent: T): Boolean; inline;
+
+function maxSubscribeNamedOf<T>(const aBus: ImaxBus; const aName: TmaxString; const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; inline;
+function maxSubscribeNamedObjOf<T>(const aBus: ImaxBus; const aName: TmaxString; const aHandler: TmaxObjProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; inline;
+procedure maxPostNamedOf<T>(const aBus: ImaxBus; const aName: TmaxString; const aEvent: T); inline;
+function maxTryPostNamedOf<T>(const aBus: ImaxBus; const aName: TmaxString; const aEvent: T): Boolean; inline;
+
+function maxSubscribeGuidOf<T: IInterface>(const aBus: ImaxBus; const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; inline;
+function maxSubscribeGuidObjOf<T: IInterface>(const aBus: ImaxBus; const aHandler: TmaxObjProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; inline;
+procedure maxPostGuidOf<T: IInterface>(const aBus: ImaxBus; const aEvent: T); inline;
+
+procedure maxEnableSticky<T>(const aBus: ImaxBus; aEnable: Boolean); inline;
+procedure maxEnableCoalesceOf<T>(const aBus: ImaxBusAdvanced; const aKeyOf: TmaxKeyFunc<T>; aWindowUs: Integer = 0); inline;
+procedure maxEnableCoalesceNamedOf<T>(const aBus: ImaxBusAdvanced; const aName: string; const aKeyOf: TmaxKeyFunc<T>; aWindowUs: Integer = 0); inline;
+
+procedure maxSetPolicyFor<T>(const aQueues: ImaxBusQueues; const aPolicy: TmaxQueuePolicy); inline;
+function  maxGetPolicyFor<T>(const aQueues: ImaxBusQueues): TmaxQueuePolicy; inline;
+
+function  maxGetStatsFor<T>(const aMetrics: ImaxBusMetrics): TmaxTopicStats; inline;
+{$ENDIF}
 
 
 {$IFDEF max_DELPHI}
@@ -3263,6 +3291,7 @@ begin
   Result := Self;
 end;
 
+{$IFDEF max_FPC}
 function ImaxBusHelper.Impl: TmaxBus;
 var
   x: ImaxBusImpl;
@@ -3383,6 +3412,103 @@ function ImaxBusMetricsHelper.GetStatsFor<T>: TmaxTopicStats;
 begin
   Result := Impl.GetStatsFor<T>;
 end;
+{$ENDIF}
+
+{$IFDEF max_DELPHI}
+  function GetBusImpl(const aIntf: IInterface): TmaxBus; inline;
+  var
+    x: ImaxBusImpl;
+  begin
+    if not Supports(aIntf, ImaxBusImpl, x) then
+      raise Exception.Create('Invalid bus implementation');
+    Result := TmaxBus(x.GetSelf);
+  end;
+
+  function maxSubscribe<T>(const aBus: ImaxBus; const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery): ImaxSubscription;
+  begin
+    Result := GetBusImpl(aBus).Subscribe<T>(aHandler, aMode);
+  end;
+
+  function maxSubscribeObj<T>(const aBus: ImaxBus; const aHandler: TmaxObjProcOf<T>; aMode: TmaxDelivery): ImaxSubscription;
+  begin
+    Result := GetBusImpl(aBus).Subscribe<T>(aHandler, aMode);
+  end;
+
+  procedure maxPost<T>(const aBus: ImaxBus; const aEvent: T);
+  begin
+    GetBusImpl(aBus).Post<T>(aEvent);
+  end;
+
+  function maxTryPost<T>(const aBus: ImaxBus; const aEvent: T): Boolean;
+  begin
+    Result := GetBusImpl(aBus).TryPost<T>(aEvent);
+  end;
+
+  function maxSubscribeNamedOf<T>(const aBus: ImaxBus; const aName: TmaxString; const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery): ImaxSubscription;
+  begin
+    Result := GetBusImpl(aBus).SubscribeNamedOf<T>(aName, aHandler, aMode);
+  end;
+
+  function maxSubscribeNamedObjOf<T>(const aBus: ImaxBus; const aName: TmaxString; const aHandler: TmaxObjProcOf<T>; aMode: TmaxDelivery): ImaxSubscription;
+  begin
+    Result := GetBusImpl(aBus).SubscribeNamedOf<T>(aName, aHandler, aMode);
+  end;
+
+  procedure maxPostNamedOf<T>(const aBus: ImaxBus; const aName: TmaxString; const aEvent: T);
+  begin
+    GetBusImpl(aBus).PostNamedOf<T>(aName, aEvent);
+  end;
+
+  function maxTryPostNamedOf<T>(const aBus: ImaxBus; const aName: TmaxString; const aEvent: T): Boolean;
+  begin
+    Result := GetBusImpl(aBus).TryPostNamedOf<T>(aName, aEvent);
+  end;
+
+  function maxSubscribeGuidOf<T: IInterface>(const aBus: ImaxBus; const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery): ImaxSubscription;
+  begin
+    Result := GetBusImpl(aBus).SubscribeGuidOf<T>(aHandler, aMode);
+  end;
+
+  function maxSubscribeGuidObjOf<T: IInterface>(const aBus: ImaxBus; const aHandler: TmaxObjProcOf<T>; aMode: TmaxDelivery): ImaxSubscription;
+  begin
+    Result := GetBusImpl(aBus).SubscribeGuidOf<T>(aHandler, aMode);
+  end;
+
+  procedure maxPostGuidOf<T: IInterface>(const aBus: ImaxBus; const aEvent: T);
+  begin
+    GetBusImpl(aBus).PostGuidOf<T>(aEvent);
+  end;
+
+  procedure maxEnableSticky<T>(const aBus: ImaxBus; aEnable: Boolean);
+  begin
+    GetBusImpl(aBus).EnableSticky<T>(aEnable);
+  end;
+
+  procedure maxEnableCoalesceOf<T>(const aBus: ImaxBusAdvanced; const aKeyOf: TmaxKeyFunc<T>; aWindowUs: Integer);
+  begin
+    GetBusImpl(aBus).EnableCoalesceOf<T>(aKeyOf, aWindowUs);
+  end;
+
+  procedure maxEnableCoalesceNamedOf<T>(const aBus: ImaxBusAdvanced; const aName: string; const aKeyOf: TmaxKeyFunc<T>; aWindowUs: Integer);
+  begin
+    GetBusImpl(aBus).EnableCoalesceNamedOf<T>(aName, aKeyOf, aWindowUs);
+  end;
+
+  procedure maxSetPolicyFor<T>(const aQueues: ImaxBusQueues; const aPolicy: TmaxQueuePolicy);
+  begin
+    GetBusImpl(aQueues).SetPolicyFor<T>(aPolicy);
+  end;
+
+  function maxGetPolicyFor<T>(const aQueues: ImaxBusQueues): TmaxQueuePolicy;
+  begin
+    Result := GetBusImpl(aQueues).GetPolicyFor<T>;
+  end;
+
+  function maxGetStatsFor<T>(const aMetrics: ImaxBusMetrics): TmaxTopicStats;
+  begin
+    Result := GetBusImpl(aMetrics).GetStatsFor<T>;
+  end;
+{$ENDIF}
 
 initialization
 {$IFDEF max_FPC}
