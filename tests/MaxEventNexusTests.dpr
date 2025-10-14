@@ -11,6 +11,9 @@ program MaxEventNexusTests;
 uses
   mormot.core.test,
   SysUtils, Classes, Generics.Collections, SyncObjs,
+  maxLogic.EventNexus.Threading.Adapter,
+  maxLogic.EventNexus.Threading.RawThread,
+  {$IFDEF max_DELPHI} maxLogic.EventNexus.Threading.MaxAsync, maxLogic.EventNexus.Threading.TTask, {$ENDIF}
   maxLogic.EventNexus in '..\maxLogic.EventNexus.pas';
 
 type
@@ -1084,7 +1087,104 @@ begin
   finally
     tgt.Free;
   end;
+  end;
+
+  TTestSchedulers = class(TSynTestCase)
+  private
+    function WaitForSignal(const aEvent: TEvent; aTimeoutMs: Cardinal): Boolean;
+    procedure ExerciseScheduler(const aScheduler: IEventNexusScheduler; const aName: string);
+  published
+    procedure RawThreadScheduler;
+  {$IFDEF max_DELPHI}
+    procedure MaxAsyncScheduler;
+    procedure TTaskScheduler;
+  {$ENDIF}
+  end;
+
+function TTestSchedulers.WaitForSignal(const aEvent: TEvent; aTimeoutMs: Cardinal): Boolean;
+var
+  start: UInt64;
+begin
+  start := GetTickCount64;
+  repeat
+    if aEvent.WaitFor(0) = wrSignaled then
+      Exit(True);
+  {$IFDEF max_DELPHI}
+    TThread.CheckSynchronize(0);
+  {$ELSE}
+    CheckSynchronize;
+  {$ENDIF}
+    Sleep(1);
+  until GetTickCount64 - start >= aTimeoutMs;
+  Result := aEvent.WaitFor(0) = wrSignaled;
 end;
+
+procedure TTestSchedulers.ExerciseScheduler(const aScheduler: IEventNexusScheduler; const aName: string);
+var
+  mainId, asyncId, mainHandlerId: TThreadID;
+  asyncEvent, mainEvent, delayEvent: TEvent;
+  delayStart, delayDelta: UInt64;
+begin
+  asyncEvent := TEvent.Create(nil, True, False, '');
+  mainEvent := TEvent.Create(nil, True, False, '');
+  delayEvent := TEvent.Create(nil, True, False, '');
+  try
+    mainId := TThread.CurrentThread.ThreadID;
+    asyncId := mainId;
+    mainHandlerId := 0;
+
+    aScheduler.RunAsync(
+      procedure
+      begin
+        asyncId := TThread.CurrentThread.ThreadID;
+        asyncEvent.SetEvent;
+      end);
+    Check(WaitForSignal(asyncEvent, 1000), aName + ': RunAsync timed out');
+    Check(asyncId <> mainId, aName + ': RunAsync executed on main thread');
+
+    aScheduler.RunOnMain(
+      procedure
+      begin
+        mainHandlerId := TThread.CurrentThread.ThreadID;
+        mainEvent.SetEvent;
+      end);
+    Check(WaitForSignal(mainEvent, 1000), aName + ': RunOnMain timed out');
+    CheckEquals(mainId, mainHandlerId, aName + ': RunOnMain did not execute on main thread');
+
+    delayStart := GetTickCount64;
+    delayDelta := 0;
+    aScheduler.RunDelayed(
+      procedure
+      begin
+        delayDelta := GetTickCount64 - delayStart;
+        delayEvent.SetEvent;
+      end,
+      100000);
+    Check(WaitForSignal(delayEvent, 2000), aName + ': RunDelayed timed out');
+    Check(delayDelta >= 50, aName + ': RunDelayed executed too early');
+  finally
+    asyncEvent.Free;
+    mainEvent.Free;
+    delayEvent.Free;
+  end;
+end;
+
+procedure TTestSchedulers.RawThreadScheduler;
+begin
+  ExerciseScheduler(TmaxRawThreadScheduler.Create, 'raw-thread');
+end;
+
+{$IFDEF max_DELPHI}
+procedure TTestSchedulers.MaxAsyncScheduler;
+begin
+  ExerciseScheduler(CreateMaxAsyncScheduler, 'maxAsync');
+end;
+
+procedure TTestSchedulers.TTaskScheduler;
+begin
+  ExerciseScheduler(CreateTTaskScheduler, 'TTask');
+end;
+{$ENDIF}
 
 var
   Tests: TSynTests;
@@ -1099,6 +1199,7 @@ begin
     Tests.AddCase(TTestMetrics);
     Tests.AddCase(TTestNamedTopics);
     Tests.AddCase(TTestQueuePolicy);
+    Tests.AddCase(TTestSchedulers);
     Tests.AddCase(TTestSticky);
     Tests.AddCase(TTestSubscribeOrdering);
     Tests.AddCase(TTestUnsubscribeAll);
