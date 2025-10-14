@@ -10,7 +10,7 @@ program MaxEventNexusTests;
 
 uses
   mormot.core.test,
-  SysUtils, Classes, Generics.Collections, SyncObjs,
+  SysUtils, Classes, {$IFDEF max_FPC} Generics.Collections, SyncObjs, {$ELSE} System.Generics.Collections, System.SyncObjs, {$ENDIF}
   maxLogic.EventNexus.Threading.Adapter,
   maxLogic.EventNexus.Threading.RawThread,
   {$IFDEF max_DELPHI} maxLogic.EventNexus.Threading.MaxAsync, maxLogic.EventNexus.Threading.TTask, {$ENDIF}
