@@ -2599,38 +2599,44 @@ begin
       lErrs := nil;
       for lSub in lSubs do
       begin
-        if not lSub.Target.IsAlive then
-        begin
-          lTopic.RemoveByToken(lSub.Token);
+        if (lSub.State = nil) or not lSub.State.TryEnter then
           Continue;
-        end;
         try
-          Dispatch(lMetric, lSub.Mode,
-            procedure
-            begin
-              try
-                lSub.Handler(lVal);
-                lTopic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    lTopic.RemoveByToken(lSub.Token);
-                  raise;
-                end;
-              end;
-            end,
-            procedure
-            begin
-              lTopic.AddException;
-            end);
-        except
-          on e: Exception do
+          if not lSub.Target.IsAlive then
           begin
-            if lErrs = nil then
-              lErrs := TmaxExceptionList.Create(True);
-            lErrs.Add(e);
+            lTopic.RemoveByToken(lSub.Token);
+            Continue;
           end;
+          try
+            Dispatch(lMetric, lSub.Mode,
+              procedure
+              begin
+                try
+                  lSub.Handler(lVal);
+                  lTopic.AddDelivered(1);
+                except
+                  on e: Exception do
+                  begin
+                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                      lTopic.RemoveByToken(lSub.Token);
+                    raise;
+                  end;
+                end;
+              end,
+              procedure
+              begin
+                lTopic.AddException;
+              end);
+          except
+            on e: Exception do
+            begin
+              if lErrs = nil then
+                lErrs := TmaxExceptionList.Create(True);
+              lErrs.Add(e);
+            end;
+          end;
+        finally
+          lSub.State.Leave;
         end;
       end;
       if lErrs <> nil then
