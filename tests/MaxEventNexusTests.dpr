@@ -487,7 +487,7 @@ begin
 {$IFDEF max_FPC}
   Bus.TryPost<Integer>(Value);
 {$ELSE}
-  maxTryPost<Integer>(Bus, Value);
+  TmaxBus(maxAsBus(Bus)).TryPost<Integer>(Value);
 {$ENDIF}
 end;
 
@@ -584,13 +584,9 @@ begin
   t.Free;
   metrics := bus as ImaxBusMetrics;
 {$IFDEF max_FPC}
-{$IFDEF max_FPC}
-  stats := TmaxBus(maxAsBus(metrics)).GetStatsFor<Integer>;
+  stats := metrics.GetStatsFor<Integer>;
 {$ELSE}
   stats := TmaxBus(maxAsBus(metrics)).GetStatsFor<Integer>;
-{$ENDIF}
-{$ELSE}
-  stats := maxGetStatsFor<Integer>(metrics);
 {$ENDIF}
   CheckEquals(3, stats.PostsTotal);
   CheckEquals(2, stats.DeliveredTotal);
@@ -630,7 +626,11 @@ begin
     on EmaxAggregateException do;
   end;
   metrics := bus as ImaxBusMetrics;
+{$IFDEF max_FPC}
   stats := metrics.GetStatsFor<Integer>;
+{$ELSE}
+  stats := TmaxBus(maxAsBus(metrics)).GetStatsFor<Integer>;
+{$ENDIF}
   CheckEquals(1, stats.ExceptionsTotal);
 end;
 
@@ -1160,7 +1160,7 @@ begin
   sub := bus.Subscribe<Integer>(@Handler);
 {$ELSE}
   values := TList<Integer>.Create;
-  sub := maxSubscribe<Integer>(bus,
+  sub := TmaxBus(maxAsBus(bus)).Subscribe<Integer>(
     procedure(const aValue: Integer)
     begin
       values.Add(aValue);
@@ -1181,7 +1181,7 @@ begin
 {$IFDEF max_FPC}
     sub := bus.Subscribe<Integer>(@Handler);
 {$ELSE}
-    sub := maxSubscribe<Integer>(bus,
+    sub := TmaxBus(maxAsBus(bus)).Subscribe<Integer>(
       procedure(const aValue: Integer)
       begin
         values.Add(aValue);
