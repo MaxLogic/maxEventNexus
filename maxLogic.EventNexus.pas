@@ -348,13 +348,6 @@ type
     destructor Destroy; override;
   end;
 
-var
-  { moved to interface section to prevent this error:
-    E2506 Method of parameterized type declared in interface section must not use local symbol 'gAsyncError'
-    what that means: The Delphi compiler expands generics at the use site, not where they are declared. Any external reference must therefore be resolvable by any other unit including that interface. A symbol from the implementation section cannot be referenced during that process, hence the E2506 error.}
-  gAsyncError: TOnAsyncError = nil;
-
-type
   TmaxBus = class(TInterfacedObject, ImaxBus, ImaxBusAdvanced, ImaxBusQueues, ImaxBusMetrics, ImaxBusImpl)
   private
     fAsync: IEventNexusScheduler;
@@ -406,6 +399,11 @@ type
     procedure Dispatch(const aTopic: TmaxString; aDelivery: TmaxDelivery; const aHandler: TmaxProc; const aOnException: TmaxProc = nil);
   end;
 
+var
+  { moved to interface section to prevent this error:
+    E2506 Method of parameterized type declared in interface section must not use local symbol 'gAsyncError'
+    what that means: The Delphi compiler expands generics at the use site, not where they are declared. Any external reference must therefore be resolvable by any other unit including that interface. A symbol from the implementation section cannot be referenced during that process, hence the E2506 error.}
+  gAsyncError: TOnAsyncError = nil;
 
 
   type
