@@ -1171,7 +1171,7 @@ begin
     {$IFDEF max_FPC}
       bus.Post<Integer>(i);
     {$ELSE}
-      maxPost<Integer>(bus, i);
+      TmaxBus(maxAsBus(bus)).Post<Integer>(i);
     {$ENDIF}
     CheckEquals(5, values.Count);
     for i := 1 to 5 do
@@ -1191,7 +1191,7 @@ begin
     {$IFDEF max_FPC}
       bus.Post<Integer>(i);
     {$ELSE}
-      maxPost<Integer>(bus, i);
+      TmaxBus(maxAsBus(bus)).Post<Integer>(i);
     {$ENDIF}
     CheckEquals(5, values.Count);
     for i := 0 to 4 do
