@@ -2766,6 +2766,82 @@ begin
   Result := TmaxTypedSubscription<T>.Create(topic, token, lState);
 end;
 
+function TmaxBus.SubscribeGuidOf<T>(const aHandler: TmaxObjProcOf<T>; aMode: TmaxDelivery): ImaxSubscription; overload;
+var
+  key: TGuid;
+  obj: TmaxTopicBase;
+  topic: TTypedTopic<T>;
+  token: TmaxSubscriptionToken;
+  send: Boolean;
+  last: T;
+  lMetric: TmaxString;
+  lState: ImaxSubscriptionState;
+  lTarget: TObject;
+  lWrapper: TmaxProcOf<T>;
+begin
+  key := GetTypeData(TypeInfo(T))^.Guid;
+  lMetric := GuidMetricName(key);
+  lTarget := TObject(TMethod(aHandler).Data);
+  lWrapper :=
+    procedure(const v: T)
+    begin
+      aHandler(v);
+    end;
+
+  TMonitor.Enter(fLock);
+  try
+    if not fGuid.TryGetValue(key, obj) then
+    begin
+      topic := TTypedTopic<T>.Create;
+      topic.SetMetricName(lMetric);
+      if fStickyTypes.ContainsKey(TypeInfo(T)) then
+        topic.SetSticky(True);
+      fGuid.Add(key, topic);
+    end
+    else
+      topic := TTypedTopic<T>(obj);
+    topic.SetMetricName(lMetric);
+    token := topic.Add(lWrapper, aMode, lState, lTarget);
+    send := topic.TryGetCached(last);
+  finally
+    TMonitor.Exit(fLock);
+  end;
+  if send then
+    topic.Enqueue(
+      procedure
+      var
+        val: T;
+      begin
+        val := last;
+        if (lState = nil) or not lState.TryEnter then
+          Exit;
+        try
+          Dispatch(lMetric, aMode,
+            procedure
+            begin
+              try
+                aHandler(val);
+                topic.AddDelivered(1);
+              except
+                on e: Exception do
+                begin
+                  if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    topic.RemoveByToken(token);
+                  raise;
+                end;
+              end;
+            end,
+            procedure
+            begin
+              topic.AddException;
+            end);
+        finally
+          lState.Leave;
+        end;
+      end);
+  Result := TmaxTypedSubscription<T>.Create(topic, token, lState);
+end;
+
 
 procedure TmaxBus.PostGuidOf<T>(const aEvent: T);
 var
