@@ -28,6 +28,7 @@ type
   TGuid = TGUID;
   TmaxKeyFunc<T> = function(const aValue: T): TmaxString is nested;
 {$ELSE}
+  TGuid = TGUID;
   TmaxKeyFunc<T> = reference to function(const aValue: T): TmaxString;
 {$ENDIF}
 
