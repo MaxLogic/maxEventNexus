@@ -85,6 +85,26 @@ end;
 
 See `samples/ManualSubscribeSample.pas` for a parity demonstration.
 
+## Async Schedulers
+
+EventNexus ships multiple scheduler adapters implementing `IEventNexusScheduler`:
+
+* `maxLogic.EventNexus.Threading.RawThread` (default fallback) spins lightweight threads per task.
+* `maxLogic.EventNexus.Threading.MaxAsync` uses `maxAsync.pas` from MaxLogicFoundation.
+* `maxLogic.EventNexus.Threading.TTask` integrates Delphi's `System.Threading.TTask`.
+
+Inject the adapter you want:
+
+```pascal
+uses maxLogic.EventNexus, maxLogic.EventNexus.Threading.MaxAsync;
+
+begin
+  maxSetAsyncScheduler(CreateMaxAsyncScheduler);
+end;
+```
+
+Swap adapters at runtime to match your threading framework.
+
 ## Documentation
 
 * [Bus specification](spec-bus.md)

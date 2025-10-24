@@ -28,7 +28,6 @@ type
   TGuid = TGUID;
   TmaxKeyFunc<T> = function(const aValue: T): TmaxString is nested;
 {$ELSE}
-  type TGuid = TGUID;
   TmaxKeyFunc<T> = reference to function(const aValue: T): TmaxString;
 {$ENDIF}
 
@@ -1664,7 +1663,7 @@ begin
   end;
 end;
 
-function TmaxBus.Subscribe<T>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery): ImaxSubscription; overload;
+function TmaxBus.Subscribe<T>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery): ImaxSubscription;
 var
   key: PTypeInfo;
   obj: TmaxTopicBase;
@@ -1731,7 +1730,7 @@ begin
   Result := TmaxTypedSubscription<T>.Create(topic, token, lState);
 end;
 
-function TmaxBus.Subscribe<T>(const aHandler: TmaxObjProcOf<T>; aMode: TmaxDelivery): ImaxSubscription; overload;
+function TmaxBus.Subscribe<T>(const aHandler: TmaxObjProcOf<T>; aMode: TmaxDelivery): ImaxSubscription;
 var
   key: PTypeInfo;
   obj: TmaxTopicBase;
@@ -2284,7 +2283,7 @@ begin
 end;
 
 
-function TmaxBus.SubscribeNamedOf<T>(const aName: TmaxString; const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery): ImaxSubscription; overload;
+function TmaxBus.SubscribeNamedOf<T>(const aName: TmaxString; const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery): ImaxSubscription;
 var
   typeDict: TmaxTypeTopicDict;
   obj: TmaxTopicBase;
@@ -2359,7 +2358,7 @@ begin
   Result := TmaxTypedSubscription<T>.Create(topic, token, lState);
 end;
 
-function TmaxBus.SubscribeNamedOf<T>(const aName: TmaxString; const aHandler: TmaxObjProcOf<T>; aMode: TmaxDelivery): ImaxSubscription; overload;
+function TmaxBus.SubscribeNamedOf<T>(const aName: TmaxString; const aHandler: TmaxObjProcOf<T>; aMode: TmaxDelivery): ImaxSubscription;
 var
   typeDict: TmaxTypeTopicDict;
   obj: TmaxTopicBase;
@@ -2699,7 +2698,7 @@ begin
 end;
 
 
-function TmaxBus.SubscribeGuidOf<T>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery): ImaxSubscription; overload;
+function TmaxBus.SubscribeGuidOf<T>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery): ImaxSubscription;
 var
   key: TGuid;
   obj: TmaxTopicBase;
@@ -2766,7 +2765,7 @@ begin
   Result := TmaxTypedSubscription<T>.Create(topic, token, lState);
 end;
 
-function TmaxBus.SubscribeGuidOf<T>(const aHandler: TmaxObjProcOf<T>; aMode: TmaxDelivery): ImaxSubscription; overload;
+function TmaxBus.SubscribeGuidOf<T>(const aHandler: TmaxObjProcOf<T>; aMode: TmaxDelivery): ImaxSubscription;
 var
   key: TGuid;
   obj: TmaxTopicBase;

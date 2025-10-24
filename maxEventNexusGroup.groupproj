@@ -21,6 +21,9 @@
         <Projects Include="samples\UISampleConsole.dproj">
             <Dependencies/>
         </Projects>
+        <Projects Include="bench\SchedulerCompare.dproj">
+            <Dependencies/>
+        </Projects>
     </ItemGroup>
     <ProjectExtensions>
         <Borland.Personality>Default.Personality.12</Borland.Personality>
@@ -83,14 +86,23 @@
     <Target Name="UISampleConsole:Make">
         <MSBuild Projects="samples\UISampleConsole.dproj" Targets="Make"/>
     </Target>
+    <Target Name="SchedulerCompare">
+        <MSBuild Projects="bench\SchedulerCompare.dproj"/>
+    </Target>
+    <Target Name="SchedulerCompare:Clean">
+        <MSBuild Projects="bench\SchedulerCompare.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="SchedulerCompare:Make">
+        <MSBuild Projects="bench\SchedulerCompare.dproj" Targets="Make"/>
+    </Target>
     <Target Name="Build">
-        <CallTarget Targets="MaxEventNexusTests;AutoSubscribeSample;ConsoleSample;ManualSubscribeSample;UISample;UISampleConsole"/>
+        <CallTarget Targets="MaxEventNexusTests;AutoSubscribeSample;ConsoleSample;ManualSubscribeSample;UISample;UISampleConsole;SchedulerCompare"/>
     </Target>
     <Target Name="Clean">
-        <CallTarget Targets="MaxEventNexusTests:Clean;AutoSubscribeSample:Clean;ConsoleSample:Clean;ManualSubscribeSample:Clean;UISample:Clean;UISampleConsole:Clean"/>
+        <CallTarget Targets="MaxEventNexusTests:Clean;AutoSubscribeSample:Clean;ConsoleSample:Clean;ManualSubscribeSample:Clean;UISample:Clean;UISampleConsole:Clean;SchedulerCompare:Clean"/>
     </Target>
     <Target Name="Make">
-        <CallTarget Targets="MaxEventNexusTests:Make;AutoSubscribeSample:Make;ConsoleSample:Make;ManualSubscribeSample:Make;UISample:Make;UISampleConsole:Make"/>
+        <CallTarget Targets="MaxEventNexusTests:Make;AutoSubscribeSample:Make;ConsoleSample:Make;ManualSubscribeSample:Make;UISample:Make;UISampleConsole:Make;SchedulerCompare:Make"/>
     </Target>
     <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
 </Project>
