@@ -1349,6 +1349,12 @@ function TTestSchedulers.WaitForSignal(const aEvent: TEvent; aTimeoutMs: Cardina
 var
   start: UInt64;
 begin
+  // NOTE: Do not use a single blocking WaitFor(aTimeoutMs) here.
+  // In a console test runner there is no UI message loop. Any code scheduled to the
+  // main thread (TThread.Synchronize/Queue or RunOnMain) will only execute when the
+  // main thread calls CheckSynchronize. If we block inside WaitFor, those callbacks
+  // never run, the event may never be signaled, and tests would hang or time out.
+  // We therefore poll the event (WaitFor(0)), pump the synchronize queue, then yield.
   start := GetTickCount64;
   repeat
     if aEvent.WaitFor(0) = wrSignaled then
