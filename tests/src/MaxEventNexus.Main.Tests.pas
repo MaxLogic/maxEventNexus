@@ -5,7 +5,8 @@
 {$IFDEF FPC}
   {$DEFINE max_FPC}
 {$ELSE}
-
+  {$DEFINE max_DELPHI}
+{$ENDIF}
 
 interface
 
@@ -216,8 +217,8 @@ begin
     on e: EmaxAggregateException do
     begin
       CheckEquals(2, e.Inner.Count);
-      CheckEquals('first', e.Inner[0].Message);
-      CheckEquals('second', e.Inner[1].Message);
+      CheckEquals('first', e.Inner.Items[0].Message);
+      CheckEquals('second', e.Inner.Items[1].Message);
     end;
   end;
 end;
