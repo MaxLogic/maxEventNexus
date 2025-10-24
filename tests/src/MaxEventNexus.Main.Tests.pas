@@ -1337,7 +1337,6 @@ begin
   finally
     tgt.Free;
   end;
-  end;
 
 
 
