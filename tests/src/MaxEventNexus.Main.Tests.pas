@@ -307,7 +307,7 @@ var
     values.Add(aEvt);
   end;
 {$ELSE}
-  values: TList<TKeyed>;
+  values: System.Generics.Collections.TList<TKeyed>;
 {$ENDIF}
   function Make(const k: string; v: Integer): TKeyed;
   begin
@@ -385,7 +385,7 @@ var
     values.Add(aEvt);
   end;
 {$ELSE}
-  values: TList<TKeyed>;
+  values: System.Generics.Collections.TList<TKeyed>;
 {$ENDIF}
   function Make(const k: string; v: Integer): TKeyed;
   begin
@@ -1185,7 +1185,7 @@ var
     values.Add(aValue);
   end;
 {$ELSE}
-  values: TList<Integer>;
+  values: System.Generics.Collections.TList<Integer>;
 {$ENDIF}
 begin
   bus := maxBus;
@@ -1247,7 +1247,7 @@ var
     values.Add(aValue);
   end;
 {$ELSE}
-  values: TList<Integer>;
+  values: System.Generics.Collections.TList<Integer>;
 {$ENDIF}
   i: Integer;
 begin
