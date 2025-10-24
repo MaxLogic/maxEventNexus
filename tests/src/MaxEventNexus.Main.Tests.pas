@@ -182,6 +182,8 @@ type
 
 implementation
 
+uses
+  MaxLogic.Utils;
 
 { TTestAggregateException }
 
