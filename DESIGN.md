@@ -30,7 +30,7 @@ All topic lookups are stored in dictionaries mapping the topic identifier to sub
    * Rehydrate `WeakTarget`; if missing/stale → mark for prune and continue.
    * Increment **in-flight**; invoke according to **Delivery**:
      * `Posting`: same thread.
-     * `Main`: marshal via `ImaxAsync.QueueMain`.
+    * `Main`: marshal via `IEventNexusScheduler.RunOnMain`.
      * `Async` / `Background`: enqueue on the configured executor.
    * Decrement **in-flight** after completion.
 3. **Queued-before-cancel** items: if a handler was enqueued before its token was released, the **liveness check** ensures it becomes a **no-op** once the target dies or the subscription is canceled.
@@ -41,7 +41,7 @@ All topic lookups are stored in dictionaries mapping the topic identifier to sub
 * Copy-on-write happens only on structural changes (subscribe/unsubscribe/prune); dispatch is lock-free on the array snapshot.
 
 ## Queues (executors)
-* `Main`/`Async`/`Background` marshal through the `ImaxAsync` abstraction so Delphi/FPC differences are isolated.
+* `Main`/`Async`/`Background` marshal through the `IEventNexusScheduler` abstraction so Delphi/FPC differences are isolated.
 * Queue policy (`TmaxQueuePolicy`) defines max depth, overflow behavior and optional deadlines. Drops are recorded in metrics.
 
 ## Sticky Cache & Coalescer
@@ -60,4 +60,3 @@ All topic lookups are stored in dictionaries mapping the topic identifier to sub
 
 ## Compatibility Notes
 * **iPub** and **NX.Horizon** rely on manual unsubscribe; EventNexus adds a **weak-target guard** and **token auto-unsubscribe** for safety-by-default while keeping method-handler ergonomics.
-

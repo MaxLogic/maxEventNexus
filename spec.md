@@ -97,7 +97,7 @@ end;
 * Swap Delphi‑only RTTI helpers (`TRttiMethod.IsGeneric`, `MakeGenericMethod`) for simple `PTypeInfo` enumeration inspired by `reference/iPub.Rtl.Messaging.pas`.
 * Replace `GetTickCount64`/`QWord` timing with `TStopwatch` from `lib/MaxLogicFoundation/maxlogic.fpc.diagnostics.pas` and `UInt64` counters.
 * Implement case‑insensitive topic lookup via `SysUtils.CompareText` or a delegated comparer rather than `TStringComparer.OrdinalIgnoreCase`.
-* Hide `TThread.Queue/Synchronize` differences behind `ImaxAsync` so dispatching code is compiler‑agnostic.
+* Hide `TThread.Queue/Synchronize` differences behind `IEventNexusScheduler` so dispatching code is compiler‑agnostic.
 * **Weak‑target shim**: Delphi uses `System.WeakReference.TWeakReference<TObject>` for method targets; FPC uses a `{Ptr, Gen}` registry. Both paths share the same dispatch‑time “rehydrate‑or‑skip” logic.
 
 ---
@@ -106,27 +106,32 @@ end;
 
 ### 4.1 Abstraction
 
-`maxAsync.pas` supplies scheduling and main‑thread marshaling. The bus depends on an abstraction (to avoid hard‑wiring):
+`maxAsync.pas` (and future adapters) supply scheduling and main‑thread marshaling. The bus depends on an abstraction (`maxLogic.EventNexus.Threading.Adapter`) to stay decoupled:
 
 ```pascal
 type
-  ImaxAsync = interface
-    ['{02AB5A8B-8A3F-4F29-9C1E-1A31B8E7B6A9}']
-    procedure RunAsync(const aProc: TProc);
-    procedure RunOnMain(const aProc: TProc);
-    procedure RunDelayed(const aProc: TProc; aDelayUs: Integer);
+  IEventNexusScheduler = interface
+    ['{9FD531B7-4A0E-4E17-96F1-9134FDEBA02F}']
+    procedure RunAsync(const aProc: TmaxProc);
+    procedure RunOnMain(const aProc: TmaxProc);
+    procedure RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);
     function  IsMainThread: Boolean;
   end;
 ```
 
-**Requirement:** Provide a default adapter `TmaxNexusAsync` that wraps maxAsync. On FPC, supply platform equivalents (e.g., `TThread.Queue/Synchronize` on Lazarus, or custom main‑loop dispatcher).
+**Requirement:** Ship a default adapter `TmaxRawThreadScheduler` in `maxLogic.EventNexus.Threading.RawThread` so the bus works out of the box. Provide optional adapters to integrate other frameworks:
+
+* `maxLogic.EventNexus.Threading.MaxAsync` exposes `CreateMaxAsyncScheduler`, backed by `lib/MaxLogicFoundation/maxAsync.pas`.
+* `maxLogic.EventNexus.Threading.TTask` (Delphi only) exposes `CreateTTaskScheduler`, leveraging `System.Threading.TTask`.
+
+Callers select an implementation and inject it via `maxSetAsyncScheduler`.
 
 ### 4.2 Delivery Modes
 
 * `Posting`: invoke in the caller thread.
-* `Main`: marshal to main/UI thread via `ImaxAsync.RunOnMain`.
-* `Async`: dispatch on a worker (thread‑pool) via `ImaxAsync.RunAsync`.
-* Coalescing delays schedule via `ImaxAsync.RunDelayed` to avoid blocking sleeps.
+* `Main`: marshal to main/UI thread via `IEventNexusScheduler.RunOnMain`.
+* `Async`: dispatch on a worker (thread‑pool) via `IEventNexusScheduler.RunAsync`.
+* Coalescing delays schedule via `IEventNexusScheduler.RunDelayed` to avoid blocking sleeps.
 * `Background`: if caller is main thread, use `RunAsync`; else invoke inline.
 
 **Note:** Delivery ordering per subscriber is preserved **per topic**; cross‑topic ordering is not guaranteed.
@@ -285,7 +290,7 @@ type
   end;
 ```
 
-*`aWindowUs=0` means coalesce within a single dispatch cycle; `>0` uses a time window. Values <1000 µs or negative are treated as 0. Coalesced dispatch must be scheduled via `ImaxAsync.RunDelayed` rather than blocking sleeps.*
+*`aWindowUs=0` means coalesce within a single dispatch cycle; `>0` uses a time window. Values <1000 µs or negative are treated as 0. Coalesced dispatch must be scheduled via `IEventNexusScheduler.RunDelayed` rather than blocking sleeps.*
 
 ### 8.5 Main‑Thread Assurance
 
