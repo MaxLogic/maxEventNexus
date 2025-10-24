@@ -13,7 +13,12 @@ interface
 
 uses
   mormot.core.test,
-  SysUtils, Classes, Generics.Collections, SyncObjs,
+  SysUtils, Classes, SyncObjs,
+  {$IFDEF max_DELPHI}
+  System.Generics.Collections,
+  {$ELSE}
+  Generics.Collections,
+  {$ENDIF}
 
   maxLogic.EventNexus.Threading.Adapter,
   maxLogic.EventNexus.Threading.RawThread ,

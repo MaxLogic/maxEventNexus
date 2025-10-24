@@ -12,7 +12,11 @@ uses
   mormot.core.test in 'src\mormot.core.test.pas',
   SysUtils,
   Classes,
+  {$IFDEF max_DELPHI}
+  System.Generics.Collections,
+  {$ELSE}
   Generics.Collections,
+  {$ENDIF}
   SyncObjs,
 
   maxLogic.EventNexus.Threading.Adapter in '..\src\maxLogic.EventNexus.Threading.Adapter.pas',
