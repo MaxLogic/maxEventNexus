@@ -163,7 +163,7 @@ type
     Name: string;
     Delivery: TmaxDelivery;
     constructor Create(aDelivery: TmaxDelivery); overload;
-    constructor Create(const AName: string; aDelivery: TmaxDelivery = TmaxDelivery.Posting); overload;
+    constructor Create(const aName: string; aDelivery: TmaxDelivery = TmaxDelivery.Posting); overload;
   end;
 
 procedure AutoSubscribe(const aInstance: TObject);
@@ -449,7 +449,7 @@ type
   TFpcWeakRegistry = class
   private
     type
-      TFreeInstanceThunk = procedure(self: TObject);
+      TFreeInstanceThunk = procedure(aSelf: TObject);
     fEntries: specialize TDictionary<TObject, TFpcWeakEntry>;
     fHooks: specialize TDictionary<TClass, Pointer>;
     fLock: TCriticalSection;
@@ -467,7 +467,7 @@ type
 var
   gFpcWeakRegistry: TFpcWeakRegistry = nil;
 
-procedure FpcWeakFreeInstanceHook(self: TObject); forward;
+procedure FpcWeakFreeInstanceHook(aSelf: TObject); forward;
 {$ENDIF}
 
 {$IFDEF max_FPC}
@@ -630,13 +630,13 @@ begin
   end;
 end;
 
-procedure FpcWeakFreeInstanceHook(self: TObject);
+procedure FpcWeakFreeInstanceHook(aSelf: TObject);
 var
   lOrig: Pointer;
 begin
-  lOrig := TFpcWeakRegistry.Instance.PrepareFreeInstance(self);
+  lOrig := TFpcWeakRegistry.Instance.PrepareFreeInstance(aSelf);
   if lOrig <> nil then
-    TFpcWeakRegistry.TFreeInstanceThunk(lOrig)(self);
+    TFpcWeakRegistry.TFreeInstanceThunk(lOrig)(aSelf);
 end;
 
 {$ENDIF}
@@ -1663,86 +1663,86 @@ end;
 
 function TmaxBus.Subscribe<t>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
 var
-  Key: PTypeInfo;
-  Obj: TmaxTopicBase;
-  topic: TTypedTopic<t>;
-  Token: TmaxSubscriptionToken;
-  send: boolean;
-  last: t;
-  metricName: TmaxString;
+  lKey: PTypeInfo;
+  lObj: TmaxTopicBase;
+  lTopic: TTypedTopic<t>;
+  lToken: TmaxSubscriptionToken;
+  lSend: boolean;
+  lLast: t;
+  lMetricName: TmaxString;
   lState: ImaxSubscriptionState;
 begin
-  Key := TypeInfo(t);
-  metricName := TypeMetricName(Key);
+  lKey := TypeInfo(t);
+  lMetricName := TypeMetricName(lKey);
   TMonitor.Enter(fLock);
   try
-    if not fTyped.TryGetValue(Key, Obj) then
+    if not fTyped.TryGetValue(lKey, lObj) then
     begin
-      topic := TTypedTopic<t>.Create;
-      topic.SetMetricName(metricName);
-      if fStickyTypes.ContainsKey(Key) then
-        topic.SetSticky(True);
-      fTyped.Add(Key, topic);
+      lTopic := TTypedTopic<t>.Create;
+      lTopic.SetMetricName(lMetricName);
+      if fStickyTypes.ContainsKey(lKey) then
+        lTopic.SetSticky(True);
+      fTyped.Add(lKey, lTopic);
     end
     else
-      topic := TTypedTopic<t>(Obj);
-    topic.SetMetricName(metricName);
-    Token := topic.Add(aHandler, aMode, lState);
-    send := topic.TryGetCached(last);
+      lTopic := TTypedTopic<t>(lObj);
+    lTopic.SetMetricName(lMetricName);
+    lToken := lTopic.Add(aHandler, aMode, lState);
+    lSend := lTopic.TryGetCached(lLast);
   finally
     TMonitor.exit(fLock);
   end;
-  if send then
-    topic.Enqueue(
+  if lSend then
+    lTopic.Enqueue(
       procedure
       var
-        Val: t;
+        lVal: t;
       begin
-        Val := last;
+        lVal := lLast;
         if (lState = nil) or not lState.TryEnter then
           exit;
         try
-          Dispatch(metricName, aMode,
+          Dispatch(lMetricName, aMode,
             procedure
             begin
               try
-                aHandler(Val);
-                topic.AddDelivered(1);
+                aHandler(lVal);
+                lTopic.AddDelivered(1);
               except
                 on e: Exception do
                 begin
                   if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    topic.RemoveByToken(Token);
+                    lTopic.RemoveByToken(lToken);
                   raise;
                 end;
               end;
             end,
             procedure
             begin
-              topic.AddException;
+              lTopic.AddException;
             end);
         finally
           lState.Leave;
         end;
       end);
-  Result := TmaxTypedSubscription<t>.Create(topic, Token, lState);
+  Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
 end;
 
 function TmaxBus.Subscribe<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
 var
-  Key: PTypeInfo;
-  Obj: TmaxTopicBase;
-  topic: TTypedTopic<t>;
-  Token: TmaxSubscriptionToken;
-  send: boolean;
-  last: t;
-  metricName: TmaxString;
+  lKey: PTypeInfo;
+  lObj: TmaxTopicBase;
+  lTopic: TTypedTopic<t>;
+  lToken: TmaxSubscriptionToken;
+  lSend: boolean;
+  lLast: t;
+  lMetricName: TmaxString;
   lState: ImaxSubscriptionState;
   lTarget: TObject;
   lWrapper: TmaxProcOf<t>;
 begin
-  Key := TypeInfo(t);
-  metricName := TypeMetricName(Key);
+  lKey := TypeInfo(t);
+  lMetricName := TypeMetricName(lKey);
   lTarget := TObject(TMethod(aHandler).Data);
   lWrapper :=
     procedure(const v: t)
@@ -1752,56 +1752,56 @@ begin
 
   TMonitor.Enter(fLock);
   try
-    if not fTyped.TryGetValue(Key, Obj) then
+    if not fTyped.TryGetValue(lKey, lObj) then
     begin
-      topic := TTypedTopic<t>.Create;
-      topic.SetMetricName(metricName);
-      if fStickyTypes.ContainsKey(Key) then
-        topic.SetSticky(True);
-      fTyped.Add(Key, topic);
+      lTopic := TTypedTopic<t>.Create;
+      lTopic.SetMetricName(lMetricName);
+      if fStickyTypes.ContainsKey(lKey) then
+        lTopic.SetSticky(True);
+      fTyped.Add(lKey, lTopic);
     end
     else
-      topic := TTypedTopic<t>(Obj);
-    topic.SetMetricName(metricName);
-    Token := topic.Add(lWrapper, aMode, lState, lTarget);
-    send := topic.TryGetCached(last);
+      lTopic := TTypedTopic<t>(lObj);
+    lTopic.SetMetricName(lMetricName);
+    lToken := lTopic.Add(lWrapper, aMode, lState, lTarget);
+    lSend := lTopic.TryGetCached(lLast);
   finally
     TMonitor.exit(fLock);
   end;
-  if send then
-    topic.Enqueue(
+  if lSend then
+    lTopic.Enqueue(
       procedure
       var
-        Val: t;
+        lVal: t;
       begin
-        Val := last;
+        lVal := lLast;
         if (lState = nil) or not lState.TryEnter then
           exit;
         try
-          Dispatch(metricName, aMode,
+          Dispatch(lMetricName, aMode,
             procedure
             begin
               try
-                aHandler(Val);
-                topic.AddDelivered(1);
+                aHandler(lVal);
+                lTopic.AddDelivered(1);
               except
                 on e: Exception do
                 begin
                   if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    topic.RemoveByToken(Token);
+                    lTopic.RemoveByToken(lToken);
                   raise;
                 end;
               end;
             end,
             procedure
             begin
-              topic.AddException;
+              lTopic.AddException;
             end);
         finally
           lState.Leave;
         end;
       end);
-  Result := TmaxTypedSubscription<t>.Create(topic, Token, lState);
+  Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
 end;
 
 procedure TmaxBus.Post<t>(const aEvent: t);
@@ -2948,42 +2948,42 @@ end;
 
 procedure TmaxBus.EnableSticky<t>(aEnable: boolean);
 var
-  Key: PTypeInfo;
-  Obj: TmaxTopicBase;
+  lKey: PTypeInfo;
+  lObj: TmaxTopicBase;
   {$IFDEF max_FPC}
-  kvName: specialize TPair<TmaxString, TmaxTypeTopicDict>;
-  kvInner: specialize TPair<PTypeInfo, TmaxTopicBase>;
+  lKvName: specialize TPair<TmaxString, TmaxTypeTopicDict>;
+  lKvInner: specialize TPair<PTypeInfo, TmaxTopicBase>;
   {$ELSE}
-  kvName: TPair<TmaxString, TmaxTypeTopicDict>;
-  kvInner: TPair<PTypeInfo, TmaxTopicBase>;
+  lKvName: TPair<TmaxString, TmaxTypeTopicDict>;
+  lKvInner: TPair<PTypeInfo, TmaxTopicBase>;
   {$ENDIF}
-  Guid: TGuid;
-  metric: TmaxString;
+  lGuid: TGuid;
+  lMetric: TmaxString;
 begin
-  Key := TypeInfo(t);
-  metric := TypeMetricName(Key);
+  lKey := TypeInfo(t);
+  lMetric := TypeMetricName(lKey);
   TMonitor.Enter(fLock);
   try
     if aEnable then
-      fStickyTypes.AddOrSetValue(Key, True)
+      fStickyTypes.AddOrSetValue(lKey, True)
     else
-      fStickyTypes.Remove(Key);
-    if fTyped.TryGetValue(Key, Obj) then
+      fStickyTypes.Remove(lKey);
+    if fTyped.TryGetValue(lKey, lObj) then
     begin
-      Obj.SetMetricName(metric);
-      Obj.SetSticky(aEnable);
+      lObj.SetMetricName(lMetric);
+      lObj.SetSticky(aEnable);
     end;
-    for kvName in fNamedTyped do
-      if kvName.Value.TryGetValue(Key, Obj) then
+    for lKvName in fNamedTyped do
+      if lKvName.Value.TryGetValue(lKey, lObj) then
       begin
-        Obj.SetMetricName(NamedTypeMetricName(kvName.Key, Key));
-        Obj.SetSticky(aEnable);
+        lObj.SetMetricName(NamedTypeMetricName(lKvName.Key, lKey));
+        lObj.SetSticky(aEnable);
       end;
-    Guid := GetTypeData(Key)^.Guid;
-    if fGuid.TryGetValue(Guid, Obj) then
+    lGuid := GetTypeData(lKey)^.Guid;
+    if fGuid.TryGetValue(lGuid, lObj) then
     begin
-      Obj.SetMetricName(GuidMetricName(Guid));
-      Obj.SetSticky(aEnable);
+      lObj.SetMetricName(GuidMetricName(lGuid));
+      lObj.SetSticky(aEnable);
     end;
   finally
     TMonitor.exit(fLock);
@@ -2992,34 +2992,34 @@ end;
 
 procedure TmaxBus.EnableStickyNamed(const aName: string; aEnable: boolean);
 var
-  Obj: TmaxTopicBase;
-  typeDict: TmaxTypeTopicDict;
+  lObj: TmaxTopicBase;
+  lTypeDict: TmaxTypeTopicDict;
   {$IFDEF max_FPC}
-  kvInner: specialize TPair<PTypeInfo, TmaxTopicBase>;
+  lKvInner: specialize TPair<PTypeInfo, TmaxTopicBase>;
   {$ELSE}
-  kvInner: TPair<PTypeInfo, TmaxTopicBase>;
+  lKvInner: TPair<PTypeInfo, TmaxTopicBase>;
   {$ENDIF}
   lNameKey: TmaxString;
-  metric: TmaxString;
+  lMetric: TmaxString;
 begin
   lNameKey := NormalizeName(aName);
-  metric := NamedMetricName(lNameKey);
+  lMetric := NamedMetricName(lNameKey);
   TMonitor.Enter(fLock);
   try
     if aEnable then
       fStickyNames.AddOrSetValue(lNameKey, True)
     else
       fStickyNames.Remove(lNameKey);
-    if fNamed.TryGetValue(lNameKey, Obj) then
+    if fNamed.TryGetValue(lNameKey, lObj) then
     begin
-      Obj.SetMetricName(metric);
-      Obj.SetSticky(aEnable);
+      lObj.SetMetricName(lMetric);
+      lObj.SetSticky(aEnable);
     end;
-    if fNamedTyped.TryGetValue(lNameKey, typeDict) then
-      for kvInner in typeDict do
+    if fNamedTyped.TryGetValue(lNameKey, lTypeDict) then
+      for lKvInner in lTypeDict do
       begin
-        kvInner.Value.SetMetricName(NamedTypeMetricName(lNameKey, kvInner.Key));
-        kvInner.Value.SetSticky(aEnable);
+        lKvInner.Value.SetMetricName(NamedTypeMetricName(lNameKey, lKvInner.Key));
+        lKvInner.Value.SetSticky(aEnable);
       end;
   finally
     TMonitor.exit(fLock);
@@ -3028,27 +3028,27 @@ end;
 
 procedure TmaxBus.EnableCoalesceOf<t>(const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer);
 var
-  Key: PTypeInfo;
-  Obj: TmaxTopicBase;
-  topic: TTypedTopic<t>;
-  metric: TmaxString;
+  lKey: PTypeInfo;
+  lObj: TmaxTopicBase;
+  lTopic: TTypedTopic<t>;
+  lMetric: TmaxString;
 begin
-  Key := TypeInfo(t);
-  metric := TypeMetricName(Key);
+  lKey := TypeInfo(t);
+  lMetric := TypeMetricName(lKey);
   TMonitor.Enter(fLock);
   try
-    if not fTyped.TryGetValue(Key, Obj) then
+    if not fTyped.TryGetValue(lKey, lObj) then
     begin
-      topic := TTypedTopic<t>.Create;
-      topic.SetMetricName(metric);
-      if fStickyTypes.ContainsKey(Key) then
-        topic.SetSticky(True);
-      fTyped.Add(Key, topic);
+      lTopic := TTypedTopic<t>.Create;
+      lTopic.SetMetricName(lMetric);
+      if fStickyTypes.ContainsKey(lKey) then
+        lTopic.SetSticky(True);
+      fTyped.Add(lKey, lTopic);
     end
     else
-      topic := TTypedTopic<t>(Obj);
-    topic.SetMetricName(metric);
-    topic.SetCoalesce(aKeyOf, aWindowUs);
+      lTopic := TTypedTopic<t>(lObj);
+    lTopic.SetMetricName(lMetric);
+    lTopic.SetCoalesce(aKeyOf, aWindowUs);
   finally
     TMonitor.exit(fLock);
   end;
@@ -3056,35 +3056,35 @@ end;
 
 procedure TmaxBus.EnableCoalesceNamedOf<t>(const aName: string; const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer);
 var
-  typeDict: TmaxTypeTopicDict;
-  Obj: TmaxTopicBase;
-  topic: TTypedTopic<t>;
+  lTypeDict: TmaxTypeTopicDict;
+  lObj: TmaxTopicBase;
+  lTopic: TTypedTopic<t>;
   lNameKey: TmaxString;
-  metric: TmaxString;
-  Key: PTypeInfo;
+  lMetric: TmaxString;
+  lKey: PTypeInfo;
 begin
-  Key := TypeInfo(t);
+  lKey := TypeInfo(t);
   lNameKey := NormalizeName(aName);
-  metric := NamedTypeMetricName(lNameKey, Key);
+  lMetric := NamedTypeMetricName(lNameKey, lKey);
   TMonitor.Enter(fLock);
   try
-    if not fNamedTyped.TryGetValue(lNameKey, typeDict) then
+    if not fNamedTyped.TryGetValue(lNameKey, lTypeDict) then
     begin
-      typeDict := TmaxTypeTopicDict.Create([doOwnsValues]);
-      fNamedTyped.Add(lNameKey, typeDict);
+      lTypeDict := TmaxTypeTopicDict.Create([doOwnsValues]);
+      fNamedTyped.Add(lNameKey, lTypeDict);
     end;
-    if not typeDict.TryGetValue(Key, Obj) then
+    if not lTypeDict.TryGetValue(lKey, lObj) then
     begin
-      topic := TTypedTopic<t>.Create;
-      topic.SetMetricName(metric);
-      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(Key) then
-        topic.SetSticky(True);
-      typeDict.Add(Key, topic);
+      lTopic := TTypedTopic<t>.Create;
+      lTopic.SetMetricName(lMetric);
+      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey) then
+        lTopic.SetSticky(True);
+      lTypeDict.Add(lKey, lTopic);
     end
     else
-      topic := TTypedTopic<t>(Obj);
-    topic.SetMetricName(metric);
-    topic.SetCoalesce(aKeyOf, aWindowUs);
+      lTopic := TTypedTopic<t>(lObj);
+    lTopic.SetMetricName(lMetric);
+    lTopic.SetCoalesce(aKeyOf, aWindowUs);
   finally
     TMonitor.exit(fLock);
   end;
@@ -3142,21 +3142,21 @@ var
   lKey: PTypeInfo;
   lObj: TmaxTopicBase;
   lTopic: TTypedTopic<t>;
-  metric: TmaxString;
+  lMetric: TmaxString;
 begin
   lKey := TypeInfo(t);
-  metric := TypeMetricName(lKey);
+  lMetric := TypeMetricName(lKey);
   TMonitor.Enter(fLock);
   try
     if not fTyped.TryGetValue(lKey, lObj) then
     begin
       lTopic := TTypedTopic<t>.Create;
-      lTopic.SetMetricName(metric);
+      lTopic.SetMetricName(lMetric);
       fTyped.Add(lKey, lTopic);
     end
     else
       lTopic := TTypedTopic<t>(lObj);
-    lTopic.SetMetricName(metric);
+    lTopic.SetMetricName(lMetric);
     lTopic.SetPolicy(aPolicy);
   finally
     TMonitor.exit(fLock);
