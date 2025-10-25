@@ -2129,10 +2129,10 @@ begin
       begin
         if (lState = nil) or not lState.TryEnter then
           exit;
-        try
-          Dispatch(lMetric, aMode,
-            procedure
-            begin
+        Dispatch(lMetric, aMode,
+          procedure
+          begin
+            try
               try
                 aHandler();
                 lTopic.AddDelivered(1);
@@ -2144,14 +2144,15 @@ begin
                   raise;
                 end;
               end;
-            end,
-            procedure
-            begin
-              lTopic.AddException;
-            end);
-        finally
-          lState.Leave;
-        end;
+            finally
+              if lState <> nil then
+                lState.Leave;
+            end;
+          end,
+          procedure
+          begin
+            lTopic.AddException;
+          end);
       end);
   Result := TmaxNamedSubscription.Create(lTopic, lToken, lState);
 end;
@@ -3026,58 +3027,74 @@ begin
   lTopic.Enqueue(
     procedure
     var
-      lSub: TTypedSubscriber<t>;
       lVal: t;
       lErrs: TmaxExceptionList;
+      i: Integer;
+
+      procedure InvokeOne(const aSub: TTypedSubscriber<t>);
+      var
+        lHandler: TmaxProcOf<t>;
+        lMode: TmaxDelivery;
+        lToken: TmaxSubscriptionToken;
+        lState: ImaxSubscriptionState;
+      begin
+        lHandler := aSub.Handler;
+        lMode := aSub.Mode;
+        lToken := aSub.Token;
+        lState := aSub.State;
+
+        if (lState <> nil) and not lState.TryEnter then
+          exit;
+
+        if not aSub.Target.IsAlive then
+        begin
+          lTopic.RemoveByToken(lToken);
+          if lState <> nil then
+            lState.Leave;
+          exit;
+        end;
+
+        try
+          Dispatch(lMetric, lMode,
+            procedure
+            begin
+              try
+                lHandler(lVal);
+                lTopic.AddDelivered(1);
+              except
+                on e: Exception do
+                begin
+                  if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    lTopic.RemoveByToken(lToken);
+                  raise;
+                end;
+              end;
+              if lState <> nil then
+                lState.Leave;
+            end,
+            procedure
+            begin
+              lTopic.AddException;
+            end);
+        except
+          on e: Exception do
+          begin
+            if lErrs = nil then
+              lErrs := TmaxExceptionList.Create(True);
+            {$IFDEF max_DELPHI}
+            lErrs.Add(Exception(AcquireExceptionObject));
+            {$ELSE}
+            lErrs.Add(e);
+            {$ENDIF}
+          end;
+        end;
+      end;
+
     begin
       lVal := aEvent;
       lErrs := nil;
-      for lSub in lSubs do
-      begin
-        if (lSub.State = nil) or not lSub.State.TryEnter then
-          Continue;
-        try
-          if not lSub.Target.IsAlive then
-          begin
-            lTopic.RemoveByToken(lSub.Token);
-            Continue;
-          end;
-          try
-            Dispatch(lMetric, lSub.Mode,
-              procedure
-              begin
-                try
-                  lSub.Handler(lVal);
-                  lTopic.AddDelivered(1);
-                except
-                  on e: Exception do
-                  begin
-                    if (e is EAccessViolation) or (e is EInvalidPointer) then
-                      lTopic.RemoveByToken(lSub.Token);
-                    raise;
-                  end;
-                end;
-              end,
-              procedure
-              begin
-                lTopic.AddException;
-              end);
-          except
-            on e: Exception do
-            begin
-              if lErrs = nil then
-                lErrs := TmaxExceptionList.Create(True);
-              {$IFDEF max_DELPHI}
-              lErrs.Add(Exception(AcquireExceptionObject));
-              {$ELSE}
-              lErrs.Add(e);
-              {$ENDIF}
-            end;
-          end;
-        finally
-          lSub.State.Leave;
-        end;
-      end;
+      for i := 0 to High(lSubs) do
+        InvokeOne(lSubs[i]);
       if lErrs <> nil then
         raise EmaxAggregateException.Create(lErrs);
     end);
