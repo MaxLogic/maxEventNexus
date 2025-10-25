@@ -281,6 +281,7 @@ type
     fGuid: TmaxGuidTopicDict;
     fStickyTypes: TmaxBoolDictOfTypeInfo;
     fStickyNames: TmaxBoolDictOfString;
+    fMainThreadId: TThreadID;
     function ScheduleTypedCoalesce<t>(const aTopicName: TmaxString;
       aTopic: TTypedTopic<t>; const aSubs: TArray < TTypedSubscriber<t> > ;
       const aKey: TmaxString): boolean;
@@ -863,11 +864,15 @@ var
   lDeadlineMs: Cardinal;
   lRemaining: integer;
   lElapsedMs: Int64;
+  used: integer;
 begin
   Result := True;
   TMonitor.Enter(self);
   try
-    if (fPolicy.MaxDepth > 0) and (fQueue.Count >= fPolicy.MaxDepth) then
+    used := fQueue.Count; // Note: does not include in-flight item by design
+    // We do not count the currently executing (in-flight) item towards capacity.
+    // Tests expect DropNewest/Deadline behavior with MaxDepth applying to queued items only.
+    if (fPolicy.MaxDepth > 0) and (used >= fPolicy.MaxDepth) then
     begin
       case fPolicy.Overflow of
         DropNewest:
@@ -1586,6 +1591,7 @@ begin
   fGuid := TmaxGuidTopicDict.Create([doOwnsValues]);
   fStickyTypes := TmaxBoolDictOfTypeInfo.Create;
   fStickyNames := TmaxBoolDictOfString.Create;
+  fMainThreadId := TThread.CurrentThread.ThreadID;
 end;
 
 destructor TmaxBus.Destroy;
@@ -1651,7 +1657,7 @@ begin
           end;
         end);
     Background:
-      if fAsync.IsMainThread then
+      if (TThread.CurrentThread.ThreadID = fMainThreadId) or fAsync.IsMainThread then
         fAsync.RunAsync(
           procedure
           begin
@@ -2396,6 +2402,7 @@ var
   lNameKey: TmaxString;
   lMetric: TmaxString;
   lState: ImaxSubscriptionState;
+  lBase: TmaxTopicBase;
 begin
   lKey := TypeInfo(t);
   lNameKey := NormalizeName(aName);
@@ -2411,6 +2418,8 @@ begin
     begin
       lTopic := TTypedTopic<t>.Create;
       lTopic.SetMetricName(lMetric);
+      if fNamed.TryGetValue(lNameKey, lBase) then
+        lTopic.SetPolicy(lBase.GetPolicy);
       if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey) then
         lTopic.SetSticky(True);
       lTypeDict.Add(lKey, lTopic);
@@ -2476,6 +2485,7 @@ var
   lNameKey: TmaxString;
   lMetric: TmaxString;
   lState: ImaxSubscriptionState;
+  lBase: TmaxTopicBase;
   lTarget: TObject;
   lWrapper: TmaxProcOf<t>;
 begin
@@ -2500,6 +2510,8 @@ begin
     begin
       lTopic := TTypedTopic<t>.Create;
       lTopic.SetMetricName(lMetric);
+      if fNamed.TryGetValue(lNameKey, lBase) then
+        lTopic.SetPolicy(lBase.GetPolicy);
       if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey) then
         lTopic.SetSticky(True);
       lTypeDict.Add(lKey, lTopic);
@@ -2564,6 +2576,7 @@ var
   lDropVal: t;
   lNameKey: TmaxString;
   lMetric: TmaxString;
+  lBase: TmaxTopicBase;
   lKey: PTypeInfo;
 begin
   lIsNew := False; // prevent compiler warning: variable might not have been initialized
@@ -2589,6 +2602,8 @@ begin
       begin
         lTopic := TTypedTopic<t>.Create;
         lTopic.SetMetricName(lMetric);
+        if fNamed.TryGetValue(lNameKey, lBase) then
+          lTopic.SetPolicy(lBase.GetPolicy);
         lTopic.SetSticky(True);
         lTypeDict.Add(lKey, lTopic);
       end
@@ -2707,6 +2722,7 @@ var
   lDropVal: t;
   lNameKey: TmaxString;
   lMetric: TmaxString;
+  lBase: TmaxTopicBase;
   lKey: PTypeInfo;
 begin
   lIsNew := False; // prevent compiler warning: variable might not have been initialized
@@ -2732,6 +2748,8 @@ begin
       begin
         lTopic := TTypedTopic<t>.Create;
         lTopic.SetMetricName(lMetric);
+        if fNamed.TryGetValue(lNameKey, lBase) then
+          lTopic.SetPolicy(lBase.GetPolicy);
         lTopic.SetSticky(True);
         lTypeDict.Add(lKey, lTopic);
         lTopic.Cache(aEvent);
@@ -3237,6 +3255,7 @@ var
   lTopic: TTypedTopic<t>;
   lNameKey: TmaxString;
   lMetric: TmaxString;
+  lBase: TmaxTopicBase;
   lKey: PTypeInfo;
 begin
   lKey := TypeInfo(t);
@@ -3253,6 +3272,8 @@ begin
     begin
       lTopic := TTypedTopic<t>.Create;
       lTopic.SetMetricName(lMetric);
+      if fNamed.TryGetValue(lNameKey, lBase) then
+        lTopic.SetPolicy(lBase.GetPolicy);
       if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey) then
         lTopic.SetSticky(True);
       lTypeDict.Add(lKey, lTopic);
