@@ -881,6 +881,8 @@ begin
             if fStats.CurrentQueueDepth > 0 then
               Dec(fStats.CurrentQueueDepth);
             AddDropped;
+            // Signal to callers (TryPost*) that a drop occurred, even though we accept the new item.
+            Result := False;
           end;
         Block:
           while fQueue.Count >= fPolicy.MaxDepth do
@@ -1530,7 +1532,11 @@ begin
                 begin
                   if lErrs = nil then
                     lErrs := TmaxExceptionList.Create(True);
+                  {$IFDEF max_DELPHI}
+                  lErrs.Add(Exception(AcquireExceptionObject));
+                  {$ELSE}
                   lErrs.Add(e);
+                  {$ENDIF}
                 end;
               end;
             finally
@@ -1905,7 +1911,11 @@ begin
             begin
               if lErrs = nil then
                 lErrs := TmaxExceptionList.Create(True);
+              {$IFDEF max_DELPHI}
+              lErrs.Add(Exception(AcquireExceptionObject));
+              {$ELSE}
               lErrs.Add(e);
+              {$ENDIF}
             end;
           end;
         finally
@@ -1970,7 +1980,6 @@ begin
     Result := ScheduleTypedCoalesce<t>(lMetric, lTopic, lSubs, lKeyStr);
     if not Result then
     begin
-      lTopic.AddDropped;
       lTopic.PopPending(lKeyStr, lDropVal);
     end;
     exit;
@@ -2019,7 +2028,11 @@ begin
             begin
               if lErrs = nil then
                 lErrs := TmaxExceptionList.Create(True);
+              {$IFDEF max_DELPHI}
+              lErrs.Add(Exception(AcquireExceptionObject));
+              {$ELSE}
               lErrs.Add(e);
+              {$ENDIF}
             end;
           end;
         finally
@@ -2029,8 +2042,6 @@ begin
       if lErrs <> nil then
         raise EmaxAggregateException.Create(lErrs);
     end);
-  if not Result then
-    lTopic.AddDropped;
 end;
 
 function TmaxBus.SubscribeNamed(const aName: TmaxString; const aHandler: TmaxProc; aMode: TmaxDelivery): ImaxSubscription;
@@ -2173,7 +2184,11 @@ begin
             begin
               if lErrs = nil then
                 lErrs := TmaxExceptionList.Create(True);
+              {$IFDEF max_DELPHI}
+              lErrs.Add(Exception(AcquireExceptionObject));
+              {$ELSE}
               lErrs.Add(e);
+              {$ENDIF}
             end;
           end;
         finally
@@ -2263,7 +2278,11 @@ begin
             begin
               if lErrs = nil then
                 lErrs := TmaxExceptionList.Create(True);
+              {$IFDEF max_DELPHI}
+              lErrs.Add(Exception(AcquireExceptionObject));
+              {$ELSE}
               lErrs.Add(e);
+              {$ENDIF}
             end;
           end;
         finally
@@ -2551,7 +2570,11 @@ begin
             begin
               if lErrs = nil then
                 lErrs := TmaxExceptionList.Create(True);
+              {$IFDEF max_DELPHI}
+              lErrs.Add(Exception(AcquireExceptionObject));
+              {$ELSE}
               lErrs.Add(e);
+              {$ENDIF}
             end;
           end;
         finally
@@ -2628,7 +2651,6 @@ begin
     Result := ScheduleTypedCoalesce<t>(lMetric, lTopic, lSubs, lKeyStr);
     if not Result then
     begin
-      lTopic.AddDropped;
       lTopic.PopPending(lKeyStr, lDropVal);
     end;
     exit;
@@ -2677,7 +2699,11 @@ begin
             begin
               if lErrs = nil then
                 lErrs := TmaxExceptionList.Create(True);
+              {$IFDEF max_DELPHI}
+              lErrs.Add(Exception(AcquireExceptionObject));
+              {$ELSE}
               lErrs.Add(e);
+              {$ENDIF}
             end;
           end;
         finally
@@ -2687,8 +2713,6 @@ begin
       if lErrs <> nil then
         raise EmaxAggregateException.Create(lErrs);
     end);
-  if not Result then
-    lTopic.AddDropped;
 end;
 
 function TmaxBus.SubscribeGuidOf<t>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
@@ -2885,12 +2909,11 @@ begin
       exit;
     if not ScheduleTypedCoalesce<t>(lMetric, lTopic, lSubs, lKeyStr) then
     begin
-      lTopic.AddDropped;
       lTopic.PopPending(lKeyStr, lDrop);
     end;
     exit;
   end;
-  if not lTopic.Enqueue(
+  lTopic.Enqueue(
     procedure
     var
       lSub: TTypedSubscriber<t>;
@@ -2934,7 +2957,11 @@ begin
             begin
               if lErrs = nil then
                 lErrs := TmaxExceptionList.Create(True);
+              {$IFDEF max_DELPHI}
+              lErrs.Add(Exception(AcquireExceptionObject));
+              {$ELSE}
               lErrs.Add(e);
+              {$ENDIF}
             end;
           end;
         finally
@@ -2943,8 +2970,7 @@ begin
       end;
       if lErrs <> nil then
         raise EmaxAggregateException.Create(lErrs);
-    end) then
-    lTopic.AddDropped;
+    end);
 end;
 
 procedure TmaxBus.EnableSticky<t>(aEnable: boolean);
