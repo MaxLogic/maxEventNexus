@@ -917,9 +917,20 @@ begin
             begin
               if fProcessing then
               begin
-                // Prefer dropping the in-flight (oldest) item
-                RequestDropActive; // AddDropped happens in ConsumeDropActive
-                lDroppedActive := True;
+                // Prefer dropping the in-flight (oldest) item once; if already requested, drop the oldest queued item.
+                if fDropActive = 0 then
+                begin
+                  RequestDropActive; // AddDropped happens in ConsumeDropActive
+                  lDroppedActive := True;
+                end
+                else if fQueue.Count > 0 then
+                begin
+                  // Already scheduled to drop active; free capacity by dropping the oldest queued item
+                  fQueue.Dequeue;
+                  if fStats.CurrentQueueDepth > 0 then
+                    Dec(fStats.CurrentQueueDepth);
+                  AddDropped;
+                end;
               end
               else if fQueue.Count > 0 then
               begin
