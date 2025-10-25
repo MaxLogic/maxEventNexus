@@ -890,15 +890,12 @@ var
   lDeadlineMs: Cardinal;
   lRemaining: integer;
   lElapsedMs: Int64;
-  used: integer;
 begin
   Result := True;
   TMonitor.Enter(self);
   try
-    used := fQueue.Count;
-    if fProcessing then
-      Inc(used); // count the in-flight item towards capacity
-    if (fPolicy.MaxDepth > 0) and (used >= fPolicy.MaxDepth) then
+    // Capacity check: MaxDepth applies to queued items only, not in-flight
+    if (fPolicy.MaxDepth > 0) and (fQueue.Count >= fPolicy.MaxDepth) then
     begin
       case fPolicy.Overflow of
         DropNewest:
@@ -908,50 +905,33 @@ begin
           end;
         DropOldest:
           begin
-            // Drop the oldest across queued+in-flight:
+            // Drop the oldest item to make room for the new one
             if fQueue.Count > 0 then
             begin
               fQueue.Dequeue;
               if fStats.CurrentQueueDepth > 0 then
                 Dec(fStats.CurrentQueueDepth);
               AddDropped;
-              Result := False; // signal a drop happened
             end
-            else
-            begin
-              // queue is empty but an item is in-flight; request to drop the active one
-              RequestDropActive;
-              Result := False; // signal a drop happened
-            end;
+            else if fProcessing then
+              RequestDropActive;  // Drop in-flight item; AddDropped happens in ConsumeDropActive
+            Result := False;  // Signal that a drop occurred, but continue to enqueue new item
           end;
         Block:
-          while True do
-          begin
-            used := fQueue.Count;
-            if fProcessing then Inc(used);
-            if used < fPolicy.MaxDepth then break;
+          while fQueue.Count >= fPolicy.MaxDepth do
             TMonitor.Wait(self, Cardinal(-1));
-          end;
         Deadline:
           if fPolicy.DeadlineUs <= 0 then
           begin
-            while True do
-            begin
-              used := fQueue.Count;
-              if fProcessing then Inc(used);
-              if used < fPolicy.MaxDepth then break;
+            while fQueue.Count >= fPolicy.MaxDepth do
               TMonitor.Wait(self, Cardinal(-1));
-            end;
           end
           else
           begin
             lDeadlineMs := Cardinal(fPolicy.DeadlineUs div 1000);
             lTimer := TStopWatch.StartNew;
-            while True do
+            while fQueue.Count >= fPolicy.MaxDepth do
             begin
-              used := fQueue.Count;
-              if fProcessing then Inc(used);
-              if used < fPolicy.MaxDepth then break;
               lElapsedMs := lTimer.ElapsedMilliseconds;
               lRemaining := integer(Int64(lDeadlineMs) - lElapsedMs);
               if lRemaining <= 0 then
