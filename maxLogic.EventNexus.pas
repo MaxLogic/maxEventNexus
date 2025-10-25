@@ -23,7 +23,7 @@ const
   max_BUS_VERSION = '0.1.0';
 
 type
-  TmaxString = type Unicodestring;
+  TmaxString = type UnicodeString;
 
   {$IFDEF max_FPC}
   TmaxKeyFunc<t> = function(const aValue: t): TmaxString is nested;
@@ -141,10 +141,10 @@ type
 
   {$IFDEF max_FPC}
   TOnAsyncError = procedure(const aTopic: string; const aE: Exception);
-  TOnMetricSample = procedure(const AName: string; const aStats: TmaxTopicStats);
+  TOnMetricSample = procedure(const aName: string; const aStats: TmaxTopicStats);
   {$ELSE}
   TOnAsyncError = reference to procedure(const aTopic: string; const aE: Exception);
-  TOnMetricSample = reference to procedure(const AName: string; const aStats: TmaxTopicStats);
+  TOnMetricSample = reference to procedure(const aName: string; const aStats: TmaxTopicStats);
   {$ENDIF}
 function maxBus: ImaxBus;
 procedure maxSetAsyncErrorHandler(const aHandler: TOnAsyncError);
@@ -780,7 +780,7 @@ begin
   fPolicy.DeadlineUs := 0;
   fMetricName := '';
   fWarnedHighWater := False;
-  fillchar(fStats, SizeOf(fStats), 0);
+  FillChar(fStats, SizeOf(fStats), 0);
 end;
 
 destructor TmaxTopicBase.Destroy;
@@ -808,8 +808,8 @@ end;
 
 procedure TmaxTopicBase.TouchMetrics;
 begin
-  if (fMetricName <> '') and assigned(gMetricSample) then
-    gMetricSample(Unicodestring(fMetricName), fStats);
+  if (fMetricName <> '') and Assigned(gMetricSample) then
+    gMetricSample(UnicodeString(fMetricName), fStats);
 end;
 
 procedure TmaxTopicBase.CheckHighWater;
@@ -951,7 +951,7 @@ end;
 
 function NormalizeName(const aName: TmaxString): TmaxString; inline;
 begin
-  Result := TmaxString(UpperCase(Unicodestring(aName)));
+  Result := TmaxString(UpperCase(UnicodeString(aName)));
 end;
 
 function TypeMetricName(const aInfo: PTypeInfo): TmaxString; inline;
@@ -966,7 +966,7 @@ end;
 
 function NamedTypeMetricName(const aName: TmaxString; const aInfo: PTypeInfo): TmaxString; inline;
 begin
-  Result := TmaxString(Unicodestring(aName) + ':' + Unicodestring(GetTypeName(aInfo)));
+  Result := TmaxString(UnicodeString(aName) + ':' + UnicodeString(GetTypeName(aInfo)));
 end;
 
 function GuidMetricName(const aGuid: TGuid): TmaxString; inline;
@@ -1539,11 +1539,11 @@ begin
           if lErrs <> nil then
           begin
             // Forward async errors via global hook; avoid unhandled exception in scheduler thread.
-            if assigned(gAsyncError) then
+            if Assigned(gAsyncError) then
             begin
               ex := EmaxAggregateException.Create(lErrs);
               try
-                gAsyncError(Unicodestring(aTopicName), ex);
+                gAsyncError(UnicodeString(aTopicName), ex);
               finally
                 ex.Free;
               end;
@@ -1606,10 +1606,10 @@ begin
           except
             on e: Exception do
             begin
-              if assigned(aOnException) then
+              if Assigned(aOnException) then
                 aOnException();
-              if assigned(gAsyncError) then
-                gAsyncError(Unicodestring(aTopic), e);
+              if Assigned(gAsyncError) then
+                gAsyncError(UnicodeString(aTopic), e);
             end;
           end;
         end);
@@ -1622,10 +1622,10 @@ begin
           except
             on e: Exception do
             begin
-              if assigned(aOnException) then
+              if Assigned(aOnException) then
                 aOnException();
-              if assigned(gAsyncError) then
-                gAsyncError(Unicodestring(aTopic), e);
+              if Assigned(gAsyncError) then
+                gAsyncError(UnicodeString(aTopic), e);
             end;
           end;
         end);
@@ -1639,10 +1639,10 @@ begin
             except
               on e: Exception do
               begin
-                if assigned(aOnException) then
+                if Assigned(aOnException) then
                   aOnException();
-                if assigned(gAsyncError) then
-                  gAsyncError(Unicodestring(aTopic), e);
+                if Assigned(gAsyncError) then
+                  gAsyncError(UnicodeString(aTopic), e);
               end;
             end;
           end)
@@ -1652,10 +1652,10 @@ begin
       except
         on e: Exception do
         begin
-          if assigned(aOnException) then
+          if Assigned(aOnException) then
             aOnException();
-          if assigned(gAsyncError) then
-            gAsyncError(Unicodestring(aTopic), e);
+          if Assigned(gAsyncError) then
+            gAsyncError(UnicodeString(aTopic), e);
         end;
       end;
   end;
@@ -3233,7 +3233,7 @@ var
   lKey: PTypeInfo;
   lObj: TmaxTopicBase;
 begin
-  fillchar(Result, SizeOf(Result), 0);
+  FillChar(Result, SizeOf(Result), 0);
   lKey := TypeInfo(t);
   TMonitor.Enter(fLock);
   try
@@ -3249,7 +3249,7 @@ var
   lObj: TmaxTopicBase;
   lNameKey: TmaxString;
 begin
-  fillchar(Result, SizeOf(Result), 0);
+  FillChar(Result, SizeOf(Result), 0);
   lNameKey := NormalizeName(aName);
   TMonitor.Enter(fLock);
   try
@@ -3267,7 +3267,7 @@ var
   lInner: TmaxTopicBase;
   lGuidObj: TmaxTopicBase;
 begin
-  fillchar(Result, SizeOf(Result), 0);
+  FillChar(Result, SizeOf(Result), 0);
   TMonitor.Enter(fLock);
   try
     for lObj in fTyped.Values do
