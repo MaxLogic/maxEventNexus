@@ -175,6 +175,7 @@
         <Icon_MainIcon>MaxEventNexusTests_Icon.ico</Icon_MainIcon>
         <Manifest_File>(None)</Manifest_File>
         <AppDPIAwarenessMode>none</AppDPIAwarenessMode>
+        <DCC_Hints>false</DCC_Hints>
     </PropertyGroup>
     <ItemGroup>
         <DelphiCompile Include="$(MainSource)">
