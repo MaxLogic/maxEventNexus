@@ -12,7 +12,7 @@ interface
 
 uses
   // RTL
-  SysUtils, Classes, SyncObjs,
+  Classes, SysUtils, SyncObjs,
   {$IFDEF max_DELPHI} System.Generics.Collections, {$ELSE} Generics.Collections, {$ENDIF}
   // Third-party
   mormot.core.Test,
@@ -135,7 +135,7 @@ type
   private
     fVal: integer;
   public
-    constructor Create(aVal: integer);
+    constructor Create(aValue: integer);
     function GetValue: integer;
   end;
 
@@ -487,10 +487,10 @@ end;
 
 { TIntEvent }
 
-constructor TIntEvent.Create(aVal: integer);
+constructor TIntEvent.Create(aValue: integer);
 begin
   inherited Create;
-  fVal := aVal;
+  fVal := aValue;
 end;
 
 function TIntEvent.GetValue: integer;
@@ -1323,7 +1323,7 @@ end;
 
 function TTestSchedulers.WaitForSignal(const aEvent: TEvent; aTimeoutMs: Cardinal): boolean;
 var
-  lStart: uInt64;
+  lStart: UInt64;
 begin
   // NOTE: Do not use a single blocking WaitFor(aTimeoutMs) here.
   // In a console test runner there is no UI message loop. Any code scheduled to the
@@ -1346,7 +1346,7 @@ procedure TTestSchedulers.ExerciseScheduler(const aScheduler: IEventNexusSchedul
 var
   mainId, asyncId, mainHandlerId: TThreadID;
   asyncEvent, mainEvent, delayEvent: TEvent;
-  delayStart, delayDelta: uInt64;
+  delayStart, delayDelta: UInt64;
 begin
   asyncEvent := TEvent.Create(nil, True, False, '');
   mainEvent := TEvent.Create(nil, True, False, '');
