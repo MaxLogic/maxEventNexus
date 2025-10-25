@@ -1526,7 +1526,11 @@ begin
                 begin
                   if (e is EAccessViolation) or (e is EInvalidPointer) then
                     aTopic.RemoveByToken(lToken);
+                  {$IFDEF max_DELPHI}
                   raise;
+                  {$ELSE}
+                  raise e;
+                  {$ENDIF}
                 end;
               end;
               if lState <> nil then
@@ -1607,7 +1611,11 @@ begin
         begin
           if Assigned(aOnException) then
             aOnException();
+          {$IFDEF max_DELPHI}
           raise;
+          {$ELSE}
+          raise e;
+          {$ENDIF}
         end;
       end;
     Main:
@@ -1726,7 +1734,11 @@ begin
                 begin
                   if (e is EAccessViolation) or (e is EInvalidPointer) then
                     lTopic.RemoveByToken(lToken);
+                  {$IFDEF max_DELPHI}
                   raise;
+                  {$ELSE}
+                  raise e;
+                  {$ENDIF}
                 end;
               end;
             finally
@@ -1803,7 +1815,11 @@ begin
                 begin
                   if (e is EAccessViolation) or (e is EInvalidPointer) then
                     lTopic.RemoveByToken(lToken);
+                  {$IFDEF max_DELPHI}
                   raise;
+                  {$ELSE}
+                  raise e;
+                  {$ENDIF}
                 end;
               end;
             finally
@@ -1918,7 +1934,11 @@ begin
                 begin
                   if (e is EAccessViolation) or (e is EInvalidPointer) then
                     lTopic.RemoveByToken(lToken);
+                  {$IFDEF max_DELPHI}
                   raise;
+                  {$ELSE}
+                  raise e;
+                  {$ENDIF}
                 end;
               end;
               if lState <> nil then
@@ -2046,7 +2066,11 @@ begin
                 begin
                   if (e is EAccessViolation) or (e is EInvalidPointer) then
                     lTopic.RemoveByToken(lToken);
+                  {$IFDEF max_DELPHI}
                   raise;
+                  {$ELSE}
+                  raise e;
+                  {$ENDIF}
                 end;
               end;
               if lState <> nil then
@@ -2122,7 +2146,11 @@ begin
                 begin
                   if (e is EAccessViolation) or (e is EInvalidPointer) then
                     lTopic.RemoveByToken(lToken);
+                  {$IFDEF max_DELPHI}
                   raise;
+                  {$ELSE}
+                  raise e;
+                  {$ENDIF}
                 end;
               end;
             finally
@@ -2215,7 +2243,11 @@ begin
                 begin
                   if (e is EAccessViolation) or (e is EInvalidPointer) then
                     lTopic.RemoveByToken(lToken);
+                  {$IFDEF max_DELPHI}
                   raise;
+                  {$ELSE}
+                  raise e;
+                  {$ENDIF}
                 end;
               end;
               if lState <> nil then
@@ -2320,7 +2352,11 @@ begin
                 begin
                   if (e is EAccessViolation) or (e is EInvalidPointer) then
                     lTopic.RemoveByToken(lToken);
+                  {$IFDEF max_DELPHI}
                   raise;
+                  {$ELSE}
+                  raise e;
+                  {$ENDIF}
                 end;
               end;
               if lState <> nil then
@@ -2408,7 +2444,11 @@ begin
                 begin
                   if (e is EAccessViolation) or (e is EInvalidPointer) then
                     lTopic.RemoveByToken(lToken);
+                  {$IFDEF max_DELPHI}
                   raise;
+                  {$ELSE}
+                  raise e;
+                  {$ENDIF}
                 end;
               end;
             finally
@@ -2493,7 +2533,11 @@ begin
                 begin
                   if (e is EAccessViolation) or (e is EInvalidPointer) then
                     lTopic.RemoveByToken(lToken);
+                  {$IFDEF max_DELPHI}
                   raise;
+                  {$ELSE}
+                  raise e;
+                  {$ENDIF}
                 end;
               end;
             finally
@@ -2620,7 +2664,11 @@ begin
                 begin
                   if (e is EAccessViolation) or (e is EInvalidPointer) then
                     lTopic.RemoveByToken(lToken);
+                  {$IFDEF max_DELPHI}
                   raise;
+                  {$ELSE}
+                  raise e;
+                  {$ENDIF}
                 end;
               end;
               if lState <> nil then
@@ -2759,7 +2807,11 @@ begin
                 begin
                   if (e is EAccessViolation) or (e is EInvalidPointer) then
                     lTopic.RemoveByToken(lToken);
+                  {$IFDEF max_DELPHI}
                   raise;
+                  {$ELSE}
+                  raise e;
+                  {$ENDIF}
                 end;
               end;
               if lState <> nil then
@@ -2839,7 +2891,11 @@ begin
                 begin
                   if (e is EAccessViolation) or (e is EInvalidPointer) then
                     lTopic.RemoveByToken(lToken);
+                  {$IFDEF max_DELPHI}
                   raise;
+                  {$ELSE}
+                  raise e;
+                  {$ENDIF}
                 end;
               end;
             finally
@@ -2916,7 +2972,11 @@ begin
                 begin
                   if (e is EAccessViolation) or (e is EInvalidPointer) then
                     lTopic.RemoveByToken(lToken);
+                  {$IFDEF max_DELPHI}
                   raise;
+                  {$ELSE}
+                  raise e;
+                  {$ENDIF}
                 end;
               end;
             finally
@@ -3030,7 +3090,11 @@ begin
                 begin
                   if (e is EAccessViolation) or (e is EInvalidPointer) then
                     lTopic.RemoveByToken(lToken);
+                  {$IFDEF max_DELPHI}
                   raise;
+                  {$ELSE}
+                  raise e;
+                  {$ENDIF}
                 end;
               end;
               if lState <> nil then
