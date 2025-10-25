@@ -1905,7 +1905,7 @@ begin
         if (lState <> nil) and not lState.TryEnter then
           continue;
 
-        if not aSubs[i].Target.IsAlive then
+        if not lSubs[i].Target.IsAlive then
         begin
           lTopic.RemoveByToken(lToken);
           if lState <> nil then
@@ -2033,7 +2033,7 @@ begin
         if (lState <> nil) and not lState.TryEnter then
           continue;
 
-        if not aSubs[i].Target.IsAlive then
+        if not lSubs[i].Target.IsAlive then
         begin
           lTopic.RemoveByToken(lToken);
           if lState <> nil then
@@ -2202,7 +2202,7 @@ begin
         if (lState <> nil) and not lState.TryEnter then
           continue;
 
-        if not aSubs[i].Target.IsAlive then
+        if not lSubs[i].Target.IsAlive then
         begin
           lTopic.RemoveByToken(lToken);
           if lState <> nil then
@@ -2307,7 +2307,7 @@ begin
         if (lState <> nil) and not lState.TryEnter then
           continue;
 
-        if not aSubs[i].Target.IsAlive then
+        if not lSubs[i].Target.IsAlive then
         begin
           lTopic.RemoveByToken(lToken);
           if lState <> nil then
@@ -2599,15 +2599,15 @@ begin
       lErrs := nil;
       for i := 0 to High(lSubs) do
       begin
-        lHandler := aSubs[i].Handler;
-        lMode := aSubs[i].Mode;
-        lToken := aSubs[i].Token;
-        lState := aSubs[i].State;
+        lHandler := lSubs[i].Handler;
+        lMode := lSubs[i].Mode;
+        lToken := lSubs[i].Token;
+        lState := lSubs[i].State;
 
         if (lState <> nil) and not lState.TryEnter then
           continue;
 
-        if not aSubs[i].Target.IsAlive then
+        if not lSubs[i].Target.IsAlive then
         begin
           lTopic.RemoveByToken(lToken);
           if lState <> nil then
@@ -2738,15 +2738,15 @@ begin
       lErrs := nil;
       for i := 0 to High(lSubs) do
       begin
-        lHandler := aSubs[i].Handler;
-        lMode := aSubs[i].Mode;
-        lToken := aSubs[i].Token;
-        lState := aSubs[i].State;
+        lHandler := lSubs[i].Handler;
+        lMode := lSubs[i].Mode;
+        lToken := lSubs[i].Token;
+        lState := lSubs[i].State;
 
         if (lState <> nil) and not lState.TryEnter then
           continue;
 
-        if not aSubs[i].Target.IsAlive then
+        if not lSubs[i].Target.IsAlive then
         begin
           lTopic.RemoveByToken(lToken);
           if lState <> nil then
@@ -3009,15 +3009,15 @@ begin
       lErrs := nil;
       for i := 0 to High(lSubs) do
       begin
-        lHandler := aSubs[i].Handler;
-        lMode := aSubs[i].Mode;
-        lToken := aSubs[i].Token;
-        lState := aSubs[i].State;
+        lHandler := lSubs[i].Handler;
+        lMode := lSubs[i].Mode;
+        lToken := lSubs[i].Token;
+        lState := lSubs[i].State;
 
         if (lState <> nil) and not lState.TryEnter then
           continue;
 
-        if not aSubs[i].Target.IsAlive then
+        if not lSubs[i].Target.IsAlive then
         begin
           lTopic.RemoveByToken(lToken);
           if lState <> nil then
