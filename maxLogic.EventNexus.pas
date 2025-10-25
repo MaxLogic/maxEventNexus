@@ -1891,20 +1891,16 @@ begin
       lMode: TmaxDelivery;
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
-      lHandler: TmaxProcOf<t>;
-      lMode: TmaxDelivery;
-      lToken: TmaxSubscriptionToken;
-      lState: ImaxSubscriptionState;
     begin
       lVal := aEvent;
       lErrs := nil;
 
       for i := 0 to High(lSubs) do
       begin
-        lHandler := aSubs[i].Handler;
-        lMode := aSubs[i].Mode;
-        lToken := aSubs[i].Token;
-        lState := aSubs[i].State;
+        lHandler := lSubs[i].Handler;
+        lMode := lSubs[i].Mode;
+        lToken := lSubs[i].Token;
+        lState := lSubs[i].State;
 
         if (lState <> nil) and not lState.TryEnter then
           continue;
@@ -2019,16 +2015,20 @@ begin
       lVal: t;
       lErrs: TmaxExceptionList;
       i: Integer;
+      lHandler: TmaxProcOf<t>;
+      lMode: TmaxDelivery;
+      lToken: TmaxSubscriptionToken;
+      lState: ImaxSubscriptionState;
     begin
       lVal := aEvent;
       lErrs := nil;
 
       for i := 0 to High(lSubs) do
       begin
-        lHandler := aSubs[i].Handler;
-        lMode := aSubs[i].Mode;
-        lToken := aSubs[i].Token;
-        lState := aSubs[i].State;
+        lHandler := lSubs[i].Handler;
+        lMode := lSubs[i].Mode;
+        lToken := lSubs[i].Token;
+        lState := lSubs[i].State;
 
         if (lState <> nil) and not lState.TryEnter then
           continue;
@@ -2189,19 +2189,15 @@ begin
       lMode: TmaxDelivery;
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
-      lHandler: TmaxProc;
-      lMode: TmaxDelivery;
-      lToken: TmaxSubscriptionToken;
-      lState: ImaxSubscriptionState;
     begin
       lErrs := nil;
 
       for i := 0 to High(lSubs) do
       begin
-        lHandler := aSubs[i].Handler;
-        lMode := aSubs[i].Mode;
-        lToken := aSubs[i].Token;
-        lState := aSubs[i].State;
+        lHandler := lSubs[i].Handler;
+        lMode := lSubs[i].Mode;
+        lToken := lSubs[i].Token;
+        lState := lSubs[i].State;
 
         if (lState <> nil) and not lState.TryEnter then
           continue;
@@ -2294,15 +2290,19 @@ begin
     var
       lErrs: TmaxExceptionList;
       i: Integer;
+      lHandler: TmaxProc;
+      lMode: TmaxDelivery;
+      lToken: TmaxSubscriptionToken;
+      lState: ImaxSubscriptionState;
     begin
       lErrs := nil;
 
       for i := 0 to High(lSubs) do
       begin
-        lHandler := aSubs[i].Handler;
-        lMode := aSubs[i].Mode;
-        lToken := aSubs[i].Token;
-        lState := aSubs[i].State;
+        lHandler := lSubs[i].Handler;
+        lMode := lSubs[i].Mode;
+        lToken := lSubs[i].Token;
+        lState := lSubs[i].State;
 
         if (lState <> nil) and not lState.TryEnter then
           continue;
