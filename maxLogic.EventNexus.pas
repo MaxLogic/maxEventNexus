@@ -891,68 +891,106 @@ var
   lDeadlineMs: Cardinal;
   lRemaining: integer;
   lElapsedMs: Int64;
+  lEnqueueMs: UInt64;
+  lWrapped: TmaxProc;
+  lDroppedActive: Boolean;
 begin
   Result := True;
   TMonitor.Enter(self);
   try
-    // Capacity check: MaxDepth applies to queued items only, not in-flight
-    if (fPolicy.MaxDepth > 0) and (fQueue.Count >= fPolicy.MaxDepth) then
+    // Capacity check
+    if (fPolicy.MaxDepth > 0) then
     begin
       case fPolicy.Overflow of
         DropNewest:
           begin
-            AddDropped;
-            exit(False);
+            if fQueue.Count >= fPolicy.MaxDepth then
+            begin
+              AddDropped;
+              exit(False);
+            end;
           end;
         DropOldest:
           begin
-            // Drop the oldest item to make room for the new one
-            if fQueue.Count > 0 then
+            lDroppedActive := False;
+            if fQueue.Count >= fPolicy.MaxDepth then
             begin
-              fQueue.Dequeue;
-              if fStats.CurrentQueueDepth > 0 then
-                Dec(fStats.CurrentQueueDepth);
-              AddDropped;
-            end
-            else if fProcessing then
-              RequestDropActive;  // Drop in-flight item; AddDropped happens in ConsumeDropActive
-            Result := False;  // Signal that a drop occurred, but continue to enqueue new item
+              if fProcessing then
+              begin
+                // Prefer dropping the in-flight (oldest) item
+                RequestDropActive; // AddDropped happens in ConsumeDropActive
+                lDroppedActive := True;
+              end
+              else if fQueue.Count > 0 then
+              begin
+                // Drop the oldest queued item to make room for the new one
+                fQueue.Dequeue;
+                if fStats.CurrentQueueDepth > 0 then
+                  Dec(fStats.CurrentQueueDepth);
+                AddDropped;
+              end;
+              // If we dropped the active item, consider this enqueue successful for caller semantics
+              Result := lDroppedActive;
+            end;
           end;
         Block:
-          while fQueue.Count >= fPolicy.MaxDepth do
-            TMonitor.Wait(self, Cardinal(-1));
-        Deadline:
-          if fPolicy.DeadlineUs <= 0 then
           begin
-            while fQueue.Count >= fPolicy.MaxDepth do
+            // Treat active item as occupying capacity
+            while (fQueue.Count + Ord(fProcessing)) >= fPolicy.MaxDepth do
               TMonitor.Wait(self, Cardinal(-1));
-          end
-          else
+          end;
+        Deadline:
           begin
-            lDeadlineMs := Cardinal(fPolicy.DeadlineUs div 1000);
-            lTimer := TStopWatch.StartNew;
-            while fQueue.Count >= fPolicy.MaxDepth do
+            // Treat active item as occupying capacity
+            if fPolicy.DeadlineUs <= 0 then
             begin
-              lElapsedMs := lTimer.ElapsedMilliseconds;
-              lRemaining := integer(Int64(lDeadlineMs) - lElapsedMs);
-              if lRemaining <= 0 then
+              while (fQueue.Count + Ord(fProcessing)) >= fPolicy.MaxDepth do
+                TMonitor.Wait(self, Cardinal(-1));
+            end
+            else
+            begin
+              lDeadlineMs := Cardinal(fPolicy.DeadlineUs div 1000);
+              lTimer := TStopWatch.StartNew;
+              while (fQueue.Count + Ord(fProcessing)) >= fPolicy.MaxDepth do
               begin
-                AddDropped;
-                exit(False);
+                lElapsedMs := lTimer.ElapsedMilliseconds;
+                lRemaining := integer(Int64(lDeadlineMs) - lElapsedMs);
+                if lRemaining <= 0 then
+                begin
+                  AddDropped;
+                  exit(False);
+                end;
+                TMonitor.Wait(self, Cardinal(lRemaining));
               end;
-              TMonitor.Wait(self, Cardinal(lRemaining));
             end;
           end;
       end;
     end;
-    fQueue.Enqueue(aProc);
+
+    // Wrap with deadline staleness guard
+    lEnqueueMs := GetTickCount64;
+    lWrapped :=
+      procedure
+      begin
+        if (fPolicy.Overflow = Deadline) and (fPolicy.DeadlineUs > 0) then
+        begin
+          if (GetTickCount64 - lEnqueueMs) >= Cardinal(fPolicy.DeadlineUs div 1000) then
+          begin
+            AddDropped;
+            Exit;
+          end;
+        end;
+        aProc();
+      end;
+
+    fQueue.Enqueue(lWrapped);
     Inc(fStats.CurrentQueueDepth);
     if fStats.CurrentQueueDepth > fStats.MaxQueueDepth then
       fStats.MaxQueueDepth := fStats.CurrentQueueDepth;
     CheckHighWater;
     TouchMetrics;
     if fProcessing then
-      exit(True);
+      exit(Result);
     fProcessing := True;
   finally
     TMonitor.exit(self);
@@ -1552,6 +1590,8 @@ begin
           Dispatch(aTopicName, lMode,
             procedure
             begin
+              if aTopic.ConsumeDropActive then
+                Exit;
               try
                 try
                   lHandler(lInner);
@@ -1775,6 +1815,8 @@ begin
         Dispatch(lMetricName, aMode,
           procedure
           begin
+            if lTopic.ConsumeDropActive then
+              Exit;
             try
               try
                 aHandler(lVal);
@@ -1854,6 +1896,8 @@ begin
         Dispatch(lMetricName, aMode,
           procedure
           begin
+            if lTopic.ConsumeDropActive then
+              Exit;
             try
               try
                 aHandler(lVal);
@@ -1972,6 +2016,8 @@ begin
           Dispatch(lMetric, lMode,
             procedure
             begin
+              if lTopic.ConsumeDropActive then
+                Exit;
               try
                 try
                   lHandler(lVal);
@@ -2105,6 +2151,8 @@ begin
           Dispatch(lMetric, lMode,
             procedure
             begin
+              if lTopic.ConsumeDropActive then
+                Exit;
               try
                 try
                   lHandler(lVal);
@@ -2185,6 +2233,8 @@ begin
         Dispatch(lMetric, aMode,
           procedure
           begin
+            if lTopic.ConsumeDropActive then
+              Exit;
             try
               try
                 aHandler();
@@ -2281,6 +2331,8 @@ begin
           Dispatch(lMetric, lMode,
             procedure
             begin
+              if lTopic.ConsumeDropActive then
+                Exit;
               try
                 try
                   lHandler();
@@ -2391,6 +2443,8 @@ begin
           Dispatch(lMetric, lMode,
             procedure
             begin
+              if lTopic.ConsumeDropActive then
+                Exit;
               try
                 try
                   lHandler();
@@ -2486,6 +2540,8 @@ begin
         Dispatch(lMetric, aMode,
           procedure
           begin
+            if lTopic.ConsumeDropActive then
+              Exit;
             try
               try
                 aHandler(lVal);
@@ -2576,6 +2632,8 @@ begin
         Dispatch(lMetric, aMode,
           procedure
           begin
+            if lTopic.ConsumeDropActive then
+              Exit;
             try
               try
                 aHandler(lVal);
@@ -2709,6 +2767,8 @@ begin
           Dispatch(lMetric, lMode,
             procedure
             begin
+              if lTopic.ConsumeDropActive then
+                Exit;
               try
                 try
                   lHandler(lVal);
@@ -2856,6 +2916,8 @@ begin
           Dispatch(lMetric, lMode,
             procedure
             begin
+              if lTopic.ConsumeDropActive then
+                Exit;
               try
                 try
                   lHandler(lVal);
@@ -3136,6 +3198,8 @@ begin
           Dispatch(lMetric, lMode,
             procedure
             begin
+              if lTopic.ConsumeDropActive then
+                Exit;
               try
                 try
                   lHandler(lVal);
