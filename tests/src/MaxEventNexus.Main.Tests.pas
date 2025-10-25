@@ -128,7 +128,7 @@ type
 
   IIntEvent = interface
     ['{E0A90F15-6C16-4BD7-9057-CC95B2E98F03}']
-    function getValue: integer;
+    function GetValue: integer;
   end;
 
   TIntEvent = class(TInterfacedObject, IIntEvent)
@@ -136,7 +136,7 @@ type
     fVal: integer;
   public
     constructor Create(aVal: integer);
-    function getValue: integer;
+    function GetValue: integer;
   end;
 
   TTestQueuePolicy = class(TSynTestCase)
@@ -281,7 +281,7 @@ var
     Values.Add(aEvt);
   end;
   {$ELSE}
-  Values: System.generics.collections.TList<TKeyed>;
+  Values: System.Generics.Collections.TList<TKeyed>;
   {$ENDIF}
 
   function Make(const k: string; v: integer): TKeyed;
@@ -363,7 +363,7 @@ var
     Values.Add(aEvt);
   end;
   {$ELSE}
-  Values: System.generics.collections.TList<TKeyed>;
+  Values: System.Generics.Collections.TList<TKeyed>;
   {$ENDIF}
 
   function Make(const k: string; v: integer): TKeyed;
@@ -493,7 +493,7 @@ begin
   fVal := aVal;
 end;
 
-function TIntEvent.getValue: integer;
+function TIntEvent.GetValue: integer;
 begin
   Result := fVal;
 end;
@@ -506,7 +506,7 @@ var
   {$IFDEF max_FPC}
   procedure Handler(const aEvt: IIntEvent);
   begin
-    got := aEvt.getValue;
+    got := aEvt.GetValue;
   end;
   {$ENDIF}
 begin
@@ -519,7 +519,7 @@ begin
   TmaxBus(maxAsBus(Bus)).SubscribeGuidOf<IIntEvent>(
     procedure(const aEvt: IIntEvent)
     begin
-      got := aEvt.getValue;
+      got := aEvt.GetValue;
     end);
   {$ENDIF}
   TmaxBus(maxAsBus(Bus)).PostGuidOf<IIntEvent>(TIntEvent.Create(5));
@@ -535,7 +535,7 @@ var
   {$IFDEF max_FPC}
   procedure Handler(const aEvt: IIntEvent);
   begin
-    got := aEvt.getValue;
+    got := aEvt.GetValue;
   end;
   {$ENDIF}
 begin
@@ -555,7 +555,7 @@ begin
   TmaxBus(maxAsBus(Bus)).SubscribeGuidOf<IIntEvent>(
     procedure(const aEvt: IIntEvent)
     begin
-      got := aEvt.getValue;
+      got := aEvt.GetValue;
     end);
   {$ENDIF}
   Sleep(10);
@@ -1167,7 +1167,7 @@ var
     Values.Add(aValue);
   end;
   {$ELSE}
-  Values: System.generics.collections.TList<integer>;
+  Values: System.Generics.Collections.TList<integer>;
   {$ENDIF}
 begin
   Bus := maxBus;
@@ -1230,7 +1230,7 @@ var
     Values.Add(aValue);
   end;
   {$ELSE}
-  Values: System.generics.collections.TList<integer>;
+  Values: System.Generics.Collections.TList<integer>;
   {$ENDIF}
   i: integer;
 begin
