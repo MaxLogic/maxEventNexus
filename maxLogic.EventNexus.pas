@@ -55,7 +55,7 @@ type
   TmaxMonitorObject = TObject;
 
   TmaxDelivery = (Posting, Main, Async, Background);
-  TmaxOverflow = (DropNewest, DropOldest, Block, deadline);
+  TmaxOverflow = (DropNewest, DropOldest, Block, Deadline);
 
   ImaxSubscription = interface
     ['{79C1B0D9-6A9E-4C6B-8E96-88A84E4F1E03}']
@@ -884,7 +884,7 @@ begin
         Block:
           while fQueue.Count >= fPolicy.MaxDepth do
             TMonitor.Wait(self, Cardinal(-1));
-        deadline:
+        Deadline:
           if fPolicy.DeadlineUs <= 0 then
           begin
             while fQueue.Count >= fPolicy.MaxDepth do

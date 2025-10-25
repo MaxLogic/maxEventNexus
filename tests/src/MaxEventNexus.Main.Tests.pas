@@ -1112,7 +1112,7 @@ begin
   Bus.Clear;
   queues := Bus as ImaxBusQueues;
   policy.MaxDepth := 1;
-  policy.Overflow := deadline;
+  policy.Overflow := Deadline;
   policy.DeadlineUs := 50000;
   {$IFDEF max_FPC}
   queues.SetPolicyFor<integer>(policy);
