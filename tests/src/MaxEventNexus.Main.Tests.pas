@@ -269,7 +269,7 @@ var
   Bus: ImaxBusAdvanced;
   sub: ImaxSubscription;
   {$IFDEF max_FPC}
-  Values: TList<TKeyed>;
+  Values: System.Generics.Collections.TList<TKeyed>;
 
   function KeyOf(const aEvt: TKeyed): TmaxString;
   begin
@@ -281,7 +281,7 @@ var
     Values.Add(aEvt);
   end;
   {$ELSE}
-  Values: TList<TKeyed>;
+  Values: System.Generics.Collections.TList<TKeyed>;
   {$ENDIF}
 
   function Make(const k: string; v: integer): TKeyed;
@@ -1160,14 +1160,14 @@ var
   Bus: ImaxBus;
   sub: ImaxSubscription;
   {$IFDEF max_FPC}
-  Values: TList<integer>;
+  Values: System.Generics.Collections.TList<integer>;
 
   procedure Handler(const aValue: integer);
   begin
     Values.Add(aValue);
   end;
   {$ELSE}
-  Values: TList<integer>;
+  Values: System.Generics.Collections.TList<integer>;
   {$ENDIF}
 begin
   Bus := maxBus;
