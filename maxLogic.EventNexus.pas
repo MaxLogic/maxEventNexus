@@ -2233,7 +2233,7 @@ begin
   lTopic.AddPost;
   if length(lSubs) = 0 then
     exit;
-  if not lTopic.Enqueue(
+  Result := lTopic.Enqueue(
     procedure
     var
       lSub: TNamedSubscriber;
@@ -2288,10 +2288,7 @@ begin
       end;
       if lErrs <> nil then
         raise EmaxAggregateException.Create(lErrs);
-    end) then
-  begin
-    Result := False;
-  end;
+    end);
 end;
 
 function TmaxBus.SubscribeNamedOf<t>(const aName: TmaxString; const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
