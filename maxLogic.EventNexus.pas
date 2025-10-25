@@ -249,7 +249,7 @@ type
     fCoalesce: boolean;
     fKeyFunc: TmaxKeyFunc<t>;
     fWindowUs: integer;
-    fPending: {$IFDEF max_FPC}specialize{$ENDIF}TDictionary<TmaxString, t>;
+    fPending: {$IFDEF max_FPC}specialize {$ENDIF}TDictionary<TmaxString, t>;
     fPendingLock: TmaxMonitorObject;
     fNextToken: TmaxSubscriptionToken;
     procedure PruneDead;
