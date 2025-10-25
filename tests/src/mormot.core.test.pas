@@ -1,38 +1,38 @@
-unit mormot.core.test;
+unit mormot.core.Test;
 
 {$I ../fpc_delphimode.inc}
 
 {$IFDEF FPC}
-  {$DEFINE max_FPC}
+{$DEFINE max_FPC}
 {$ELSE}
-  {$DEFINE max_DELPHI}
+{$DEFINE max_DELPHI}
 {$ENDIF}
 
 interface
 
 uses
-  SysUtils, Classes, Generics.Collections
+  SysUtils, Classes, generics.collections
   {$IFDEF max_DELPHI}, System.Rtti{$ENDIF};
 
 type
   TSynTestCase = class
   protected
-    procedure Check(Condition: Boolean; const Msg: string = ''); overload;
-    procedure CheckEquals(Expected, Actual: Integer; const Msg: string = ''); overload;
-    procedure CheckEquals(Expected: Integer; Actual: UInt64; const Msg: string = ''); overload;
-    procedure CheckEquals(Expected: UInt64; Actual: Integer; const Msg: string = ''); overload;
-    procedure CheckEquals(Expected, Actual: UInt64; const Msg: string = ''); overload;
-    procedure CheckEquals(const Expected, Actual: string; const Msg: string = ''); overload;
+    procedure Check(Condition: boolean; const msg: string = ''); overload;
+    procedure CheckEquals(Expected, Actual: integer; const msg: string = ''); overload;
+    procedure CheckEquals(Expected: integer; Actual: uInt64; const msg: string = ''); overload;
+    procedure CheckEquals(Expected: uInt64; Actual: integer; const msg: string = ''); overload;
+    procedure CheckEquals(Expected, Actual: uInt64; const msg: string = ''); overload;
+    procedure CheckEquals(const Expected, Actual: string; const msg: string = ''); overload;
   end;
 
   TSynTestCaseClass = class of TSynTestCase;
 
   TSynTests = class
   private
-    fName: string;
+    FName: string;
     fCases: TList<TSynTestCaseClass>;
   public
-    constructor Create(const aName: string);
+    constructor Create(const AName: string);
     destructor Destroy; override;
     procedure AddCase(TestClass: TSynTestCaseClass);
     procedure Run;
@@ -43,71 +43,71 @@ implementation
 uses
   TypInfo;
 
-procedure TSynTestCase.Check(Condition: Boolean; const Msg: string);
+procedure TSynTestCase.Check(Condition: boolean; const msg: string);
 begin
   if not Condition then
-    if Msg <> '' then
-      raise Exception.Create(Msg)
+    if msg <> '' then
+      raise Exception.Create(msg)
     else
       raise Exception.Create('Check failed');
 end;
 
-procedure TSynTestCase.CheckEquals(Expected, Actual: Integer; const Msg: string);
+procedure TSynTestCase.CheckEquals(Expected, Actual: integer; const msg: string);
 var
   Detail: string;
 begin
   if Expected <> Actual then
   begin
-    if Msg <> '' then
-      Detail := ' ' + Msg
+    if msg <> '' then
+      Detail := ' ' + msg
     else
       Detail := '';
     raise Exception.CreateFmt('Expected %d but got %d.%s', [Expected, Actual, Detail]);
   end;
 end;
 
-procedure TSynTestCase.CheckEquals(Expected: Integer; Actual: UInt64; const Msg: string);
+procedure TSynTestCase.CheckEquals(Expected: integer; Actual: uInt64; const msg: string);
 begin
-  CheckEquals(UInt64(Expected), Actual, Msg);
+  CheckEquals(uInt64(Expected), Actual, msg);
 end;
 
-procedure TSynTestCase.CheckEquals(Expected: UInt64; Actual: Integer; const Msg: string);
+procedure TSynTestCase.CheckEquals(Expected: uInt64; Actual: integer; const msg: string);
 begin
-  CheckEquals(Expected, UInt64(Actual), Msg);
+  CheckEquals(Expected, uInt64(Actual), msg);
 end;
 
-procedure TSynTestCase.CheckEquals(Expected, Actual: UInt64; const Msg: string);
+procedure TSynTestCase.CheckEquals(Expected, Actual: uInt64; const msg: string);
 var
   Detail: string;
 begin
   if Expected <> Actual then
   begin
-    if Msg <> '' then
-      Detail := ' ' + Msg
+    if msg <> '' then
+      Detail := ' ' + msg
     else
       Detail := '';
     raise Exception.CreateFmt('Expected %s but got %s.%s', [UIntToStr(Expected), UIntToStr(Actual), Detail]);
   end;
 end;
 
-procedure TSynTestCase.CheckEquals(const Expected, Actual: string; const Msg: string);
+procedure TSynTestCase.CheckEquals(const Expected, Actual: string; const msg: string);
 var
   Detail: string;
 begin
   if Expected <> Actual then
   begin
-    if Msg <> '' then
-      Detail := ' ' + Msg
+    if msg <> '' then
+      Detail := ' ' + msg
     else
       Detail := '';
     raise Exception.CreateFmt('Expected "%s" but got "%s".%s', [Expected, Actual, Detail]);
   end;
 end;
 
-constructor TSynTests.Create(const aName: string);
+constructor TSynTests.Create(const AName: string);
 begin
   inherited Create;
-  fName := aName;
+  FName := AName;
   fCases := TList<TSynTestCaseClass>.Create;
 end;
 
@@ -131,7 +131,7 @@ var
   Typ: TRttiType;
   Meth: TRttiMethod;
   Params: TArray<TRttiParameter>;
-  Passed, Failed: Integer;
+  Passed, Failed: integer;
 begin
   Passed := 0;
   Failed := 0;
@@ -146,17 +146,17 @@ begin
           if Meth.Visibility = mvPublished then
           begin
             Params := Meth.GetParameters;
-            if Length(Params) = 0 then
+            if length(Params) = 0 then
             begin
-              Write('[', TestClass.ClassName, '.', Meth.Name, '] ');
+              Write('[', TestClass.classname, '.', Meth.Name, '] ');
               try
                 Meth.Invoke(TestObj, []);
-                Writeln('OK');
+                writeln('OK');
                 Inc(Passed);
               except
-                on E: Exception do
+                on e: Exception do
                 begin
-                  Writeln('FAIL - ', E.ClassName, ': ', E.Message);
+                  writeln('FAIL - ', e.classname, ': ', e.Message);
                   Inc(Failed);
                 end;
               end;
@@ -171,17 +171,18 @@ begin
   end;
   if Failed > 0 then
   begin
-    Writeln(Format('%s FAILED (%d passed, %d failed)', [fName, Passed, Failed]));
+    writeln(Format('%s FAILED (%d passed, %d failed)', [FName, Passed, Failed]));
     Halt(1);
   end
   else
-    Writeln(Format('%s SUCCESS (%d passed)', [fName, Passed]));
+    writeln(Format('%s SUCCESS (%d passed)', [FName, Passed]));
 end;
 {$ELSE}
 begin
-  Writeln('TSynTests.Run is not implemented for this compiler.');
+  writeln('TSynTests.Run is not implemented for this compiler.');
   Halt(1);
 end;
 {$ENDIF}
 
 end.
+
