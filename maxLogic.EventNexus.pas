@@ -1471,7 +1471,7 @@ end;
 { TmaxBus }
 
 function TmaxBus.ScheduleTypedCoalesce<t>(const aTopicName: TmaxString;
-  aTopic: TTypedTopic<t>; const aSubs: TArray < TTypedSubscriber<t> > ;
+  aTopic: TTypedTopic<t>; const aSubs: TArray<TTypedSubscriber<t>>;
   const aKey: TmaxString): boolean;
 var
   lKeyCopy: TmaxString;

@@ -1291,31 +1291,31 @@ end;
 
 procedure TTestUnsubscribeAll.RemovesAllHandlers;
 var
-  Bus: ImaxBus;
-  tgt: TTarget;
-  sub1, sub2: ImaxSubscription;
+  lBus: ImaxBus;
+  lTgt: TTarget;
+  lSub1, lSub2: ImaxSubscription;
 begin
-  Bus := maxBus;
-  tgt := TTarget.Create;
+  lBus := maxBus;
+  lTgt := TTarget.Create;
   try
     {$IFDEF max_FPC}
-    sub1 := Bus.Subscribe<integer>(@tgt.Handle);
-    sub2 := Bus.Subscribe<integer>(@tgt.Handle);
+    lSub1 := lBus.Subscribe<integer>(@lTgt.Handle);
+    lSub2 := lBus.Subscribe<integer>(@lTgt.Handle);
     {$ELSE}
-    sub1 := TmaxBus(maxAsBus(Bus)).Subscribe<integer>(tgt.Handle);
-    sub2 := TmaxBus(maxAsBus(Bus)).Subscribe<integer>(tgt.Handle);
+    lSub1 := TmaxBus(maxAsBus(lBus)).Subscribe<integer>(lTgt.Handle);
+    lSub2 := TmaxBus(maxAsBus(lBus)).Subscribe<integer>(lTgt.Handle);
     {$ENDIF}
-    Bus.UnsubscribeAllFor(tgt);
+    lBus.UnsubscribeAllFor(lTgt);
     {$IFDEF max_FPC}
-    Bus.Post<integer>(1);
+    lBus.Post<integer>(1);
     {$ELSE}
-    TmaxBus(maxAsBus(Bus)).Post<integer>(1);
+    TmaxBus(maxAsBus(lBus)).Post<integer>(1);
     {$ENDIF}
-    CheckEquals(0, tgt.Count);
-    Check(not sub1.IsActive);
-    Check(not sub2.IsActive);
+    CheckEquals(0, lTgt.Count);
+    Check(not lSub1.IsActive);
+    Check(not lSub2.IsActive);
   finally
-    tgt.Free;
+    lTgt.Free;
   end;
 end;
 
