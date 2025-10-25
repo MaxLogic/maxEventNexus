@@ -287,7 +287,7 @@ type
     fStickyNames: TmaxBoolDictOfString;
     fMainThreadId: TThreadID;
     function ScheduleTypedCoalesce<t>(const aTopicName: TmaxString;
-      aTopic: TTypedTopic<t>; const aSubs: TArray < TTypedSubscriber<t> > ;
+      aTopic: TTypedTopic<t>; const aSubs: TArray<TTypedSubscriber<t>>;
       const aKey: TmaxString): boolean;
   public
     function Subscribe<t>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
