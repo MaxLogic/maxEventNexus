@@ -3247,32 +3247,32 @@ end;
 procedure TmaxBus.UnsubscribeAllFor(const aTarget: TObject);
 var
   {$IFDEF max_FPC}
-  kvTyped: specialize TPair<PTypeInfo, TmaxTopicBase>;
-  kvNamed: specialize TPair<TmaxString, TmaxTopicBase>;
-  kvName: specialize TPair<TmaxString, TmaxTypeTopicDict>;
-  kvInner: specialize TPair<PTypeInfo, TmaxTopicBase>;
-  kvGuid: specialize TPair<TGuid, TmaxTopicBase>;
+  lKvTyped: specialize TPair<PTypeInfo, TmaxTopicBase>;
+  lKvNamed: specialize TPair<TmaxString, TmaxTopicBase>;
+  lKvName:  specialize TPair<TmaxString, TmaxTypeTopicDict>;
+  lKvInner: specialize TPair<PTypeInfo, TmaxTopicBase>;
+  lKvGuid:  specialize TPair<TGuid, TmaxTopicBase>;
   {$ELSE}
-  kvTyped: TPair<PTypeInfo, TmaxTopicBase>;
-  kvNamed: TPair<TmaxString, TmaxTopicBase>;
-  kvName: TPair<TmaxString, TmaxTypeTopicDict>;
-  kvInner: TPair<PTypeInfo, TmaxTopicBase>;
-  kvGuid: TPair<TGuid, TmaxTopicBase>;
+  lKvTyped: TPair<PTypeInfo, TmaxTopicBase>;
+  lKvNamed: TPair<TmaxString, TmaxTopicBase>;
+  lKvName:  TPair<TmaxString, TmaxTypeTopicDict>;
+  lKvInner: TPair<PTypeInfo, TmaxTopicBase>;
+  lKvGuid:  TPair<TGuid, TmaxTopicBase>;
   {$ENDIF}
 begin
   if aTarget = nil then
     exit;
   TMonitor.Enter(fLock);
   try
-    for kvTyped in fTyped do
-      kvTyped.Value.RemoveByTarget(aTarget);
-    for kvNamed in fNamed do
-      kvNamed.Value.RemoveByTarget(aTarget);
-    for kvName in fNamedTyped do
-      for kvInner in kvName.Value do
-        kvInner.Value.RemoveByTarget(aTarget);
-    for kvGuid in fGuid do
-      kvGuid.Value.RemoveByTarget(aTarget);
+    for lKvTyped in fTyped do
+      lKvTyped.Value.RemoveByTarget(aTarget);
+    for lKvNamed in fNamed do
+      lKvNamed.Value.RemoveByTarget(aTarget);
+    for lKvName in fNamedTyped do
+      for lKvInner in lKvName.Value do
+        lKvInner.Value.RemoveByTarget(aTarget);
+    for lKvGuid in fGuid do
+      lKvGuid.Value.RemoveByTarget(aTarget);
   finally
     TMonitor.exit(fLock);
   end;

@@ -29,26 +29,26 @@ uses
   MaxEventNexus.Main.Tests in 'src\MaxEventNexus.Main.Tests.pas';
 
 var
-  Tests: TSynTests;
+  lTests: TSynTests;
 begin
-  Tests := TSynTests.Create('MaxEventNexus');
+  lTests := TSynTests.Create('MaxEventNexus');
   try
-    Tests.AddCase(TTestAggregateException);
-    Tests.AddCase(TTestAsyncDelivery);
-    Tests.AddCase(TTestCoalesce);
-    Tests.AddCase(TTestFuzz);
-    Tests.AddCase(TTestGuidTopics);
-    Tests.AddCase(TTestMetrics);
-    Tests.AddCase(TTestNamedTopics);
-    Tests.AddCase(TTestQueuePolicy);
-    Tests.AddCase(TTestSchedulers);
-    Tests.AddCase(TTestSticky);
-    Tests.AddCase(TTestSubscribeOrdering);
-    Tests.AddCase(TTestUnsubscribeAll);
+    lTests.AddCase(TTestAggregateException);
+    lTests.AddCase(TTestAsyncDelivery);
+    lTests.AddCase(TTestCoalesce);
+    lTests.AddCase(TTestFuzz);
+    lTests.AddCase(TTestGuidTopics);
+    lTests.AddCase(TTestMetrics);
+    lTests.AddCase(TTestNamedTopics);
+    lTests.AddCase(TTestQueuePolicy);
+    lTests.AddCase(TTestSchedulers);
+    lTests.AddCase(TTestSticky);
+    lTests.AddCase(TTestSubscribeOrdering);
+    lTests.AddCase(TTestUnsubscribeAll);
 
-    Tests.Run;
+    lTests.Run;
   finally
-    Tests.Free;
+    lTests.Free;
   end;
 end.
 
