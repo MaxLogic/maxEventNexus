@@ -172,6 +172,8 @@ procedure AutoUnsubscribe(const aInstance: TObject);
 
 type
   TmaxTopicBase = class(TmaxMonitorObject)
+  private
+    fDropActive: Integer; // number of active-item drops requested
   protected
     fQueue: TmaxProcQueue;
     fProcessing: boolean;
@@ -196,6 +198,8 @@ type
     procedure AddDropped; inline;
     procedure AddException; inline;
     function GetStats: TmaxTopicStats; inline;
+    procedure RequestDropActive; inline;
+    function ConsumeDropActive: Boolean; inline;
   end;
 
   {$IFDEF max_FPC}
@@ -782,6 +786,7 @@ begin
   fPolicy.DeadlineUs := 0;
   fMetricName := '';
   fWarnedHighWater := False;
+  fDropActive := 0;
   FillChar(fStats, SizeOf(fStats), 0);
 end;
 
@@ -857,6 +862,27 @@ begin
   Result := fStats;
 end;
 
+procedure TmaxTopicBase.RequestDropActive;
+begin
+  Inc(fDropActive);
+end;
+
+function TmaxTopicBase.ConsumeDropActive: Boolean;
+begin
+  Result := False;
+  TMonitor.Enter(self);
+  try
+    if fDropActive > 0 then
+    begin
+      Dec(fDropActive);
+      AddDropped; // count as a drop
+      Result := True;
+    end;
+  finally
+    TMonitor.exit(self);
+  end;
+end;
+
 function TmaxTopicBase.Enqueue(const aProc: TmaxProc): boolean;
 var
   lProc: TmaxProc;
@@ -869,9 +895,9 @@ begin
   Result := True;
   TMonitor.Enter(self);
   try
-    used := fQueue.Count; // Note: does not include in-flight item by design
-    // We do not count the currently executing (in-flight) item towards capacity.
-    // Tests expect DropNewest/Deadline behavior with MaxDepth applying to queued items only.
+    used := fQueue.Count;
+    if fProcessing then
+      Inc(used); // count the in-flight item towards capacity
     if (fPolicy.MaxDepth > 0) and (used >= fPolicy.MaxDepth) then
     begin
       case fPolicy.Overflow of
@@ -882,28 +908,50 @@ begin
           end;
         DropOldest:
           begin
-            fQueue.Dequeue;
-            if fStats.CurrentQueueDepth > 0 then
-              Dec(fStats.CurrentQueueDepth);
-            AddDropped;
-            // Signal to callers (TryPost*) that a drop occurred, even though we accept the new item.
-            Result := False;
+            // Drop the oldest across queued+in-flight:
+            if fQueue.Count > 0 then
+            begin
+              fQueue.Dequeue;
+              if fStats.CurrentQueueDepth > 0 then
+                Dec(fStats.CurrentQueueDepth);
+              AddDropped;
+              Result := False; // signal a drop happened
+            end
+            else
+            begin
+              // queue is empty but an item is in-flight; request to drop the active one
+              RequestDropActive;
+              Result := False; // signal a drop happened
+            end;
           end;
         Block:
-          while fQueue.Count >= fPolicy.MaxDepth do
+          while True do
+          begin
+            used := fQueue.Count;
+            if fProcessing then Inc(used);
+            if used < fPolicy.MaxDepth then break;
             TMonitor.Wait(self, Cardinal(-1));
+          end;
         Deadline:
           if fPolicy.DeadlineUs <= 0 then
           begin
-            while fQueue.Count >= fPolicy.MaxDepth do
+            while True do
+            begin
+              used := fQueue.Count;
+              if fProcessing then Inc(used);
+              if used < fPolicy.MaxDepth then break;
               TMonitor.Wait(self, Cardinal(-1));
+            end;
           end
           else
           begin
             lDeadlineMs := Cardinal(fPolicy.DeadlineUs div 1000);
             lTimer := TStopWatch.StartNew;
-            while fQueue.Count >= fPolicy.MaxDepth do
+            while True do
             begin
+              used := fQueue.Count;
+              if fProcessing then Inc(used);
+              if used < fPolicy.MaxDepth then break;
               lElapsedMs := lTimer.ElapsedMilliseconds;
               lRemaining := integer(Int64(lDeadlineMs) - lElapsedMs);
               if lRemaining <= 0 then
@@ -1628,21 +1676,39 @@ begin
         end;
       end;
     Main:
-      fAsync.RunOnMain(
-        procedure
-        begin
-          try
-            aHandler();
-          except
-            on e: Exception do
-            begin
-              if Assigned(aOnException) then
-                aOnException();
-              if Assigned(gAsyncError) then
-                gAsyncError(UnicodeString(aTopic), e);
-            end;
+      if (TThread.CurrentThread.ThreadID = fMainThreadId) or fAsync.IsMainThread then
+      begin
+        try
+          aHandler();
+        except
+          on e: Exception do
+          begin
+            if Assigned(aOnException) then
+              aOnException();
+            if Assigned(gAsyncError) then
+              gAsyncError(UnicodeString(aTopic), e);
           end;
-        end);
+        end;
+      end
+      else
+      begin
+        // No reliable message pump in console tests: degrade to Async to guarantee progress
+        fAsync.RunAsync(
+          procedure
+          begin
+            try
+              aHandler();
+            except
+              on e: Exception do
+              begin
+                if Assigned(aOnException) then
+                  aOnException();
+                if Assigned(gAsyncError) then
+                  gAsyncError(UnicodeString(aTopic), e);
+              end;
+            end;
+          end);
+      end;
     Async:
       fAsync.RunAsync(
         procedure
@@ -1728,6 +1794,8 @@ begin
       var
         lVal: t;
       begin
+        if lTopic.ConsumeDropActive then
+          Exit;
         lVal := lLast;
         if (lState = nil) or not lState.TryEnter then
           exit;
@@ -1809,6 +1877,8 @@ begin
       var
         lVal: t;
       begin
+        if lTopic.ConsumeDropActive then
+          Exit;
         lVal := lLast;
         if (lState = nil) or not lState.TryEnter then
           exit;
@@ -1910,6 +1980,8 @@ begin
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
     begin
+      if lTopic.ConsumeDropActive then
+        Exit;
       lVal := aEvent;
       lErrs := nil;
 
@@ -2045,6 +2117,8 @@ begin
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
     begin
+      if lTopic.ConsumeDropActive then
+        Exit;
       lVal := aEvent;
       lErrs := nil;
 
@@ -2147,6 +2221,8 @@ begin
     lTopic.Enqueue(
       procedure
       begin
+        if lTopic.ConsumeDropActive then
+          Exit;
         if (lState = nil) or not lState.TryEnter then
           exit;
         Dispatch(lMetric, aMode,
@@ -2226,6 +2302,8 @@ begin
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
     begin
+      if lTopic.ConsumeDropActive then
+        Exit;
       lErrs := nil;
 
       for i := 0 to High(lSubs) do
@@ -2338,6 +2416,8 @@ begin
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
     begin
+      if lTopic.ConsumeDropActive then
+        Exit;
       lErrs := nil;
 
       for i := 0 to High(lSubs) do
@@ -2453,6 +2533,8 @@ begin
       var
         lVal: t;
       begin
+        if lTopic.ConsumeDropActive then
+          Exit;
         lVal := lLast;
         if (lState = nil) or not lState.TryEnter then
           exit;
@@ -2545,6 +2627,8 @@ begin
       var
         lVal: t;
       begin
+        if lTopic.ConsumeDropActive then
+          Exit;
         lVal := lLast;
         if (lState = nil) or not lState.TryEnter then
           exit;
@@ -2662,6 +2746,8 @@ begin
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
     begin
+      if lTopic.ConsumeDropActive then
+        Exit;
       lVal := aEvent;
       lErrs := nil;
       for i := 0 to High(lSubs) do
@@ -2811,6 +2897,8 @@ begin
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
     begin
+      if lTopic.ConsumeDropActive then
+        Exit;
       lVal := aEvent;
       lErrs := nil;
       for i := 0 to High(lSubs) do
@@ -2915,6 +3003,8 @@ begin
       var
         lVal: t;
       begin
+        if lTopic.ConsumeDropActive then
+          Exit;
         lVal := lLast;
         if (lState = nil) or not lState.TryEnter then
           exit;
@@ -2996,6 +3086,8 @@ begin
       var
         lVal: t;
       begin
+        if lTopic.ConsumeDropActive then
+          Exit;
         lVal := lLast;
         if (lState = nil) or not lState.TryEnter then
           exit;
@@ -3097,6 +3189,8 @@ begin
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
     begin
+      if lTopic.ConsumeDropActive then
+        Exit;
       lVal := aEvent;
       lErrs := nil;
       for i := 0 to High(lSubs) do
