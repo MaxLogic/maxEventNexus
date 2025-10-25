@@ -1524,22 +1524,25 @@ begin
             procedure
             begin
               try
-                lHandler(lInner);
-                aTopic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    aTopic.RemoveByToken(lToken);
-                  {$IFDEF max_DELPHI}
-                  raise;
-                  {$ELSE}
-                  raise e;
-                  {$ENDIF}
+                try
+                  lHandler(lInner);
+                  aTopic.AddDelivered(1);
+                except
+                  on e: Exception do
+                  begin
+                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                      aTopic.RemoveByToken(lToken);
+                    {$IFDEF max_DELPHI}
+                    raise;
+                    {$ELSE}
+                    raise e;
+                    {$ENDIF}
+                  end;
                 end;
+              finally
+                if lState <> nil then
+                  lState.Leave;
               end;
-              if lState <> nil then
-                lState.Leave;
             end,
             procedure
             begin
@@ -1933,22 +1936,25 @@ begin
             procedure
             begin
               try
-                lHandler(lVal);
-                lTopic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    lTopic.RemoveByToken(lToken);
-                  {$IFDEF max_DELPHI}
-                  raise;
-                  {$ELSE}
-                  raise e;
-                  {$ENDIF}
+                try
+                  lHandler(lVal);
+                  lTopic.AddDelivered(1);
+                except
+                  on e: Exception do
+                  begin
+                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                      lTopic.RemoveByToken(lToken);
+                    {$IFDEF max_DELPHI}
+                    raise;
+                    {$ELSE}
+                    raise e;
+                    {$ENDIF}
+                  end;
                 end;
+              finally
+                if lState <> nil then
+                  lState.Leave;
               end;
-              if lState <> nil then
-                lState.Leave;
             end,
             procedure
             begin
@@ -2065,22 +2071,25 @@ begin
             procedure
             begin
               try
-                lHandler(lVal);
-                lTopic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    lTopic.RemoveByToken(lToken);
-                  {$IFDEF max_DELPHI}
-                  raise;
-                  {$ELSE}
-                  raise e;
-                  {$ENDIF}
+                try
+                  lHandler(lVal);
+                  lTopic.AddDelivered(1);
+                except
+                  on e: Exception do
+                  begin
+                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                      lTopic.RemoveByToken(lToken);
+                    {$IFDEF max_DELPHI}
+                    raise;
+                    {$ELSE}
+                    raise e;
+                    {$ENDIF}
+                  end;
                 end;
+              finally
+                if lState <> nil then
+                  lState.Leave;
               end;
-              if lState <> nil then
-                lState.Leave;
             end,
             procedure
             begin
@@ -2242,22 +2251,25 @@ begin
             procedure
             begin
               try
-                lHandler();
-                lTopic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    lTopic.RemoveByToken(lToken);
-                  {$IFDEF max_DELPHI}
-                  raise;
-                  {$ELSE}
-                  raise e;
-                  {$ENDIF}
+                try
+                  lHandler();
+                  lTopic.AddDelivered(1);
+                except
+                  on e: Exception do
+                  begin
+                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                      lTopic.RemoveByToken(lToken);
+                    {$IFDEF max_DELPHI}
+                    raise;
+                    {$ELSE}
+                    raise e;
+                    {$ENDIF}
+                  end;
                 end;
+              finally
+                if lState <> nil then
+                  lState.Leave;
               end;
-              if lState <> nil then
-                lState.Leave;
             end,
             procedure
             begin
@@ -2351,22 +2363,25 @@ begin
             procedure
             begin
               try
-                lHandler();
-                lTopic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    lTopic.RemoveByToken(lToken);
-                  {$IFDEF max_DELPHI}
-                  raise;
-                  {$ELSE}
-                  raise e;
-                  {$ENDIF}
+                try
+                  lHandler();
+                  lTopic.AddDelivered(1);
+                except
+                  on e: Exception do
+                  begin
+                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                      lTopic.RemoveByToken(lToken);
+                    {$IFDEF max_DELPHI}
+                    raise;
+                    {$ELSE}
+                    raise e;
+                    {$ENDIF}
+                  end;
                 end;
+              finally
+                if lState <> nil then
+                  lState.Leave;
               end;
-              if lState <> nil then
-                lState.Leave;
             end,
             procedure
             begin
@@ -2672,22 +2687,25 @@ begin
             procedure
             begin
               try
-                lHandler(lVal);
-                lTopic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    lTopic.RemoveByToken(lToken);
-                  {$IFDEF max_DELPHI}
-                  raise;
-                  {$ELSE}
-                  raise e;
-                  {$ENDIF}
+                try
+                  lHandler(lVal);
+                  lTopic.AddDelivered(1);
+                except
+                  on e: Exception do
+                  begin
+                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                      lTopic.RemoveByToken(lToken);
+                    {$IFDEF max_DELPHI}
+                    raise;
+                    {$ELSE}
+                    raise e;
+                    {$ENDIF}
+                  end;
                 end;
+              finally
+                if lState <> nil then
+                  lState.Leave;
               end;
-              if lState <> nil then
-                lState.Leave;
             end,
             procedure
             begin
@@ -2818,22 +2836,25 @@ begin
             procedure
             begin
               try
-                lHandler(lVal);
-                lTopic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    lTopic.RemoveByToken(lToken);
-                  {$IFDEF max_DELPHI}
-                  raise;
-                  {$ELSE}
-                  raise e;
-                  {$ENDIF}
+                try
+                  lHandler(lVal);
+                  lTopic.AddDelivered(1);
+                except
+                  on e: Exception do
+                  begin
+                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                      lTopic.RemoveByToken(lToken);
+                    {$IFDEF max_DELPHI}
+                    raise;
+                    {$ELSE}
+                    raise e;
+                    {$ENDIF}
+                  end;
                 end;
+              finally
+                if lState <> nil then
+                  lState.Leave;
               end;
-              if lState <> nil then
-                lState.Leave;
             end,
             procedure
             begin
@@ -3101,22 +3122,25 @@ begin
             procedure
             begin
               try
-                lHandler(lVal);
-                lTopic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    lTopic.RemoveByToken(lToken);
-                  {$IFDEF max_DELPHI}
-                  raise;
-                  {$ELSE}
-                  raise e;
-                  {$ENDIF}
+                try
+                  lHandler(lVal);
+                  lTopic.AddDelivered(1);
+                except
+                  on e: Exception do
+                  begin
+                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                      lTopic.RemoveByToken(lToken);
+                    {$IFDEF max_DELPHI}
+                    raise;
+                    {$ELSE}
+                    raise e;
+                    {$ENDIF}
+                  end;
                 end;
+              finally
+                if lState <> nil then
+                  lState.Leave;
               end;
-              if lState <> nil then
-                lState.Leave;
             end,
             procedure
             begin
