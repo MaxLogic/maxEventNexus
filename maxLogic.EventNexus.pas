@@ -1480,100 +1480,93 @@ var
   lKeyCopy: TmaxString;
 begin
   lKeyCopy := aKey;
-  Result := aTopic.Enqueue(
+  fAsync.RunDelayed(
     procedure
     var
-      lPendingKey: TmaxString;
+      lInner: t;
+      lErrs: TmaxExceptionList;
+      ex: EmaxAggregateException;
+      i: Integer;
+      lHandler: TmaxProcOf<t>;
+      lMode: TmaxDelivery;
+      lToken: TmaxSubscriptionToken;
+      lState: ImaxSubscriptionState;
     begin
-      lPendingKey := lKeyCopy;
-      fAsync.RunDelayed(
-        procedure
-        var
-          lSub: TTypedSubscriber<t>;
-          lInner: t;
-          lErrs: TmaxExceptionList;
-          ex: EmaxAggregateException;
-          i: Integer;
-          lHandler: TmaxProcOf<t>;
-          lMode: TmaxDelivery;
-          lToken: TmaxSubscriptionToken;
-          lState: ImaxSubscriptionState;
+      if not aTopic.PopPending(lKeyCopy, lInner) then
+        exit;
+      lErrs := nil;
+
+      for i := 0 to High(aSubs) do
+      begin
+        lHandler := aSubs[i].Handler;
+        lMode := aSubs[i].Mode;
+        lToken := aSubs[i].Token;
+        lState := aSubs[i].State;
+
+        if (lState <> nil) and not lState.TryEnter then
+          continue;
+
+        if not aSubs[i].Target.IsAlive then
         begin
-          if not aTopic.PopPending(lPendingKey, lInner) then
-            exit;
-          lErrs := nil;
+          aTopic.RemoveByToken(lToken);
+          if lState <> nil then
+            lState.Leave;
+          continue;
+        end;
 
-          for i := 0 to High(aSubs) do
-          begin
-            lHandler := aSubs[i].Handler;
-            lMode := aSubs[i].Mode;
-            lToken := aSubs[i].Token;
-            lState := aSubs[i].State;
-
-            if (lState <> nil) and not lState.TryEnter then
-              continue;
-
-            if not aSubs[i].Target.IsAlive then
+        try
+          Dispatch(aTopicName, lMode,
+            procedure
             begin
-              aTopic.RemoveByToken(lToken);
+              try
+                lHandler(lInner);
+                aTopic.AddDelivered(1);
+              except
+                on e: Exception do
+                begin
+                  if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    aTopic.RemoveByToken(lToken);
+                  raise;
+                end;
+              end;
               if lState <> nil then
                 lState.Leave;
-              continue;
-            end;
-
-            try
-              Dispatch(aTopicName, lMode,
-                procedure
-                begin
-                  try
-                    lHandler(lInner);
-                    aTopic.AddDelivered(1);
-                  except
-                    on e: Exception do
-                    begin
-                      if (e is EAccessViolation) or (e is EInvalidPointer) then
-                        aTopic.RemoveByToken(lToken);
-                      raise;
-                    end;
-                  end;
-                  if lState <> nil then
-                    lState.Leave;
-                end,
-                procedure
-                begin
-                  aTopic.AddException;
-                end);
-            except
-              on e: Exception do
-              begin
-                if lErrs = nil then
-                  lErrs := TmaxExceptionList.Create(True);
-                {$IFDEF max_DELPHI}
-                lErrs.Add(Exception(AcquireExceptionObject));
-                {$ELSE}
-                lErrs.Add(e);
-                {$ENDIF}
-              end;
-            end;
-          end;
-          if lErrs <> nil then
-          begin
-            // Forward async errors via global hook; avoid unhandled exception in scheduler thread.
-            if Assigned(gAsyncError) then
+            end,
+            procedure
             begin
-              ex := EmaxAggregateException.Create(lErrs);
-              try
-                gAsyncError(UnicodeString(aTopicName), ex);
-              finally
-                ex.Free;
-              end;
-            end
-            else
-              lErrs.Free;
+              aTopic.AddException;
+            end);
+        except
+          on e: Exception do
+          begin
+            if lErrs = nil then
+              lErrs := TmaxExceptionList.Create(True);
+            {$IFDEF max_DELPHI}
+            lErrs.Add(Exception(AcquireExceptionObject));
+            {$ELSE}
+            lErrs.Add(e);
+            {$ENDIF}
           end;
-        end,
-        aTopic.CoalesceWindow);
-    end);
+        end;
+      end;
+
+      if lErrs <> nil then
+      begin
+        if Assigned(gAsyncError) then
+        begin
+          ex := EmaxAggregateException.Create(lErrs);
+          try
+            gAsyncError(UnicodeString(aTopicName), ex);
+          finally
+            ex.Free;
+          end;
+        end
+        else
+          lErrs.Free;
+      end;
+    end,
+    aTopic.CoalesceWindow);
+  Result := True;
 end;
 
 { TmaxBus }
@@ -3277,6 +3270,12 @@ begin
       lTopic := TTypedTopic<t>(lObj);
     lTopic.SetMetricName(lMetric);
     lTopic.SetPolicy(aPolicy);
+    if fNamedTyped.TryGetValue(lNameKey, lTypeDict) then
+      for lKvInner in lTypeDict do
+      begin
+        lKvInner.Value.SetMetricName(NamedTypeMetricName(lNameKey, lKvInner.Key));
+        lKvInner.Value.SetPolicy(aPolicy);
+      end;
   finally
     TMonitor.exit(fLock);
   end;
@@ -3287,6 +3286,12 @@ var
   lTopic: TmaxTopicBase;
   lNameKey: TmaxString;
   lMetric: TmaxString;
+  lTypeDict: TmaxTypeTopicDict;
+  {$IFDEF max_FPC}
+  lKvInner: specialize TPair<PTypeInfo, TmaxTopicBase>;
+  {$ELSE}
+  lKvInner: TPair<PTypeInfo, TmaxTopicBase>;
+  {$ENDIF}
 begin
   lNameKey := NormalizeName(aName);
   lMetric := NamedMetricName(lNameKey);
@@ -3367,6 +3372,8 @@ function TmaxBus.GetStatsNamed(const aName: string): TmaxTopicStats;
 var
   lObj: TmaxTopicBase;
   lNameKey: TmaxString;
+  lTypeDict: TmaxTypeTopicDict;
+  lInner: TmaxTopicBase;
 begin
   FillChar(Result, SizeOf(Result), 0);
   lNameKey := NormalizeName(aName);
@@ -3374,6 +3381,17 @@ begin
   try
     if fNamed.TryGetValue(lNameKey, lObj) then
       Result := lObj.GetStats;
+    if fNamedTyped.TryGetValue(lNameKey, lTypeDict) then
+      for lInner in lTypeDict.Values do
+      begin
+        Inc(Result.PostsTotal, lInner.GetStats.PostsTotal);
+        Inc(Result.DeliveredTotal, lInner.GetStats.DeliveredTotal);
+        Inc(Result.DroppedTotal, lInner.GetStats.DroppedTotal);
+        Inc(Result.ExceptionsTotal, lInner.GetStats.ExceptionsTotal);
+        if lInner.GetStats.MaxQueueDepth > Result.MaxQueueDepth then
+          Result.MaxQueueDepth := lInner.GetStats.MaxQueueDepth;
+        Inc(Result.CurrentQueueDepth, lInner.GetStats.CurrentQueueDepth);
+      end;
   finally
     TMonitor.exit(fLock);
   end;
