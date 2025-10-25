@@ -1725,10 +1725,10 @@ begin
         lVal := lLast;
         if (lState = nil) or not lState.TryEnter then
           exit;
-        try
-          Dispatch(lMetricName, aMode,
-            procedure
-            begin
+        Dispatch(lMetricName, aMode,
+          procedure
+          begin
+            try
               try
                 aHandler(lVal);
                 lTopic.AddDelivered(1);
@@ -1740,14 +1740,15 @@ begin
                   raise;
                 end;
               end;
-            end,
-            procedure
-            begin
-              lTopic.AddException;
-            end);
-        finally
-          lState.Leave;
-        end;
+            finally
+              if lState <> nil then
+                lState.Leave;
+            end;
+          end,
+          procedure
+          begin
+            lTopic.AddException;
+          end);
       end);
   Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
 end;
@@ -1801,10 +1802,10 @@ begin
         lVal := lLast;
         if (lState = nil) or not lState.TryEnter then
           exit;
-        try
-          Dispatch(lMetricName, aMode,
-            procedure
-            begin
+        Dispatch(lMetricName, aMode,
+          procedure
+          begin
+            try
               try
                 aHandler(lVal);
                 lTopic.AddDelivered(1);
@@ -1816,14 +1817,15 @@ begin
                   raise;
                 end;
               end;
-            end,
-            procedure
-            begin
-              lTopic.AddException;
-            end);
-        finally
-          lState.Leave;
-        end;
+            finally
+              if lState <> nil then
+                lState.Leave;
+            end;
+          end,
+          procedure
+          begin
+            lTopic.AddException;
+          end);
       end);
   Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
 end;
