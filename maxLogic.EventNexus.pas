@@ -1494,32 +1494,31 @@ begin
           lErrs: TmaxExceptionList;
           ex: EmaxAggregateException;
           i: Integer;
+          lHandler: TmaxProcOf<t>;
+          lMode: TmaxDelivery;
+          lToken: TmaxSubscriptionToken;
+          lState: ImaxSubscriptionState;
         begin
           if not aTopic.PopPending(lPendingKey, lInner) then
             exit;
           lErrs := nil;
 
-          procedure InvokeOne(const aSub: TTypedSubscriber<t>);
-          var
-            lHandler: TmaxProcOf<t>;
-            lMode: TmaxDelivery;
-            lToken: TmaxSubscriptionToken;
-            lState: ImaxSubscriptionState;
+          for i := 0 to High(aSubs) do
           begin
-            lHandler := aSub.Handler;
-            lMode := aSub.Mode;
-            lToken := aSub.Token;
-            lState := aSub.State;
+            lHandler := aSubs[i].Handler;
+            lMode := aSubs[i].Mode;
+            lToken := aSubs[i].Token;
+            lState := aSubs[i].State;
 
             if (lState <> nil) and not lState.TryEnter then
-              exit;
+              continue;
 
-            if not aSub.Target.IsAlive then
+            if not aSubs[i].Target.IsAlive then
             begin
               aTopic.RemoveByToken(lToken);
               if lState <> nil then
                 lState.Leave;
-              exit;
+              continue;
             end;
 
             try
@@ -1557,9 +1556,6 @@ begin
               end;
             end;
           end;
-
-          for i := 0 to High(aSubs) do
-            InvokeOne(aSubs[i]);
           if lErrs <> nil then
           begin
             // Forward async errors via global hook; avoid unhandled exception in scheduler thread.
@@ -1891,31 +1887,34 @@ begin
       lVal: t;
       lErrs: TmaxExceptionList;
       i: Integer;
+      lHandler: TmaxProcOf<t>;
+      lMode: TmaxDelivery;
+      lToken: TmaxSubscriptionToken;
+      lState: ImaxSubscriptionState;
+      lHandler: TmaxProcOf<t>;
+      lMode: TmaxDelivery;
+      lToken: TmaxSubscriptionToken;
+      lState: ImaxSubscriptionState;
     begin
       lVal := aEvent;
       lErrs := nil;
 
-      procedure InvokeOne(const aSub: TTypedSubscriber<t>);
-      var
-        lHandler: TmaxProcOf<t>;
-        lMode: TmaxDelivery;
-        lToken: TmaxSubscriptionToken;
-        lState: ImaxSubscriptionState;
+      for i := 0 to High(lSubs) do
       begin
-        lHandler := aSub.Handler;
-        lMode := aSub.Mode;
-        lToken := aSub.Token;
-        lState := aSub.State;
+        lHandler := aSubs[i].Handler;
+        lMode := aSubs[i].Mode;
+        lToken := aSubs[i].Token;
+        lState := aSubs[i].State;
 
         if (lState <> nil) and not lState.TryEnter then
-          exit;
+          continue;
 
-        if not aSub.Target.IsAlive then
+        if not aSubs[i].Target.IsAlive then
         begin
           lTopic.RemoveByToken(lToken);
           if lState <> nil then
             lState.Leave;
-          exit;
+          continue;
         end;
 
         try
@@ -1953,9 +1952,6 @@ begin
           end;
         end;
       end;
-
-      for i := 0 to High(lSubs) do
-        InvokeOne(lSubs[i]);
       if lErrs <> nil then
         raise EmaxAggregateException.Create(lErrs);
     end);
@@ -2027,27 +2023,22 @@ begin
       lVal := aEvent;
       lErrs := nil;
 
-      procedure InvokeOne(const aSub: TTypedSubscriber<t>);
-      var
-        lHandler: TmaxProcOf<t>;
-        lMode: TmaxDelivery;
-        lToken: TmaxSubscriptionToken;
-        lState: ImaxSubscriptionState;
+      for i := 0 to High(lSubs) do
       begin
-        lHandler := aSub.Handler;
-        lMode := aSub.Mode;
-        lToken := aSub.Token;
-        lState := aSub.State;
+        lHandler := aSubs[i].Handler;
+        lMode := aSubs[i].Mode;
+        lToken := aSubs[i].Token;
+        lState := aSubs[i].State;
 
         if (lState <> nil) and not lState.TryEnter then
-          exit;
+          continue;
 
-        if not aSub.Target.IsAlive then
+        if not aSubs[i].Target.IsAlive then
         begin
           lTopic.RemoveByToken(lToken);
           if lState <> nil then
             lState.Leave;
-          exit;
+          continue;
         end;
 
         try
@@ -2085,9 +2076,6 @@ begin
           end;
         end;
       end;
-
-      for i := 0 to High(lSubs) do
-        InvokeOne(lSubs[i]);
       if lErrs <> nil then
         raise EmaxAggregateException.Create(lErrs);
     end);
@@ -2197,30 +2185,33 @@ begin
     var
       lErrs: TmaxExceptionList;
       i: Integer;
+      lHandler: TmaxProc;
+      lMode: TmaxDelivery;
+      lToken: TmaxSubscriptionToken;
+      lState: ImaxSubscriptionState;
+      lHandler: TmaxProc;
+      lMode: TmaxDelivery;
+      lToken: TmaxSubscriptionToken;
+      lState: ImaxSubscriptionState;
     begin
       lErrs := nil;
 
-      procedure InvokeOne(const aSub: TNamedSubscriber);
-      var
-        lHandler: TmaxProc;
-        lMode: TmaxDelivery;
-        lToken: TmaxSubscriptionToken;
-        lState: ImaxSubscriptionState;
+      for i := 0 to High(lSubs) do
       begin
-        lHandler := aSub.Handler;
-        lMode := aSub.Mode;
-        lToken := aSub.Token;
-        lState := aSub.State;
+        lHandler := aSubs[i].Handler;
+        lMode := aSubs[i].Mode;
+        lToken := aSubs[i].Token;
+        lState := aSubs[i].State;
 
         if (lState <> nil) and not lState.TryEnter then
-          exit;
+          continue;
 
-        if not aSub.Target.IsAlive then
+        if not aSubs[i].Target.IsAlive then
         begin
           lTopic.RemoveByToken(lToken);
           if lState <> nil then
             lState.Leave;
-          exit;
+          continue;
         end;
 
         try
@@ -2258,9 +2249,6 @@ begin
           end;
         end;
       end;
-
-      for i := 0 to High(lSubs) do
-        InvokeOne(lSubs[i]);
       if lErrs <> nil then
         raise EmaxAggregateException.Create(lErrs);
     end);
@@ -2309,27 +2297,22 @@ begin
     begin
       lErrs := nil;
 
-      procedure InvokeOne(const aSub: TNamedSubscriber);
-      var
-        lHandler: TmaxProc;
-        lMode: TmaxDelivery;
-        lToken: TmaxSubscriptionToken;
-        lState: ImaxSubscriptionState;
+      for i := 0 to High(lSubs) do
       begin
-        lHandler := aSub.Handler;
-        lMode := aSub.Mode;
-        lToken := aSub.Token;
-        lState := aSub.State;
+        lHandler := aSubs[i].Handler;
+        lMode := aSubs[i].Mode;
+        lToken := aSubs[i].Token;
+        lState := aSubs[i].State;
 
         if (lState <> nil) and not lState.TryEnter then
-          exit;
+          continue;
 
-        if not aSub.Target.IsAlive then
+        if not aSubs[i].Target.IsAlive then
         begin
           lTopic.RemoveByToken(lToken);
           if lState <> nil then
             lState.Leave;
-          exit;
+          continue;
         end;
 
         try
@@ -2367,9 +2350,6 @@ begin
           end;
         end;
       end;
-
-      for i := 0 to High(lSubs) do
-        InvokeOne(lSubs[i]);
       if lErrs <> nil then
         raise EmaxAggregateException.Create(lErrs);
     end);
@@ -2610,28 +2590,29 @@ begin
       lVal: t;
       lErrs: TmaxExceptionList;
       i: Integer;
-
-      procedure InvokeOne(const aSub: TTypedSubscriber<t>);
-      var
-        lHandler: TmaxProcOf<t>;
-        lMode: TmaxDelivery;
-        lToken: TmaxSubscriptionToken;
-        lState: ImaxSubscriptionState;
+      lHandler: TmaxProcOf<t>;
+      lMode: TmaxDelivery;
+      lToken: TmaxSubscriptionToken;
+      lState: ImaxSubscriptionState;
+    begin
+      lVal := aEvent;
+      lErrs := nil;
+      for i := 0 to High(lSubs) do
       begin
-        lHandler := aSub.Handler;
-        lMode := aSub.Mode;
-        lToken := aSub.Token;
-        lState := aSub.State;
+        lHandler := aSubs[i].Handler;
+        lMode := aSubs[i].Mode;
+        lToken := aSubs[i].Token;
+        lState := aSubs[i].State;
 
         if (lState <> nil) and not lState.TryEnter then
-          exit;
+          continue;
 
-        if not aSub.Target.IsAlive then
+        if not aSubs[i].Target.IsAlive then
         begin
           lTopic.RemoveByToken(lToken);
           if lState <> nil then
             lState.Leave;
-          exit;
+          continue;
         end;
 
         try
@@ -2669,12 +2650,6 @@ begin
           end;
         end;
       end;
-
-    begin
-      lVal := aEvent;
-      lErrs := nil;
-      for i := 0 to High(lSubs) do
-        InvokeOne(lSubs[i]);
       if lErrs <> nil then
         raise EmaxAggregateException.Create(lErrs);
     end);
@@ -2754,28 +2729,29 @@ begin
       lVal: t;
       lErrs: TmaxExceptionList;
       i: Integer;
-
-      procedure InvokeOne(const aSub: TTypedSubscriber<t>);
-      var
-        lHandler: TmaxProcOf<t>;
-        lMode: TmaxDelivery;
-        lToken: TmaxSubscriptionToken;
-        lState: ImaxSubscriptionState;
+      lHandler: TmaxProcOf<t>;
+      lMode: TmaxDelivery;
+      lToken: TmaxSubscriptionToken;
+      lState: ImaxSubscriptionState;
+    begin
+      lVal := aEvent;
+      lErrs := nil;
+      for i := 0 to High(lSubs) do
       begin
-        lHandler := aSub.Handler;
-        lMode := aSub.Mode;
-        lToken := aSub.Token;
-        lState := aSub.State;
+        lHandler := aSubs[i].Handler;
+        lMode := aSubs[i].Mode;
+        lToken := aSubs[i].Token;
+        lState := aSubs[i].State;
 
         if (lState <> nil) and not lState.TryEnter then
-          exit;
+          continue;
 
-        if not aSub.Target.IsAlive then
+        if not aSubs[i].Target.IsAlive then
         begin
           lTopic.RemoveByToken(lToken);
           if lState <> nil then
             lState.Leave;
-          exit;
+          continue;
         end;
 
         try
@@ -2813,12 +2789,6 @@ begin
           end;
         end;
       end;
-
-    begin
-      lVal := aEvent;
-      lErrs := nil;
-      for i := 0 to High(lSubs) do
-        InvokeOne(lSubs[i]);
       if lErrs <> nil then
         raise EmaxAggregateException.Create(lErrs);
     end);
@@ -3030,28 +3000,29 @@ begin
       lVal: t;
       lErrs: TmaxExceptionList;
       i: Integer;
-
-      procedure InvokeOne(const aSub: TTypedSubscriber<t>);
-      var
-        lHandler: TmaxProcOf<t>;
-        lMode: TmaxDelivery;
-        lToken: TmaxSubscriptionToken;
-        lState: ImaxSubscriptionState;
+      lHandler: TmaxProcOf<t>;
+      lMode: TmaxDelivery;
+      lToken: TmaxSubscriptionToken;
+      lState: ImaxSubscriptionState;
+    begin
+      lVal := aEvent;
+      lErrs := nil;
+      for i := 0 to High(lSubs) do
       begin
-        lHandler := aSub.Handler;
-        lMode := aSub.Mode;
-        lToken := aSub.Token;
-        lState := aSub.State;
+        lHandler := aSubs[i].Handler;
+        lMode := aSubs[i].Mode;
+        lToken := aSubs[i].Token;
+        lState := aSubs[i].State;
 
         if (lState <> nil) and not lState.TryEnter then
-          exit;
+          continue;
 
-        if not aSub.Target.IsAlive then
+        if not aSubs[i].Target.IsAlive then
         begin
           lTopic.RemoveByToken(lToken);
           if lState <> nil then
             lState.Leave;
-          exit;
+          continue;
         end;
 
         try
@@ -3089,12 +3060,6 @@ begin
           end;
         end;
       end;
-
-    begin
-      lVal := aEvent;
-      lErrs := nil;
-      for i := 0 to High(lSubs) do
-        InvokeOne(lSubs[i]);
       if lErrs <> nil then
         raise EmaxAggregateException.Create(lErrs);
     end);
