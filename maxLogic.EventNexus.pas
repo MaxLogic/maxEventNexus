@@ -13,9 +13,9 @@ interface
 uses
   Classes, SysUtils,
   {$IFDEF max_DELPHI}
-  System.Diagnostics, System.SyncObjs, System.TypInfo, System.Generics.Collections,
+  System.Diagnostics, System.Generics.Collections, System.SyncObjs, System.TypInfo,
   {$ELSE}
-  TypInfo, Generics.Collections, maxLogic.fpc.compatibility, maxLogic.fpc.diagnostics,
+  Generics.Collections, TypInfo, maxLogic.fpc.compatibility, maxLogic.fpc.diagnostics,
   {$ENDIF}
   maxLogic.EventNexus.Threading.Adapter;
 
@@ -91,10 +91,10 @@ type
   end;
 
   TmaxTopicStats = record
-    PostsTotal: uInt64;
-    DeliveredTotal: uInt64;
-    DroppedTotal: uInt64;
-    ExceptionsTotal: uInt64;
+    PostsTotal: UInt64;
+    DeliveredTotal: UInt64;
+    DroppedTotal: UInt64;
+    ExceptionsTotal: UInt64;
     MaxQueueDepth: UInt32;
     CurrentQueueDepth: UInt32;
   end;
@@ -153,7 +153,7 @@ procedure maxSetAsyncScheduler(const aScheduler: IEventNexusScheduler);
 function maxGetAsyncScheduler: IEventNexusScheduler;
 
 {$IFDEF max_DELPHI}
-function maxAsBus(const aIntf: iinterface): TObject; inline;
+function maxAsBus(const aIntf: IInterface): TObject; inline;
 {$ENDIF}
 
 {$IFDEF max_DELPHI}
@@ -299,9 +299,9 @@ type
     procedure PostNamedOf<t>(const aName: TmaxString; const aEvent: t);
     function TryPostNamedOf<t>(const aName: TmaxString; const aEvent: t): boolean; overload;
 
-    function SubscribeGuidOf<t: iinterface>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
-    function SubscribeGuidOf<t: iinterface>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
-    procedure PostGuidOf<t: iinterface>(const aEvent: t);
+    function SubscribeGuidOf<t: IInterface>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
+    function SubscribeGuidOf<t: IInterface>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
+    procedure PostGuidOf<t: IInterface>(const aEvent: t);
     procedure UnsubscribeAllFor(const aTarget: TObject);
     procedure Clear;
     procedure EnableSticky<t>(aEnable: boolean);
@@ -331,13 +331,13 @@ type
     procedure Post<t>(const aEvent: t); inline;
     function TryPost<t>(const aEvent: t): boolean; inline;
     function Subscribe<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; inline;
-    function SubscribeNamedOf<t>(const AName: TmaxString; const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; inline;
-    function SubscribeNamedOf<t>(const AName: TmaxString; const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; inline;
-    procedure PostNamedOf<t>(const AName: TmaxString; const aEvent: t); inline;
-    function TryPostNamedOf<t>(const AName: TmaxString; const aEvent: t): boolean; inline;
-    function SubscribeGuidOf<t: iinterface>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; inline;
-    function SubscribeGuidOf<t: iinterface>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; inline;
-    procedure PostGuidOf<t: iinterface>(const aEvent: t); inline;
+    function SubscribeNamedOf<t>(const aName: TmaxString; const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; inline;
+    function SubscribeNamedOf<t>(const aName: TmaxString; const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; inline;
+    procedure PostNamedOf<t>(const aName: TmaxString; const aEvent: t); inline;
+    function TryPostNamedOf<t>(const aName: TmaxString; const aEvent: t): boolean; inline;
+    function SubscribeGuidOf<t: IInterface>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; inline;
+    function SubscribeGuidOf<t: IInterface>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; inline;
+    procedure PostGuidOf<t: IInterface>(const aEvent: t); inline;
     procedure EnableSticky<t>(aEnable: boolean); inline;
   end;
 
@@ -893,7 +893,7 @@ begin
           else
           begin
             lDeadlineMs := Cardinal(fPolicy.DeadlineUs div 1000);
-            lTimer := TStopWatch.startNew;
+            lTimer := TStopWatch.StartNew;
             while fQueue.Count >= fPolicy.MaxDepth do
             begin
               lElapsedMs := lTimer.ElapsedMilliseconds;
@@ -3351,24 +3351,24 @@ begin
   Result := Impl.TryPost<t>(aEvent);
 end;
 
-function ImaxBusHelper.SubscribeNamedOf<t>(const AName: TmaxString; const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
+function ImaxBusHelper.SubscribeNamedOf<t>(const aName: TmaxString; const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
 begin
-  Result := Impl.SubscribeNamedOf<t>(AName, aHandler, aMode);
+  Result := Impl.SubscribeNamedOf<t>(aName, aHandler, aMode);
 end;
 
-function ImaxBusHelper.SubscribeNamedOf<t>(const AName: TmaxString; const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
+function ImaxBusHelper.SubscribeNamedOf<t>(const aName: TmaxString; const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
 begin
-  Result := Impl.SubscribeNamedOf<t>(AName, aHandler, aMode);
+  Result := Impl.SubscribeNamedOf<t>(aName, aHandler, aMode);
 end;
 
-procedure ImaxBusHelper.PostNamedOf<t>(const AName: TmaxString; const aEvent: t);
+procedure ImaxBusHelper.PostNamedOf<t>(const aName: TmaxString; const aEvent: t);
 begin
-  Impl.PostNamedOf<t>(AName, aEvent);
+  Impl.PostNamedOf<t>(aName, aEvent);
 end;
 
-function ImaxBusHelper.TryPostNamedOf<t>(const AName: TmaxString; const aEvent: t): boolean;
+function ImaxBusHelper.TryPostNamedOf<t>(const aName: TmaxString; const aEvent: t): boolean;
 begin
-  Result := Impl.TryPostNamedOf<t>(AName, aEvent);
+  Result := Impl.TryPostNamedOf<t>(aName, aEvent);
 end;
 
 function ImaxBusHelper.SubscribeGuidOf<t>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
@@ -3405,9 +3405,9 @@ begin
   Impl.EnableCoalesceOf<t>(aKeyOf, aWindowUs);
 end;
 
-procedure ImaxBusAdvancedHelper.EnableCoalesceNamedOf<t>(const AName: string; const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer);
+procedure ImaxBusAdvancedHelper.EnableCoalesceNamedOf<t>(const aName: string; const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer);
 begin
-  Impl.EnableCoalesceNamedOf<t>(AName, aKeyOf, aWindowUs);
+  Impl.EnableCoalesceNamedOf<t>(aName, aKeyOf, aWindowUs);
 end;
 
 function ImaxBusQueuesHelper.Impl: TmaxBus;
@@ -3445,7 +3445,7 @@ end;
 {$ENDIF}
 
 {$IFDEF max_DELPHI}
-function maxAsBus(const aIntf: iinterface): TObject; inline;
+function maxAsBus(const aIntf: IInterface): TObject; inline;
 var
   X: ImaxBusImpl;
 begin
