@@ -153,7 +153,7 @@ procedure maxSetAsyncScheduler(const aScheduler: IEventNexusScheduler);
 function maxGetAsyncScheduler: IEventNexusScheduler;
 
 {$IFDEF max_DELPHI}
-function maxAsBus(const aIntf: IInterface): TObject; inline;
+function maxAsBus(const aIntf: IInterface): TObject;
 {$ENDIF}
 
 {$IFDEF max_DELPHI}
@@ -430,6 +430,7 @@ uses
 resourcestring
   SAggregateOccurred = '%d exception(s) occurred';
   SInvalidBusImplementation = 'Invalid bus implementation';
+
 
 var
   gMetricSample: TOnMetricSample = nil;
@@ -3445,7 +3446,7 @@ end;
 {$ENDIF}
 
 {$IFDEF max_DELPHI}
-function maxAsBus(const aIntf: IInterface): TObject; inline;
+function maxAsBus(const aIntf: IInterface): TObject;
 var
   X: ImaxBusImpl;
 begin
