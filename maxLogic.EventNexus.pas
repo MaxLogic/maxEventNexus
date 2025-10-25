@@ -2092,7 +2092,7 @@ begin
           lState.Leave;
         end;
       end);
-  Result := TmaxNamedSubscription.Create(topic, Token, lState);
+  Result := TmaxNamedSubscription.Create(lTopic, lToken, lState);
 end;
 
 procedure TmaxBus.PostNamed(const aName: TmaxString);
@@ -2176,13 +2176,13 @@ begin
             end;
           end;
         finally
-          sub.State.Leave;
+          lSub.State.Leave;
         end;
       end;
       if lErrs <> nil then
         raise EmaxAggregateException.Create(lErrs);
     end) then
-    topic.AddDropped;
+    lTopic.AddDropped;
 end;
 
 function TmaxBus.TryPostNamed(const aName: TmaxString): boolean;
@@ -2266,14 +2266,14 @@ begin
             end;
           end;
         finally
-          sub.State.Leave;
+          lSub.State.Leave;
         end;
       end;
       if lErrs <> nil then
         raise EmaxAggregateException.Create(lErrs);
     end) then
   begin
-    topic.AddDropped;
+    lTopic.AddDropped;
     Result := False;
   end;
 end;
@@ -2350,7 +2350,7 @@ begin
           lState.Leave;
         end;
       end);
-  Result := TmaxTypedSubscription<t>.Create(topic, Token, lState);
+  Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
 end;
 
 function TmaxBus.SubscribeNamedOf<t>(const aName: TmaxString; const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
@@ -2434,7 +2434,7 @@ begin
           lState.Leave;
         end;
       end);
-  Result := TmaxTypedSubscription<t>.Create(topic, Token, lState);
+  Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
 end;
 
 procedure TmaxBus.PostNamedOf<t>(const aName: TmaxString; const aEvent: t);
@@ -2754,7 +2754,7 @@ begin
           lState.Leave;
         end;
       end);
-  Result := TmaxTypedSubscription<t>.Create(topic, Token, lState);
+  Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
 end;
 
 function TmaxBus.SubscribeGuidOf<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
@@ -2830,7 +2830,7 @@ begin
           lState.Leave;
         end;
       end);
-  Result := TmaxTypedSubscription<t>.Create(topic, Token, lState);
+  Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
 end;
 
 procedure TmaxBus.PostGuidOf<t>(const aEvent: t);
