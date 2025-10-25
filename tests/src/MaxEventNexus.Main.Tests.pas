@@ -164,7 +164,7 @@ var
   lBus: ImaxBus;
 
   {$IFDEF max_FPC}
-  procedure first(const aValue: integer);
+  procedure First(const aValue: integer);
   begin
     raise Exception.Create('first');
   end;
@@ -177,7 +177,7 @@ var
 begin
   lBus := maxBus;
   {$IFDEF max_FPC}
-  lBus.Subscribe<integer>(@first);
+  lBus.Subscribe<integer>(@First);
   lBus.Subscribe<integer>(@Second);
   {$ELSE}
   TmaxBus(maxAsBus(lBus)).Subscribe<integer>(
