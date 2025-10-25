@@ -26,15 +26,15 @@ type
   TmaxString = type UnicodeString;
 
   {$IFDEF max_FPC}
-  TmaxKeyFunc<t> = function(const aValue: t): TmaxString is nested;
+  TmaxKeyFunc<t> = function(const aValue: t): TmaxString;
   {$ELSE}
   TmaxKeyFunc<t> = reference to function(const aValue: t): TmaxString;
   {$ENDIF}
 
   {$IFDEF max_FPC}
 type
-  TmaxProc = procedure is nested;
-  TmaxProcOf<t> = procedure(const aValue: t) is nested;
+  TmaxProc = procedure;
+  TmaxProcOf<t> = procedure(const aValue: t);
   {$ELSE}
 type
   TmaxProc = reference to procedure;
@@ -3270,12 +3270,6 @@ begin
       lTopic := TTypedTopic<t>(lObj);
     lTopic.SetMetricName(lMetric);
     lTopic.SetPolicy(aPolicy);
-    if fNamedTyped.TryGetValue(lNameKey, lTypeDict) then
-      for lKvInner in lTypeDict do
-      begin
-        lKvInner.Value.SetMetricName(NamedTypeMetricName(lNameKey, lKvInner.Key));
-        lKvInner.Value.SetPolicy(aPolicy);
-      end;
   finally
     TMonitor.exit(fLock);
   end;
@@ -3306,6 +3300,12 @@ begin
     else if lTopic is TNamedTopic then
       TNamedTopic(lTopic).SetMetricName(lMetric);
     lTopic.SetPolicy(aPolicy);
+    if fNamedTyped.TryGetValue(lNameKey, lTypeDict) then
+      for lKvInner in lTypeDict do
+      begin
+        lKvInner.Value.SetMetricName(NamedTypeMetricName(lNameKey, lKvInner.Key));
+        lKvInner.Value.SetPolicy(aPolicy);
+      end;
   finally
     TMonitor.exit(fLock);
   end;
