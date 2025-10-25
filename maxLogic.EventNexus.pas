@@ -12,11 +12,12 @@ interface
 
 uses
   Classes, SysUtils,
-  {$IFDEF max_FPC}
-  generics.collections, TypInfo, maxLogic.EventNexus.Threading.Adapter, maxLogic.fpc.diagnostics, maxLogic.fpc.compatibility
+  {$IFDEF max_DELPHI}
+  System.Diagnostics, System.SyncObjs, System.TypInfo, System.Generics.Collections,
   {$ELSE}
-  System.generics.collections, System.TypInfo, maxLogic.EventNexus.Threading.Adapter, System.diagnostics, System.SyncObjs
-  {$ENDIF};
+  TypInfo, Generics.Collections, maxLogic.fpc.compatibility, maxLogic.fpc.diagnostics,
+  {$ENDIF}
+  maxLogic.EventNexus.Threading.Adapter;
 
 const
   max_BUS_VERSION = '0.1.0';
@@ -64,9 +65,9 @@ type
 
   ImaxBus = interface
     ['{1B8E6C9E-5F96-4F0C-9F88-0B7B8E885D4A}']
-    function SubscribeNamed(const AName: TmaxString; const aHandler: TmaxProc; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
-    procedure PostNamed(const AName: TmaxString);
-    function TryPostNamed(const AName: TmaxString): boolean;
+    function SubscribeNamed(const aName: TmaxString; const aHandler: TmaxProc; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
+    procedure PostNamed(const aName: TmaxString);
+    function TryPostNamed(const aName: TmaxString): boolean;
 
     procedure UnsubscribeAllFor(const aTarget: TObject);
     procedure Clear;
@@ -74,7 +75,7 @@ type
 
   ImaxBusAdvanced = interface(ImaxBus)
     ['{AB5E6E6D-8B1F-4B63-8B59-8A3B9D8C71B1}']
-    procedure EnableStickyNamed(const AName: string; aEnable: boolean);
+    procedure EnableStickyNamed(const aName: string; aEnable: boolean);
   end;
 
   TmaxQueuePolicy = record
@@ -85,8 +86,8 @@ type
 
   ImaxBusQueues = interface
     ['{E55F7B60-9B31-4C80-9B2C-8D1F0E26FF9C}']
-    procedure SetPolicyNamed(const AName: string; const aPolicy: TmaxQueuePolicy);
-    function GetPolicyNamed(const AName: string): TmaxQueuePolicy;
+    procedure SetPolicyNamed(const aName: string; const aPolicy: TmaxQueuePolicy);
+    function GetPolicyNamed(const aName: string): TmaxQueuePolicy;
   end;
 
   TmaxTopicStats = record
@@ -100,7 +101,7 @@ type
 
   ImaxBusMetrics = interface
     ['{2C4B91E3-1C0A-4B5C-B8B0-0C1A5C3E6D10}']
-    function GetStatsNamed(const AName: string): TmaxTopicStats;
+    function GetStatsNamed(const aName: string): TmaxTopicStats;
     function GetTotals: TmaxTopicStats;
   end;
 
@@ -184,7 +185,7 @@ type
   public
     constructor Create;
     destructor Destroy; override;
-    procedure SetMetricName(const AName: TmaxString); inline;
+    procedure SetMetricName(const aName: TmaxString); inline;
     function Enqueue(const aProc: TmaxProc): boolean;
     procedure RemoveByTarget(const aTarget: TObject); virtual; abstract;
     procedure SetSticky(aEnable: boolean); virtual;
@@ -289,14 +290,14 @@ type
     procedure Post<t>(const aEvent: t);
     function TryPost<t>(const aEvent: t): boolean; overload;
 
-    function SubscribeNamed(const AName: TmaxString; const aHandler: TmaxProc; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
-    procedure PostNamed(const AName: TmaxString);
-    function TryPostNamed(const AName: TmaxString): boolean;
+    function SubscribeNamed(const aName: TmaxString; const aHandler: TmaxProc; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
+    procedure PostNamed(const aName: TmaxString);
+    function TryPostNamed(const aName: TmaxString): boolean;
 
-    function SubscribeNamedOf<t>(const AName: TmaxString; const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
-    function SubscribeNamedOf<t>(const AName: TmaxString; const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
-    procedure PostNamedOf<t>(const AName: TmaxString; const aEvent: t);
-    function TryPostNamedOf<t>(const AName: TmaxString; const aEvent: t): boolean; overload;
+    function SubscribeNamedOf<t>(const aName: TmaxString; const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
+    function SubscribeNamedOf<t>(const aName: TmaxString; const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
+    procedure PostNamedOf<t>(const aName: TmaxString; const aEvent: t);
+    function TryPostNamedOf<t>(const aName: TmaxString; const aEvent: t): boolean; overload;
 
     function SubscribeGuidOf<t: iinterface>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
     function SubscribeGuidOf<t: iinterface>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
@@ -345,7 +346,7 @@ type
     function Impl: TmaxBus; inline;
   public
     procedure EnableCoalesceOf<t>(const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer = 0); inline;
-    procedure EnableCoalesceNamedOf<t>(const AName: string; const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer = 0); inline;
+    procedure EnableCoalesceNamedOf<t>(const aName: string; const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer = 0); inline;
   end;
 
   ImaxBusQueuesHelper = record helper for ImaxBusQueues
@@ -423,8 +424,12 @@ var
 
 implementation
 uses
-  maxLogic.EventNexus.Threading.RawThread
-  {$IFDEF max_FPC}, SyncObjs{$ENDIF};
+  {$IFDEF max_FPC} SyncObjs, {$ENDIF}
+  maxLogic.EventNexus.Threading.RawThread;
+
+resourcestring
+  SAggregateOccurred = '%d exception(s) occurred';
+  SInvalidBusImplementation = 'Invalid bus implementation';
 
 var
   gMetricSample: TOnMetricSample = nil;
@@ -646,9 +651,9 @@ begin
   Delivery := aDelivery;
 end;
 
-constructor maxSubscribeAttribute.Create(const AName: string; aDelivery: TmaxDelivery);
+constructor maxSubscribeAttribute.Create(const aName: string; aDelivery: TmaxDelivery);
 begin
-  Name := AName;
+  Name := aName;
   Delivery := aDelivery;
 end;
 
@@ -668,7 +673,7 @@ end;
 constructor EmaxAggregateException.Create(const aInner: TmaxExceptionList);
 begin
   fInner := aInner;
-  inherited CreateFmt('%d exception(s) occurred', [fInner.Count]);
+  inherited CreateFmt(SAggregateOccurred, [fInner.Count]);
 end;
 
 destructor EmaxAggregateException.Destroy;
@@ -784,10 +789,10 @@ begin
   inherited Destroy;
 end;
 
-procedure TmaxTopicBase.SetMetricName(const AName: TmaxString);
+procedure TmaxTopicBase.SetMetricName(const aName: TmaxString);
 begin
-  if (fMetricName = '') and (AName <> '') then
-    fMetricName := AName;
+  if (fMetricName = '') and (aName <> '') then
+    fMetricName := aName;
 end;
 
 procedure TmaxTopicBase.SetPolicy(const aPolicy: TmaxQueuePolicy);
@@ -944,7 +949,7 @@ begin
   fSticky := aEnable;
 end;
 
-function NormalizeName(const AName: TmaxString): TmaxString; inline;
+function NormalizeName(const aName: TmaxString): TmaxString; inline;
 begin
   Result := TmaxString(UpperCase(Unicodestring(AName)));
 end;
@@ -954,12 +959,12 @@ begin
   Result := TmaxString(GetTypeName(aInfo));
 end;
 
-function NamedMetricName(const AName: TmaxString): TmaxString; inline;
+function NamedMetricName(const aName: TmaxString): TmaxString; inline;
 begin
   Result := AName;
 end;
 
-function NamedTypeMetricName(const AName: TmaxString; const aInfo: PTypeInfo): TmaxString; inline;
+function NamedTypeMetricName(const aName: TmaxString; const aInfo: PTypeInfo): TmaxString; inline;
 begin
   Result := TmaxString(Unicodestring(AName) + ':' + Unicodestring(GetTypeName(aInfo)));
 end;
@@ -2027,7 +2032,7 @@ begin
     lTopic.AddDropped;
 end;
 
-function TmaxBus.SubscribeNamed(const AName: TmaxString; const aHandler: TmaxProc; aMode: TmaxDelivery): ImaxSubscription;
+function TmaxBus.SubscribeNamed(const aName: TmaxString; const aHandler: TmaxProc; aMode: TmaxDelivery): ImaxSubscription;
 var
   Obj: TmaxTopicBase;
   topic: TNamedTopic;
@@ -2037,7 +2042,7 @@ var
   lMetric: TmaxString;
   lState: ImaxSubscriptionState;
 begin
-  lNameKey := NormalizeName(AName);
+  lNameKey := NormalizeName(aName);
   lMetric := NamedMetricName(lNameKey);
   TMonitor.Enter(fLock);
   try
@@ -2090,7 +2095,7 @@ begin
   Result := TmaxNamedSubscription.Create(topic, Token, lState);
 end;
 
-procedure TmaxBus.PostNamed(const AName: TmaxString);
+procedure TmaxBus.PostNamed(const aName: TmaxString);
 var
   Obj: TmaxTopicBase;
   topic: TNamedTopic;
@@ -2098,7 +2103,7 @@ var
   lNameKey: TmaxString;
   lMetric: TmaxString;
 begin
-  lNameKey := NormalizeName(AName);
+  lNameKey := NormalizeName(aName);
   lMetric := NamedMetricName(lNameKey);
   TMonitor.Enter(fLock);
   try
@@ -2180,7 +2185,7 @@ begin
     topic.AddDropped;
 end;
 
-function TmaxBus.TryPostNamed(const AName: TmaxString): boolean;
+function TmaxBus.TryPostNamed(const aName: TmaxString): boolean;
 var
   Obj: TmaxTopicBase;
   topic: TNamedTopic;
@@ -2189,7 +2194,7 @@ var
   lMetric: TmaxString;
 begin
   Result := True;
-  lNameKey := NormalizeName(AName);
+  lNameKey := NormalizeName(aName);
   lMetric := NamedMetricName(lNameKey);
   TMonitor.Enter(fLock);
   try
@@ -2273,7 +2278,7 @@ begin
   end;
 end;
 
-function TmaxBus.SubscribeNamedOf<t>(const AName: TmaxString; const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
+function TmaxBus.SubscribeNamedOf<t>(const aName: TmaxString; const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
 var
   typeDict: TmaxTypeTopicDict;
   Obj: TmaxTopicBase;
@@ -2287,7 +2292,7 @@ var
   lState: ImaxSubscriptionState;
 begin
   Key := TypeInfo(t);
-  lNameKey := NormalizeName(AName);
+  lNameKey := NormalizeName(aName);
   lMetric := NamedTypeMetricName(lNameKey, Key);
   TMonitor.Enter(fLock);
   try
@@ -2348,7 +2353,7 @@ begin
   Result := TmaxTypedSubscription<t>.Create(topic, Token, lState);
 end;
 
-function TmaxBus.SubscribeNamedOf<t>(const AName: TmaxString; const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
+function TmaxBus.SubscribeNamedOf<t>(const aName: TmaxString; const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
 var
   typeDict: TmaxTypeTopicDict;
   Obj: TmaxTopicBase;
@@ -2364,7 +2369,7 @@ var
   lWrapper: TmaxProcOf<t>;
 begin
   Key := TypeInfo(t);
-  lNameKey := NormalizeName(AName);
+  lNameKey := NormalizeName(aName);
   lMetric := NamedTypeMetricName(lNameKey, Key);
   lTarget := TObject(TMethod(aHandler).Data);
   lWrapper :=
@@ -2432,7 +2437,7 @@ begin
   Result := TmaxTypedSubscription<t>.Create(topic, Token, lState);
 end;
 
-procedure TmaxBus.PostNamedOf<t>(const AName: TmaxString; const aEvent: t);
+procedure TmaxBus.PostNamedOf<t>(const aName: TmaxString; const aEvent: t);
 var
   lTypeDict: TmaxTypeTopicDict;
   lObj: TmaxTopicBase;
@@ -2448,7 +2453,7 @@ begin
   lIsNew := False; // prevent compiler warning: variable might not have been initialized
 
   Key := TypeInfo(t);
-  lNameKey := NormalizeName(AName);
+  lNameKey := NormalizeName(aName);
   lMetric := NamedTypeMetricName(lNameKey, Key);
   TMonitor.Enter(fLock);
   try
@@ -2558,7 +2563,7 @@ begin
     lTopic.AddDropped;
 end;
 
-function TmaxBus.TryPostNamedOf<t>(const AName: TmaxString; const aEvent: t): boolean;
+function TmaxBus.TryPostNamedOf<t>(const aName: TmaxString; const aEvent: t): boolean;
 var
   lTypeDict: TmaxTypeTopicDict;
   lObj: TmaxTopicBase;
@@ -2575,7 +2580,7 @@ begin
 
   Result := True;
   Key := TypeInfo(t);
-  lNameKey := NormalizeName(AName);
+  lNameKey := NormalizeName(aName);
   lMetric := NamedTypeMetricName(lNameKey, Key);
   TMonitor.Enter(fLock);
   try
@@ -2985,7 +2990,7 @@ begin
   end;
 end;
 
-procedure TmaxBus.EnableStickyNamed(const AName: string; aEnable: boolean);
+procedure TmaxBus.EnableStickyNamed(const aName: string; aEnable: boolean);
 var
   Obj: TmaxTopicBase;
   typeDict: TmaxTypeTopicDict;
@@ -2997,7 +3002,7 @@ var
   lNameKey: TmaxString;
   metric: TmaxString;
 begin
-  lNameKey := NormalizeName(AName);
+  lNameKey := NormalizeName(aName);
   metric := NamedMetricName(lNameKey);
   TMonitor.Enter(fLock);
   try
@@ -3049,7 +3054,7 @@ begin
   end;
 end;
 
-procedure TmaxBus.EnableCoalesceNamedOf<t>(const AName: string; const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer);
+procedure TmaxBus.EnableCoalesceNamedOf<t>(const aName: string; const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer);
 var
   typeDict: TmaxTypeTopicDict;
   Obj: TmaxTopicBase;
@@ -3059,7 +3064,7 @@ var
   Key: PTypeInfo;
 begin
   Key := TypeInfo(t);
-  lNameKey := NormalizeName(AName);
+  lNameKey := NormalizeName(aName);
   metric := NamedTypeMetricName(lNameKey, Key);
   TMonitor.Enter(fLock);
   try
@@ -3158,13 +3163,13 @@ begin
   end;
 end;
 
-procedure TmaxBus.SetPolicyNamed(const AName: string; const aPolicy: TmaxQueuePolicy);
+procedure TmaxBus.SetPolicyNamed(const aName: string; const aPolicy: TmaxQueuePolicy);
 var
   lTopic: TmaxTopicBase;
   lNameKey: TmaxString;
   metric: TmaxString;
 begin
-  lNameKey := NormalizeName(AName);
+  lNameKey := NormalizeName(aName);
   metric := NamedMetricName(lNameKey);
   TMonitor.Enter(fLock);
   try
@@ -3203,12 +3208,12 @@ begin
   end;
 end;
 
-function TmaxBus.GetPolicyNamed(const AName: string): TmaxQueuePolicy;
+function TmaxBus.GetPolicyNamed(const aName: string): TmaxQueuePolicy;
 var
   lTopic: TmaxTopicBase;
   lNameKey: TmaxString;
 begin
-  lNameKey := NormalizeName(AName);
+  lNameKey := NormalizeName(aName);
   TMonitor.Enter(fLock);
   try
     if fNamed.TryGetValue(lNameKey, lTopic) then
@@ -3239,13 +3244,13 @@ begin
   end;
 end;
 
-function TmaxBus.GetStatsNamed(const AName: string): TmaxTopicStats;
+function TmaxBus.GetStatsNamed(const aName: string): TmaxTopicStats;
 var
   lObj: TmaxTopicBase;
   lNameKey: TmaxString;
 begin
   fillchar(Result, SizeOf(Result), 0);
-  lNameKey := NormalizeName(AName);
+  lNameKey := NormalizeName(aName);
   TMonitor.Enter(fLock);
   try
     if fNamed.TryGetValue(lNameKey, lObj) then
@@ -3322,7 +3327,7 @@ var
   X: ImaxBusImpl;
 begin
   if not Supports(self, ImaxBusImpl, X) then
-    raise Exception.Create('Invalid bus implementation');
+    raise Exception.Create(SInvalidBusImplementation);
   Result := TmaxBus(X.GetSelf);
 end;
 
@@ -3391,7 +3396,7 @@ var
   X: ImaxBusImpl;
 begin
   if not Supports(self, ImaxBusImpl, X) then
-    raise Exception.Create('Invalid bus implementation');
+    raise Exception.Create(SInvalidBusImplementation);
   Result := TmaxBus(X.GetSelf);
 end;
 
@@ -3410,7 +3415,7 @@ var
   X: ImaxBusImpl;
 begin
   if not Supports(self, ImaxBusImpl, X) then
-    raise Exception.Create('Invalid bus implementation');
+    raise Exception.Create(SInvalidBusImplementation);
   Result := TmaxBus(X.GetSelf);
 end;
 
@@ -3429,7 +3434,7 @@ var
   X: ImaxBusImpl;
 begin
   if not Supports(self, ImaxBusImpl, X) then
-    raise Exception.Create('Invalid bus implementation');
+    raise Exception.Create(SInvalidBusImplementation);
   Result := TmaxBus(X.GetSelf);
 end;
 
@@ -3445,7 +3450,7 @@ var
   X: ImaxBusImpl;
 begin
   if not Supports(aIntf, ImaxBusImpl, X) then
-    raise Exception.Create('Invalid bus implementation');
+    raise Exception.Create(SInvalidBusImplementation);
   Result := X.GetSelf;
 end;
 {$ENDIF}
