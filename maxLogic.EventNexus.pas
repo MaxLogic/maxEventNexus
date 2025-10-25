@@ -1862,7 +1862,6 @@ begin
       exit;
     if not ScheduleTypedCoalesce<t>(lMetric, lTopic, lSubs, lKeyStr) then
     begin
-      lTopic.AddDropped;
       lTopic.PopPending(lKeyStr, lDropVal);
     end;
     exit;
@@ -1924,8 +1923,7 @@ begin
       end;
       if lErrs <> nil then
         raise EmaxAggregateException.Create(lErrs);
-    end) then
-    lTopic.AddDropped;
+    end);
 end;
 
 function TmaxBus.TryPost<t>(const aEvent: t): boolean;
@@ -2197,8 +2195,7 @@ begin
       end;
       if lErrs <> nil then
         raise EmaxAggregateException.Create(lErrs);
-    end) then
-    lTopic.AddDropped;
+    end);
 end;
 
 function TmaxBus.TryPostNamed(const aName: TmaxString): boolean;
@@ -2293,7 +2290,6 @@ begin
         raise EmaxAggregateException.Create(lErrs);
     end) then
   begin
-    lTopic.AddDropped;
     Result := False;
   end;
 end;
@@ -2521,7 +2517,6 @@ begin
       exit;
     if not ScheduleTypedCoalesce<t>(lMetric, lTopic, lSubs, lKeyStr) then
     begin
-      lTopic.AddDropped;
       lTopic.PopPending(lKeyStr, lDropVal);
     end;
     exit;
@@ -2583,8 +2578,7 @@ begin
       end;
       if lErrs <> nil then
         raise EmaxAggregateException.Create(lErrs);
-    end) then
-    lTopic.AddDropped;
+    end);
 end;
 
 function TmaxBus.TryPostNamedOf<t>(const aName: TmaxString; const aEvent: t): boolean;
