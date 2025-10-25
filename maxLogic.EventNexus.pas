@@ -344,6 +344,7 @@ type
     function SubscribeGuidOf<t: IInterface>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; inline;
     procedure PostGuidOf<t: IInterface>(const aEvent: t); inline;
     procedure EnableSticky<t>(aEnable: boolean); inline;
+    procedure EnableCoalesceNamedOf<t>(const aName: string; const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer = 0); inline;
   end;
 
   ImaxBusAdvancedHelper = record helper for ImaxBusAdvanced
@@ -3645,6 +3646,11 @@ end;
 procedure ImaxBusHelper.EnableSticky<t>(aEnable: boolean);
 begin
   Impl.EnableSticky<t>(aEnable);
+end;
+
+procedure ImaxBusHelper.EnableCoalesceNamedOf<t>(const aName: string; const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer);
+begin
+  Impl.EnableCoalesceNamedOf<t>(aName, aKeyOf, aWindowUs);
 end;
 
 function ImaxBusAdvancedHelper.Impl: TmaxBus;
