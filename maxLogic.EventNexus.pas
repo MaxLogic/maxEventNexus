@@ -929,29 +929,27 @@ begin
                   Dec(fStats.CurrentQueueDepth);
                 AddDropped;
               end;
-              // If we dropped the active item, consider this enqueue successful for caller semantics
-              Result := lDroppedActive;
+              // Signal that a drop occurred (either active or queued), but still enqueue the new item
+              Result := False;
             end;
           end;
         Block:
           begin
-            // Treat active item as occupying capacity
-            while (fQueue.Count + Ord(fProcessing)) >= fPolicy.MaxDepth do
+            while (fQueue.Count) >= fPolicy.MaxDepth do
               TMonitor.Wait(self, Cardinal(-1));
           end;
         Deadline:
           begin
-            // Treat active item as occupying capacity
             if fPolicy.DeadlineUs <= 0 then
             begin
-              while (fQueue.Count + Ord(fProcessing)) >= fPolicy.MaxDepth do
+              while (fQueue.Count) >= fPolicy.MaxDepth do
                 TMonitor.Wait(self, Cardinal(-1));
             end
             else
             begin
               lDeadlineMs := Cardinal(fPolicy.DeadlineUs div 1000);
               lTimer := TStopWatch.StartNew;
-              while (fQueue.Count + Ord(fProcessing)) >= fPolicy.MaxDepth do
+              while (fQueue.Count) >= fPolicy.MaxDepth do
               begin
                 lElapsedMs := lTimer.ElapsedMilliseconds;
                 lRemaining := integer(Int64(lDeadlineMs) - lElapsedMs);
