@@ -305,15 +305,15 @@ type
     procedure UnsubscribeAllFor(const aTarget: TObject);
     procedure Clear;
     procedure EnableSticky<t>(aEnable: boolean);
-    procedure EnableStickyNamed(const AName: string; aEnable: boolean);
+    procedure EnableStickyNamed(const aName: string; aEnable: boolean);
     procedure EnableCoalesceOf<t>(const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer = 0);
-    procedure EnableCoalesceNamedOf<t>(const AName: string; const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer = 0);
+    procedure EnableCoalesceNamedOf<t>(const aName: string; const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer = 0);
     procedure SetPolicyFor<t>(const aPolicy: TmaxQueuePolicy);
-    procedure SetPolicyNamed(const AName: string; const aPolicy: TmaxQueuePolicy);
+    procedure SetPolicyNamed(const aName: string; const aPolicy: TmaxQueuePolicy);
     function GetPolicyFor<t>: TmaxQueuePolicy;
-    function GetPolicyNamed(const AName: string): TmaxQueuePolicy;
+    function GetPolicyNamed(const aName: string): TmaxQueuePolicy;
     function GetStatsFor<t>: TmaxTopicStats;
-    function GetStatsNamed(const AName: string): TmaxTopicStats;
+    function GetStatsNamed(const aName: string): TmaxTopicStats;
     function GetTotals: TmaxTopicStats;
   public
     function GetSelf: TObject;
@@ -951,7 +951,7 @@ end;
 
 function NormalizeName(const aName: TmaxString): TmaxString; inline;
 begin
-  Result := TmaxString(UpperCase(Unicodestring(AName)));
+  Result := TmaxString(UpperCase(Unicodestring(aName)));
 end;
 
 function TypeMetricName(const aInfo: PTypeInfo): TmaxString; inline;
@@ -961,12 +961,12 @@ end;
 
 function NamedMetricName(const aName: TmaxString): TmaxString; inline;
 begin
-  Result := AName;
+  Result := aName;
 end;
 
 function NamedTypeMetricName(const aName: TmaxString; const aInfo: PTypeInfo): TmaxString; inline;
 begin
-  Result := TmaxString(Unicodestring(AName) + ':' + Unicodestring(GetTypeName(aInfo)));
+  Result := TmaxString(Unicodestring(aName) + ':' + Unicodestring(GetTypeName(aInfo)));
 end;
 
 function GuidMetricName(const aGuid: TGuid): TmaxString; inline;
