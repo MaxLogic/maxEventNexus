@@ -2884,11 +2884,7 @@ begin
                   begin
                     if (e is EAccessViolation) or (e is EInvalidPointer) then
                       lTopic.RemoveByToken(lToken);
-                    {$IFDEF max_DELPHI}
                     raise;
-                    {$ELSE}
-                    raise e;
-                    {$ENDIF}
                   end;
                 end;
               finally
@@ -3168,11 +3164,7 @@ begin
                   begin
                     if (e is EAccessViolation) or (e is EInvalidPointer) then
                       lTopic.RemoveByToken(lToken);
-                    {$IFDEF max_DELPHI}
                     raise;
-                    {$ELSE}
-                    raise e;
-                    {$ENDIF}
                   end;
                 end;
               finally
