@@ -11,20 +11,14 @@
 interface
 
 uses
-  mormot.core.Test,
+  // RTL
   SysUtils, Classes, SyncObjs,
-  {$IFDEF max_DELPHI}
-  System.generics.collections,
-  {$ELSE}
-  generics.collections,
-  {$ENDIF}
-
-  maxLogic.EventNexus.Threading.Adapter,
-  maxLogic.EventNexus.Threading.RawThread,
-  {$IFDEF max_DELPHI}
-  maxLogic.EventNexus.Threading.maxAsync,
-  maxLogic.EventNexus.Threading.TTask,
-  {$ENDIF }
+  {$IFDEF max_DELPHI} System.Generics.Collections, {$ELSE} Generics.Collections, {$ENDIF}
+  // Third-party
+  mormot.core.Test,
+  // Project
+  maxLogic.EventNexus.Threading.Adapter, maxLogic.EventNexus.Threading.RawThread,
+  {$IFDEF max_DELPHI} maxLogic.EventNexus.Threading.MaxAsync, maxLogic.EventNexus.Threading.TTask, {$ENDIF}
   maxLogic.EventNexus;
 
 type
@@ -57,8 +51,8 @@ type
 
   TPostBurstThread = class(TThread)
   public
-    Bus: ImaxBus;
-    Count: integer;
+    fBus: ImaxBus;
+    fCount: integer;
     constructor Create(const aBus: ImaxBus; aCount: integer);
   protected
     procedure Execute; override;
@@ -73,8 +67,8 @@ type
 
   TPostThread = class(TThread)
   public
-    Bus: ImaxBus;
-    Value: integer;
+    fBus: ImaxBus;
+    fValue: integer;
     constructor Create(const aBus: ImaxBus; aValue: integer);
   protected
     procedure Execute; override;
@@ -88,10 +82,10 @@ type
 
   TNamedPostThread = class(TThread)
   public
-    Bus: ImaxBus;
-      Name: TmaxString;
-    Value: integer;
-    constructor Create(const aBus: ImaxBus; const AName: TmaxString; aValue: integer);
+    fBus: ImaxBus;
+    fName: TmaxString;
+    fValue: integer;
+    constructor Create(const aBus: ImaxBus; const aName: TmaxString; aValue: integer);
   protected
     procedure Execute; override;
   end;
@@ -102,9 +96,11 @@ type
   end;
 
   TTarget = class
+  private
+    fCount: integer;
   public
-    Count: integer;
     procedure Handle(const aValue: integer);
+    property Count: integer read fCount;
   end;
 
   TTestUnsubscribeAll = class(TSynTestCase)
@@ -115,7 +111,7 @@ type
   TTestSchedulers = class(TSynTestCase)
   private
     function WaitForSignal(const aEvent: TEvent; aTimeoutMs: Cardinal): boolean;
-    procedure ExerciseScheduler(const aScheduler: IEventNexusScheduler; const AName: string);
+    procedure ExerciseScheduler(const aScheduler: IEventNexusScheduler; const aName: string);
   published
     procedure RawThreadScheduler;
     {$IFDEF max_DELPHI}
@@ -423,19 +419,19 @@ constructor TPostBurstThread.Create(const aBus: ImaxBus; aCount: integer);
 begin
   inherited Create(True);
   FreeOnTerminate := False;
-  Bus := aBus;
-  Count := aCount;
+  fBus := aBus;
+  fCount := aCount;
 end;
 
 procedure TPostBurstThread.Execute;
 var
   i: integer;
 begin
-  for i := 1 to Count do
+  for i := 1 to fCount do
     {$IFDEF max_FPC}
-    Bus.Post<integer>(i);
+    fBus.Post<integer>(i);
   {$ELSE}
-    TmaxBus(maxAsBus(Bus)).Post<integer>(i);
+    TmaxBus(maxAsBus(fBus)).Post<integer>(i);
   {$ENDIF}
 end;
 
@@ -577,16 +573,16 @@ constructor TPostThread.Create(const aBus: ImaxBus; aValue: integer);
 begin
   inherited Create(True);
   FreeOnTerminate := False;
-  Bus := aBus;
-  Value := aValue;
+  fBus := aBus;
+  fValue := aValue;
 end;
 
 procedure TPostThread.Execute;
 begin
   {$IFDEF max_FPC}
-  Bus.TryPost<integer>(Value);
+  fBus.TryPost<integer>(fValue);
   {$ELSE}
-  TmaxBus(maxAsBus(Bus)).TryPost<integer>(Value);
+  TmaxBus(maxAsBus(fBus)).TryPost<integer>(fValue);
   {$ENDIF}
 end;
 
@@ -738,21 +734,21 @@ end;
 
 { TNamedPostThread }
 
-constructor TNamedPostThread.Create(const aBus: ImaxBus; const AName: TmaxString; aValue: integer);
+constructor TNamedPostThread.Create(const aBus: ImaxBus; const aName: TmaxString; aValue: integer);
 begin
   inherited Create(True);
   FreeOnTerminate := False;
-  Bus := aBus;
-  Name := AName;
-  Value := aValue;
+  fBus := aBus;
+  fName := aName;
+  fValue := aValue;
 end;
 
 procedure TNamedPostThread.Execute;
 begin
   {$IFDEF max_FPC}
-  Bus.TryPostNamedOf<integer>(Name, Value);
+  fBus.TryPostNamedOf<integer>(fName, fValue);
   {$ELSE}
-  TmaxBus(maxAsBus(Bus)).TryPostNamedOf<integer>(Name, Value);
+  TmaxBus(maxAsBus(fBus)).TryPostNamedOf<integer>(fName, fValue);
   {$ENDIF}
 end;
 
@@ -1290,7 +1286,7 @@ end;
 
 procedure TTarget.Handle(const aValue: integer);
 begin
-  Inc(Count);
+  Inc(fCount);
 end;
 
 procedure TTestUnsubscribeAll.RemovesAllHandlers;
@@ -1327,7 +1323,7 @@ end;
 
 function TTestSchedulers.WaitForSignal(const aEvent: TEvent; aTimeoutMs: Cardinal): boolean;
 var
-  start: uInt64;
+  lStart: uInt64;
 begin
   // NOTE: Do not use a single blocking WaitFor(aTimeoutMs) here.
   // In a console test runner there is no UI message loop. Any code scheduled to the
@@ -1335,18 +1331,18 @@ begin
   // main thread calls CheckSynchronize. If we block inside WaitFor, those callbacks
   // never run, the event may never be signaled, and tests would hang or time out.
   // We therefore poll the event (WaitFor(0)), pump the synchronize queue, then yield.
-  start := GetTickCount64;
+  lStart := GetTickCount64;
   repeat
     if aEvent.WaitFor(0) = wrSignaled then
       exit(True);
 
     CheckSynchronize(0);
     Sleep(1);
-  until GetTickCount64 - start >= aTimeoutMs;
+  until GetTickCount64 - lStart >= aTimeoutMs;
   Result := aEvent.WaitFor(0) = wrSignaled;
 end;
 
-procedure TTestSchedulers.ExerciseScheduler(const aScheduler: IEventNexusScheduler; const AName: string);
+procedure TTestSchedulers.ExerciseScheduler(const aScheduler: IEventNexusScheduler; const aName: string);
 var
   mainId, asyncId, mainHandlerId: TThreadID;
   asyncEvent, mainEvent, delayEvent: TEvent;
@@ -1366,8 +1362,8 @@ begin
         asyncId := TThread.CurrentThread.ThreadID;
         asyncEvent.SetEvent;
       end);
-    Check(WaitForSignal(asyncEvent, 1000), AName + ': RunAsync timed out');
-    Check(asyncId <> mainId, AName + ': RunAsync executed on main thread');
+    Check(WaitForSignal(asyncEvent, 1000), aName + ': RunAsync timed out');
+    Check(asyncId <> mainId, aName + ': RunAsync executed on main thread');
 
     aScheduler.RunOnMain(
       procedure
@@ -1375,8 +1371,8 @@ begin
         mainHandlerId := TThread.CurrentThread.ThreadID;
         mainEvent.SetEvent;
       end);
-    Check(WaitForSignal(mainEvent, 1000), AName + ': RunOnMain timed out');
-    CheckEquals(mainId, mainHandlerId, AName + ': RunOnMain did not execute on main thread');
+    Check(WaitForSignal(mainEvent, 1000), aName + ': RunOnMain timed out');
+    CheckEquals(mainId, mainHandlerId, aName + ': RunOnMain did not execute on main thread');
 
     delayStart := GetTickCount64;
     delayDelta := 0;
@@ -1387,8 +1383,8 @@ begin
         delayEvent.SetEvent;
       end,
       100000);
-    Check(WaitForSignal(delayEvent, 2000), AName + ': RunDelayed timed out');
-    Check(delayDelta >= 50, AName + ': RunDelayed executed too early');
+    Check(WaitForSignal(delayEvent, 2000), aName + ': RunDelayed timed out');
+    Check(delayDelta >= 50, aName + ': RunDelayed executed too early');
   finally
     asyncEvent.Free;
     mainEvent.Free;
