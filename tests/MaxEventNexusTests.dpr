@@ -13,16 +13,16 @@ uses
   SysUtils,
   Classes,
   {$IFDEF max_DELPHI}
-  System.generics.collections,
+  System.Generics.Collections,
   {$ELSE}
-  generics.collections,
+  Generics.Collections,
   {$ENDIF}
   SyncObjs,
 
   maxLogic.EventNexus.Threading.Adapter in '..\maxLogic.EventNexus.Threading.Adapter.pas',
   maxLogic.EventNexus.Threading.RawThread in '..\maxLogic.EventNexus.Threading.RawThread.pas',
   {$IFDEF max_DELPHI}
-  maxLogic.EventNexus.Threading.maxAsync in '..\maxLogic.EventNexus.Threading.MaxAsync.pas',
+  maxLogic.EventNexus.Threading.MaxAsync in '..\maxLogic.EventNexus.Threading.MaxAsync.pas',
   maxLogic.EventNexus.Threading.TTask in '..\maxLogic.EventNexus.Threading.TTask.pas',
   {$ENDIF }
   maxLogic.EventNexus in '..\maxLogic.EventNexus.pas',
