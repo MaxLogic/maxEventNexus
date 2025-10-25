@@ -450,9 +450,9 @@ type
   private
     type
       TFreeInstanceThunk = procedure(self: TObject);
-      fEntries: specialize TDictionary<TObject, TFpcWeakEntry>;
-      fHooks: specialize TDictionary<TClass, Pointer>;
-      fLock: TCriticalSection;
+    fEntries: specialize TDictionary<TObject, TFpcWeakEntry>;
+    fHooks: specialize TDictionary<TClass, Pointer>;
+    fLock: TCriticalSection;
     function EnsureHook(const aObj: TObject): boolean;
     function LocateFreeInstanceSlot(const aClass: TClass; const aOrig: Pointer): PPointer;
     function PrepareFreeInstance(const aObj: TObject): Pointer;
@@ -1592,7 +1592,7 @@ begin
       except
         on e: Exception do
         begin
-          if assigned(aOnException) then
+          if Assigned(aOnException) then
             aOnException();
           raise;
         end;
