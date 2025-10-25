@@ -1,4 +1,4 @@
-﻿unit MaxEventNexus.Main.Tests;
+unit MaxEventNexus.Main.Tests;
 
 {$I ../fpc_delphimode.inc}
 
