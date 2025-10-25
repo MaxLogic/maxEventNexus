@@ -1866,7 +1866,7 @@ begin
     end;
     exit;
   end;
-  if not lTopic.Enqueue(
+  lTopic.Enqueue(
     procedure
     var
       lSub: TTypedSubscriber<t>;
@@ -2140,7 +2140,7 @@ begin
   lTopic.AddPost;
   if length(lSubs) = 0 then
     exit;
-  if not lTopic.Enqueue(
+  lTopic.Enqueue(
     procedure
     var
       lSub: TNamedSubscriber;
@@ -2521,7 +2521,7 @@ begin
     end;
     exit;
   end;
-  if not lTopic.Enqueue(
+  lTopic.Enqueue(
     procedure
     var
       lSub: TTypedSubscriber<t>;
