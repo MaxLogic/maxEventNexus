@@ -946,21 +946,21 @@ begin
           end;
         Block:
           begin
-            while (fQueue.Count) >= fPolicy.MaxDepth do
+            while (fQueue.Count + Ord(fProcessing)) >= fPolicy.MaxDepth do
               TMonitor.Wait(self, Cardinal(-1));
           end;
         Deadline:
           begin
             if fPolicy.DeadlineUs <= 0 then
             begin
-              while (fQueue.Count) >= fPolicy.MaxDepth do
+              while (fQueue.Count + Ord(fProcessing)) >= fPolicy.MaxDepth do
                 TMonitor.Wait(self, Cardinal(-1));
             end
             else
             begin
               lDeadlineMs := Cardinal(fPolicy.DeadlineUs div 1000);
               lTimer := TStopWatch.StartNew;
-              while (fQueue.Count) >= fPolicy.MaxDepth do
+              while (fQueue.Count + Ord(fProcessing)) >= fPolicy.MaxDepth do
               begin
                 lElapsedMs := lTimer.ElapsedMilliseconds;
                 lRemaining := integer(Int64(lDeadlineMs) - lElapsedMs);
@@ -3437,6 +3437,8 @@ begin
     fNamed.Clear;
     fNamedTyped.Clear;
     fGuid.Clear;
+    // Reset main-thread detection to the caller of Clear (tests call Clear on main thread)
+    fMainThreadId := TThread.CurrentThread.ThreadID;
   finally
     TMonitor.exit(fLock);
   end;
