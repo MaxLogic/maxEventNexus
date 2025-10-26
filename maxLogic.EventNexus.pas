@@ -1857,30 +1857,34 @@ begin
         lVal := lLast;
         if (lState = nil) or not lState.TryEnter then
           exit;
-        Dispatch(lMetricName, aMode,
-          procedure
-          begin
-            try
+        try
+          Dispatch(lMetricName, aMode,
+            procedure
+            begin
               try
-                aHandler(lVal);
-                lTopic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    lTopic.RemoveByToken(lToken);
-                  raise;
+                try
+                  aHandler(lVal);
+                  lTopic.AddDelivered(1);
+                except
+                  on e: Exception do
+                  begin
+                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                      lTopic.RemoveByToken(lToken);
+                    raise;
+                  end;
                 end;
+              finally
+                if lState <> nil then
+                  lState.Leave;
               end;
-            finally
-              if lState <> nil then
-                lState.Leave;
-            end;
-          end,
-          procedure
-          begin
-            lTopic.AddException;
-          end);
+            end,
+            procedure
+            begin
+              lTopic.AddException;
+            end);
+        except
+          on e: Exception do ; // swallow; metrics already updated via aOnException
+        end;
       end);
   Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
 end;
@@ -1934,30 +1938,34 @@ begin
         lVal := lLast;
         if (lState = nil) or not lState.TryEnter then
           exit;
-        Dispatch(lMetricName, aMode,
-          procedure
-          begin
-            try
+        try
+          Dispatch(lMetricName, aMode,
+            procedure
+            begin
               try
-                aHandler(lVal);
-                lTopic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    lTopic.RemoveByToken(lToken);
-                  raise;
+                try
+                  aHandler(lVal);
+                  lTopic.AddDelivered(1);
+                except
+                  on e: Exception do
+                  begin
+                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                      lTopic.RemoveByToken(lToken);
+                    raise;
+                  end;
                 end;
+              finally
+                if lState <> nil then
+                  lState.Leave;
               end;
-            finally
-              if lState <> nil then
-                lState.Leave;
-            end;
-          end,
-          procedure
-          begin
-            lTopic.AddException;
-          end);
+            end,
+            procedure
+            begin
+              lTopic.AddException;
+            end);
+        except
+          on e: Exception do ; // swallow; metrics already updated via aOnException
+        end;
       end);
   Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
 end;
@@ -2259,30 +2267,34 @@ begin
       begin
         if (lState = nil) or not lState.TryEnter then
           exit;
-        Dispatch(lMetric, aMode,
-          procedure
-          begin
-            try
+        try
+          Dispatch(lMetric, aMode,
+            procedure
+            begin
               try
-                aHandler();
-                lTopic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    lTopic.RemoveByToken(lToken);
-                  raise;
+                try
+                  aHandler();
+                  lTopic.AddDelivered(1);
+                except
+                  on e: Exception do
+                  begin
+                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                      lTopic.RemoveByToken(lToken);
+                    raise;
+                  end;
                 end;
+              finally
+                if lState <> nil then
+                  lState.Leave;
               end;
-            finally
-              if lState <> nil then
-                lState.Leave;
-            end;
-          end,
-          procedure
-          begin
-            lTopic.AddException;
-          end);
+            end,
+            procedure
+            begin
+              lTopic.AddException;
+            end);
+        except
+          on e: Exception do ; // swallow; metrics already updated via aOnException
+        end;
       end);
   Result := TmaxNamedSubscription.Create(lTopic, lToken, lState);
 end;
@@ -2554,30 +2566,38 @@ begin
         lVal := lLast;
         if (lState = nil) or not lState.TryEnter then
           exit;
-        Dispatch(lMetric, aMode,
-          procedure
-          begin
-            try
-              try
-                aHandler(lVal);
-                lTopic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    lTopic.RemoveByToken(lToken);
-                  raise;
+        try
+          try
+            Dispatch(lMetric, aMode,
+              procedure
+              begin
+                try
+                  try
+                    aHandler(lVal);
+                    lTopic.AddDelivered(1);
+                  except
+                    on e: Exception do
+                    begin
+                      if (e is EAccessViolation) or (e is EInvalidPointer) then
+                        lTopic.RemoveByToken(lToken);
+                      raise;
+                    end;
+                  end;
+                finally
+                  if lState <> nil then
+                    lState.Leave;
                 end;
-              end;
-            finally
-              if lState <> nil then
-                lState.Leave;
-            end;
-          end,
-          procedure
-          begin
-            lTopic.AddException;
-          end);
+              end,
+              procedure
+              begin
+                lTopic.AddException;
+              end);
+          except
+            on e: Exception do ; // swallow; metrics already updated via aOnException
+          end;
+        except
+          on e: Exception do ; // swallow; metrics already updated via aOnException
+        end;
       end);
   Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
 end;
@@ -2642,30 +2662,34 @@ begin
         lVal := lLast;
         if (lState = nil) or not lState.TryEnter then
           exit;
-        Dispatch(lMetric, aMode,
-          procedure
-          begin
-            try
+        try
+          Dispatch(lMetric, aMode,
+            procedure
+            begin
               try
-                aHandler(lVal);
-                lTopic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    lTopic.RemoveByToken(lToken);
-                  raise;
+                try
+                  aHandler(lVal);
+                  lTopic.AddDelivered(1);
+                except
+                  on e: Exception do
+                  begin
+                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                      lTopic.RemoveByToken(lToken);
+                    raise;
+                  end;
                 end;
+              finally
+                if lState <> nil then
+                  lState.Leave;
               end;
-            finally
-              if lState <> nil then
-                lState.Leave;
-            end;
-          end,
-          procedure
-          begin
-            lTopic.AddException;
-          end);
+            end,
+            procedure
+            begin
+              lTopic.AddException;
+            end);
+        except
+          on e: Exception do ; // swallow; metrics already updated via aOnException
+        end;
       end);
   Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
 end;
@@ -3000,30 +3024,34 @@ begin
         lVal := lLast;
         if (lState = nil) or not lState.TryEnter then
           exit;
-        Dispatch(lMetric, aMode,
-          procedure
-          begin
-            try
+        try
+          Dispatch(lMetric, aMode,
+            procedure
+            begin
               try
-                aHandler(lVal);
-                lTopic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    lTopic.RemoveByToken(lToken);
-                  raise;
+                try
+                  aHandler(lVal);
+                  lTopic.AddDelivered(1);
+                except
+                  on e: Exception do
+                  begin
+                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                      lTopic.RemoveByToken(lToken);
+                    raise;
+                  end;
                 end;
+              finally
+                if lState <> nil then
+                  lState.Leave;
               end;
-            finally
-              if lState <> nil then
-                lState.Leave;
-            end;
-          end,
-          procedure
-          begin
-            lTopic.AddException;
-          end);
+            end,
+            procedure
+            begin
+              lTopic.AddException;
+            end);
+        except
+          on e: Exception do ; // swallow; metrics already updated via aOnException
+        end;
       end);
   Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
 end;
@@ -3077,30 +3105,34 @@ begin
         lVal := lLast;
         if (lState = nil) or not lState.TryEnter then
           exit;
-        Dispatch(lMetric, aMode,
-          procedure
-          begin
-            try
+        try
+          Dispatch(lMetric, aMode,
+            procedure
+            begin
               try
-                aHandler(lVal);
-                lTopic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    lTopic.RemoveByToken(lToken);
-                  raise;
+                try
+                  aHandler(lVal);
+                  lTopic.AddDelivered(1);
+                except
+                  on e: Exception do
+                  begin
+                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                      lTopic.RemoveByToken(lToken);
+                    raise;
+                  end;
                 end;
+              finally
+                if lState <> nil then
+                  lState.Leave;
               end;
-            finally
-              if lState <> nil then
-                lState.Leave;
-            end;
-          end,
-          procedure
-          begin
-            lTopic.AddException;
-          end);
+            end,
+            procedure
+            begin
+              lTopic.AddException;
+            end);
+        except
+          on e: Exception do ; // swallow; metrics already updated via aOnException
+        end;
       end);
   Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
 end;
