@@ -11,7 +11,7 @@ unit maxLogic.EventNexus.Threading.Adapter;
 interface
 
 uses
-  SysUtils;
+  SysUtils{$IFDEF max_FPC}, maxLogic.fpc.compatibility{$ENDIF};
 
 type
 {$IFDEF max_FPC}

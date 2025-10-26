@@ -156,7 +156,7 @@ implementation
 
 uses
   maxLogic.Utils
-  {$IFDEF max_DELPHI} , System.IOUtils {$ENDIF}
+  {$IFDEF max_DELPHI} , System.IOUtils, System.Generics.Collections {$ELSE} , Generics.Collections {$ENDIF}
   ;
 
 {$IFDEF max_DELPHI}
