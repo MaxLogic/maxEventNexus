@@ -171,6 +171,7 @@ type
     fStats: TmaxTopicStats;
     fMetricName: TmaxString;
     fWarnedHighWater: boolean;
+    fDropActive: Integer;
     procedure TouchMetrics;
     procedure CheckHighWater; inline;
   public
@@ -817,6 +818,7 @@ begin
   fMetricName := '';
   fWarnedHighWater := False;
   FillChar(fStats, SizeOf(fStats), 0);
+  fDropActive := 0;
 end;
 
 destructor TmaxTopicBase.Destroy;
@@ -902,6 +904,7 @@ var
   lElapsedMs: Int64;
   lEnqueueMs: UInt64;
   lWrapped: TmaxProc;
+  lEffective: Integer;
 begin
   Result := True;
   TMonitor.Enter(self);
@@ -925,9 +928,18 @@ begin
           end;
         DropOldest:
           begin
-            if fQueue.Count >= fPolicy.MaxDepth then
+            lEffective := fQueue.Count + Ord(fProcessing);
+            if lEffective >= fPolicy.MaxDepth then
             begin
-              if fQueue.Count > 0 then
+              if fProcessing then
+              begin
+                Inc(fDropActive);
+                AddDropped;
+                {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] DropOldest: marked active for drop (Q=%d Active=%d)',
+                  [UnicodeString(fMetricName), fQueue.Count, Ord(fProcessing)])); {$ENDIF}
+                Result := False; // a drop occurred
+              end
+              else if fQueue.Count > 0 then
               begin
                 fQueue.Dequeue;
                 {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] DropOldest: removed oldest queued (Q now=%d)',
@@ -935,8 +947,8 @@ begin
                 if fStats.CurrentQueueDepth > 0 then
                   Dec(fStats.CurrentQueueDepth);
                 AddDropped;
+                Result := False; // a drop occurred
               end;
-              Result := False; // signal a drop occurred
             end;
           end;
         Block:
@@ -1026,6 +1038,13 @@ begin
       TMonitor.Pulse(self);
     finally
       TMonitor.exit(self);
+    end;
+    if fDropActive > 0 then
+    begin
+      Dec(fDropActive);
+      {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] DropOldest: skipped active item',
+        [UnicodeString(fMetricName)])); {$ENDIF}
+      continue;
     end;
     lProc();
   end;
