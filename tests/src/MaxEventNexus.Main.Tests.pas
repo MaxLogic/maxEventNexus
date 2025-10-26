@@ -327,6 +327,8 @@ var
   {$ELSE}
   lValues: TList<TKeyed>;
   {$ENDIF}
+  lLock: TCriticalSection;
+  lLock: TCriticalSection;
 
   function Make(const k: string; v: integer): TKeyed;
   begin
@@ -346,6 +348,8 @@ var
 begin
   lBus := maxBus as ImaxBusAdvanced;
   lBus.Clear;
+  lLock := TCriticalSection.Create;
+  lLock := TCriticalSection.Create;
   {$IFDEF max_FPC}
   lBus.EnableCoalesceOf<TKeyed>(@KeyOf, 10000);
   lValues := specialize TList<TKeyed>.Create;
@@ -361,7 +365,12 @@ begin
   lSub := TmaxBus(maxAsBus(lBus)).Subscribe<TKeyed>(
     procedure(const aEvt: TKeyed)
     begin
-      lValues.Add(aEvt);
+      lLock.Enter;
+      try
+        lValues.Add(aEvt);
+      finally
+        lLock.Leave;
+      end;
     end);
   {$ENDIF}
   try
@@ -377,9 +386,14 @@ begin
     TmaxBus(maxAsBus(lBus)).Post<TKeyed>(Make('B', 11));
     {$ENDIF}
     Sleep(20);
-    CheckEquals(2, lValues.Count);
-    CheckEquals(2, FindVal('A'));
-    CheckEquals(11, FindVal('B'));
+    lLock.Enter;
+    try
+      CheckEquals(2, lValues.Count);
+      CheckEquals(2, FindVal('A'));
+      CheckEquals(11, FindVal('B'));
+    finally
+      lLock.Leave;
+    end;
   finally
     lValues.Free;
     {$IFDEF max_FPC}
@@ -387,6 +401,7 @@ begin
     {$ELSE}
     TmaxBus(maxAsBus(lBus)).EnableCoalesceOf<TKeyed>(nil);
     {$ENDIF}
+    lLock.Free;
   end;
 end;
 
@@ -433,7 +448,12 @@ begin
   lSub := TmaxBus(maxAsBus(lBus)).Subscribe<TKeyed>(
     procedure(const aEvt: TKeyed)
     begin
-      lValues.Add(aEvt);
+      lLock.Enter;
+      try
+        lValues.Add(aEvt);
+      finally
+        lLock.Leave;
+      end;
     end);
   {$ENDIF}
   try
@@ -445,8 +465,13 @@ begin
     TmaxBus(maxAsBus(lBus)).Post<TKeyed>(Make('A', 2));
     {$ENDIF}
     Sleep(1);
-    CheckEquals(1, lValues.Count);
-    CheckEquals(2, lValues[0].Value);
+    lLock.Enter;
+    try
+      CheckEquals(1, lValues.Count);
+      CheckEquals(2, lValues[0].Value);
+    finally
+      lLock.Leave;
+    end;
   finally
     lValues.Free;
     {$IFDEF max_FPC}
@@ -454,6 +479,7 @@ begin
     {$ELSE}
     TmaxBus(maxAsBus(lBus)).EnableCoalesceOf<TKeyed>(nil);
     {$ENDIF}
+    lLock.Free;
   end;
 end;
 
@@ -525,7 +551,7 @@ begin
     lThreads[i].WaitFor;
     lThreads[i].Free;
   end;
-  Sleep(200);
+  Sleep(500);
   CheckEquals(cTHREADS * POSTS_PER_THREAD * length(lSubs), lDelivered);
 end;
 
