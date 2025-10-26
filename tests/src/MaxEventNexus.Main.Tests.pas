@@ -349,7 +349,6 @@ begin
   lBus := maxBus as ImaxBusAdvanced;
   lBus.Clear;
   lLock := TCriticalSection.Create;
-  lLock := TCriticalSection.Create;
   {$IFDEF max_FPC}
   lBus.EnableCoalesceOf<TKeyed>(@KeyOf, 10000);
   lValues := specialize TList<TKeyed>.Create;
@@ -433,6 +432,7 @@ var
 begin
   lBus := maxBus as ImaxBusAdvanced;
   lBus.Clear;
+  lLock := TCriticalSection.Create;
   {$IFDEF max_FPC}
   lBus.EnableCoalesceOf<TKeyed>(@KeyOf, 0);
   lValues := specialize TList<TKeyed>.Create;
@@ -1495,11 +1495,11 @@ end;
 {$ENDIF}
 
 initialization
-  {$IF DEFINED(MAX_DELPHI) AND DEFINED(DEBUG)}
+  {$IF DEFINED(max_DELPHI) AND DEFINED(DEBUG)}
   glLogCs:= TCriticalSection.Create  ;
   {$IFEND}
 finalization
-  {$IF DEFINED(MAX_DELPHI) AND DEFINED(DEBUG)}
+  {$IF DEFINED(max_DELPHI) AND DEFINED(DEBUG)}
   FreeAndNil(glLogCs);
   {$IFEND}
 end.
