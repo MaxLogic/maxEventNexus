@@ -190,7 +190,7 @@ var
 begin
   if not ProcAssigned(aProc) then
     Exit;
-  if IsMainThread then
+  if IsMainThread() then
     aProc()
   else
   begin

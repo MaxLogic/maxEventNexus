@@ -1906,7 +1906,7 @@ begin
         end;
       end;
     Main:
-      if (TThread.CurrentThread.ThreadID = fMainThreadId) or fAsync.IsMainThread then
+      if (TThread.CurrentThread.ThreadID = fMainThreadId) or fAsync.IsMainThread() then
       begin
         try
           {$IFDEF DEBUG} DebugLog(' → Main inline'); {$ENDIF}
@@ -1961,7 +1961,7 @@ begin
           end);
       end;
     Background:
-      if (TThread.CurrentThread.ThreadID = fMainThreadId) or fAsync.IsMainThread then
+      if (TThread.CurrentThread.ThreadID = fMainThreadId) or fAsync.IsMainThread() then
       begin
         {$IFDEF DEBUG} DebugLog(' → Background schedule'); {$ENDIF}
         fAsync.RunAsync(

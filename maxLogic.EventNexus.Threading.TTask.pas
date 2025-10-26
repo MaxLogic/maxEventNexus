@@ -40,7 +40,7 @@ procedure TmaxTTaskScheduler.RunOnMain(const aProc: TmaxProc);
 begin
   if not ProcAssigned(aProc) then
     Exit;
-  if IsMainThread then
+  if IsMainThread() then
     aProc()
   else
     TThread.Queue(nil,
