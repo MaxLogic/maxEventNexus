@@ -12,7 +12,7 @@ interface
 
 uses
   SysUtils, Classes,
-  {$IFDEF max_DELPHI} System.Generics.Collections, System.Rtti, System.TypInfo {$ELSE} Generics.Collections {$ENDIF};
+  {$IFDEF max_DELPHI} System.Generics.Collections, System.Rtti {$ELSE} Generics.Collections {$ENDIF};
 
 type
   TSynTestCase = class
