@@ -904,7 +904,6 @@ var
   lElapsedMs: Int64;
   lEnqueueMs: UInt64;
   lWrapped: TmaxProc;
-  lEffective: Integer;
 begin
   Result := True;
   TMonitor.Enter(self);
@@ -928,16 +927,15 @@ begin
           end;
         DropOldest:
           begin
-            lEffective := fQueue.Count + Ord(fProcessing);
-            if lEffective >= fPolicy.MaxDepth then
+            if fQueue.Count >= fPolicy.MaxDepth then
             begin
               if fProcessing then
               begin
                 Inc(fDropActive);
                 AddDropped;
-                {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] DropOldest: marked active for drop (Q=%d Active=%d)',
-                  [UnicodeString(fMetricName), fQueue.Count, Ord(fProcessing)])); {$ENDIF}
-                Result := False; // a drop occurred
+                {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] DropOldest: marked active for drop (Q=%d)',
+                  [UnicodeString(fMetricName), fQueue.Count])); {$ENDIF}
+                Result := False;
               end
               else if fQueue.Count > 0 then
               begin
@@ -947,7 +945,7 @@ begin
                 if fStats.CurrentQueueDepth > 0 then
                   Dec(fStats.CurrentQueueDepth);
                 AddDropped;
-                Result := False; // a drop occurred
+                Result := False;
               end;
             end;
           end;

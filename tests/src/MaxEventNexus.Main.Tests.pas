@@ -325,7 +325,12 @@ var
 
   procedure Handler(const aEvt: TKeyed);
   begin
-    lValues.Add(aEvt);
+    lLock.Enter;
+    try
+      lValues.Add(aEvt);
+    finally
+      lLock.Leave;
+    end;
   end;
   {$ELSE}
   lValues: TList<TKeyed>;
@@ -342,67 +347,75 @@ var
   var
     t: TKeyed;
   begin
-    for t in lValues do
-      if t.Key = k then
-        exit(t.Value);
-    Result := -1;
+    lLock.Enter;
+    try
+      for t in lValues do
+        if t.Key = k then
+          exit(t.Value);
+      Result := -1;
+    finally
+      lLock.Leave;
+    end;
   end;
 begin
   lBus := maxBus as ImaxBusAdvanced;
   lBus.Clear;
   lLock := TCriticalSection.Create;
-  {$IFDEF max_FPC}
-  lBus.EnableCoalesceOf<TKeyed>(@KeyOf, 10000);
-  lValues := specialize TList<TKeyed>.Create;
-  lSub := lBus.Subscribe<TKeyed>(@Handler);
-  {$ELSE}
-  TmaxBus(maxAsBus(lBus)).EnableCoalesceOf<TKeyed>(
-    function(const aEvt: TKeyed): TmaxString
-    begin
-      Result := aEvt.Key;
-    end,
-    10000);
-  lValues := TList<TKeyed>.Create;
-  lSub := TmaxBus(maxAsBus(lBus)).Subscribe<TKeyed>(
-    procedure(const aEvt: TKeyed)
-    begin
+  try
+    {$IFDEF max_FPC}
+    lBus.EnableCoalesceOf<TKeyed>(@KeyOf, 10000);
+    lValues := specialize TList<TKeyed>.Create;
+    lSub := lBus.Subscribe<TKeyed>(@Handler);
+    {$ELSE}
+    TmaxBus(maxAsBus(lBus)).EnableCoalesceOf<TKeyed>(
+      function(const aEvt: TKeyed): TmaxString
+      begin
+        Result := aEvt.Key;
+      end,
+      10000);
+    lValues := TList<TKeyed>.Create;
+    lSub := TmaxBus(maxAsBus(lBus)).Subscribe<TKeyed>(
+      procedure(const aEvt: TKeyed)
+      begin
+        lLock.Enter;
+        try
+          lValues.Add(aEvt);
+        finally
+          lLock.Leave;
+        end;
+      end);
+    {$ENDIF}
+    try
+      {$IFDEF max_FPC}
+      lBus.Post<TKeyed>(Make('A', 1));
+      lBus.Post<TKeyed>(Make('A', 2));
+      lBus.Post<TKeyed>(Make('B', 10));
+      lBus.Post<TKeyed>(Make('B', 11));
+      {$ELSE}
+      TmaxBus(maxAsBus(lBus)).Post<TKeyed>(Make('A', 1));
+      TmaxBus(maxAsBus(lBus)).Post<TKeyed>(Make('A', 2));
+      TmaxBus(maxAsBus(lBus)).Post<TKeyed>(Make('B', 10));
+      TmaxBus(maxAsBus(lBus)).Post<TKeyed>(Make('B', 11));
+      {$ENDIF}
+      Sleep(20);
       lLock.Enter;
       try
-        lValues.Add(aEvt);
+        CheckEquals(2, lValues.Count);
+        CheckEquals(2, FindVal('A'));
+        CheckEquals(11, FindVal('B'));
       finally
         lLock.Leave;
       end;
-    end);
-  {$ENDIF}
-  try
-    {$IFDEF max_FPC}
-    lBus.Post<TKeyed>(Make('A', 1));
-    lBus.Post<TKeyed>(Make('A', 2));
-    lBus.Post<TKeyed>(Make('B', 10));
-    lBus.Post<TKeyed>(Make('B', 11));
-    {$ELSE}
-    TmaxBus(maxAsBus(lBus)).Post<TKeyed>(Make('A', 1));
-    TmaxBus(maxAsBus(lBus)).Post<TKeyed>(Make('A', 2));
-    TmaxBus(maxAsBus(lBus)).Post<TKeyed>(Make('B', 10));
-    TmaxBus(maxAsBus(lBus)).Post<TKeyed>(Make('B', 11));
-    {$ENDIF}
-    Sleep(20);
-    lLock.Enter;
-    try
-      CheckEquals(2, lValues.Count);
-      CheckEquals(2, FindVal('A'));
-      CheckEquals(11, FindVal('B'));
     finally
-      lLock.Leave;
+      lValues.Free;
     end;
   finally
-    lValues.Free;
+    lLock.Free;
     {$IFDEF max_FPC}
     lBus.EnableCoalesceOf<TKeyed>(nil);
     {$ELSE}
     TmaxBus(maxAsBus(lBus)).EnableCoalesceOf<TKeyed>(nil);
     {$ENDIF}
-    lLock.Free;
   end;
 end;
 
