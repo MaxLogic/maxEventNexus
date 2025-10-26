@@ -171,7 +171,6 @@ type
     fStats: TmaxTopicStats;
     fMetricName: TmaxString;
     fWarnedHighWater: boolean;
-    fSkipCurrent: Boolean;
     procedure TouchMetrics;
     procedure CheckHighWater; inline;
   public
@@ -818,7 +817,6 @@ begin
   fMetricName := '';
   fWarnedHighWater := False;
   FillChar(fStats, SizeOf(fStats), 0);
-  fSkipCurrent := False;
 end;
 
 destructor TmaxTopicBase.Destroy;
@@ -929,15 +927,8 @@ begin
           begin
             if fQueue.Count >= fPolicy.MaxDepth then
             begin
-              if fProcessing then
-              begin
-                fSkipCurrent := True;
-                AddDropped;
-                {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] DropOldest: marked active for skip (Q=%d)',
-                  [UnicodeString(fMetricName), fQueue.Count])); {$ENDIF}
-                Result := False;
-              end
-              else if fQueue.Count > 0 then
+              // Drop the oldest *queued* item (not the active one)
+              if fQueue.Count > 0 then
               begin
                 fQueue.Dequeue;
                 {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] DropOldest: removed oldest queued (Q now=%d)',
@@ -1036,13 +1027,6 @@ begin
       TMonitor.Pulse(self);
     finally
       TMonitor.exit(self);
-    end;
-    if fSkipCurrent then
-    begin
-      fSkipCurrent := False;
-      {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] DropOldest: skipped stale item',
-        [UnicodeString(fMetricName)])); {$ENDIF}
-      continue;
     end;
     lProc();
   end;

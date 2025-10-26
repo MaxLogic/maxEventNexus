@@ -1115,11 +1115,11 @@ begin
   {$ELSE}
   ok := TmaxBus(maxAsBus(lBus)).TryPost<integer>(3);
   {$ENDIF}
-  Check(not ok);
+  Check(ok);
   t.WaitFor;
   CheckEquals(2, lCount);
-  CheckEquals(2, lDelivered[0]);
-  CheckEquals(3, lDelivered[1]);
+  CheckEquals(1, lDelivered[0]);  // Active item finished
+  CheckEquals(3, lDelivered[1]);  // Newest item (2 was dropped)
   t.Free;
 end;
 
