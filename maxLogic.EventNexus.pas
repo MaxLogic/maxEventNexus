@@ -31,15 +31,6 @@ type
   TmaxKeyFunc<t> = reference to function(const aValue: t): TmaxString;
   {$ENDIF}
 
-  {$IFDEF max_FPC}
-type
-  TmaxProc = procedure;
-  TmaxProcOf<t> = procedure(const aValue: t);
-  {$ELSE}
-type
-  TmaxProc = reference to procedure;
-  TmaxProcOf<t> = reference to procedure(const aValue: t);
-  {$ENDIF}
 
 type
   TmaxObjProcOf<t> = procedure(const aValue: t) of object;
