@@ -159,7 +159,7 @@ type
 implementation
 
 uses
-  ioUtils, maxLogic.Utils;
+  {$IFDEF max_DELPHI} System.IOUtils, {$ENDIF} maxLogic.Utils;
 
 {$IFDEF max_DELPHI}
 {$IFDEF DEBUG}
