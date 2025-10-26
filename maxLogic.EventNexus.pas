@@ -1562,97 +1562,103 @@ function TmaxBus.ScheduleTypedCoalesce<t>(const aTopicName: TmaxString;
   const aKey: TmaxString): boolean;
 var
   lKeyCopy: TmaxString;
+  lSubsCopy: TArray<TTypedSubscriber<t>>;
 begin
   lKeyCopy := aKey;
+  lSubsCopy := Copy(aSubs);
   fAsync.RunDelayed(
     procedure
     var
       lInner: t;
-      lErrs: TmaxExceptionList;
-      ex: EmaxAggregateException;
-      i: Integer;
-      lHandler: TmaxProcOf<t>;
-      lMode: TmaxDelivery;
-      lToken: TmaxSubscriptionToken;
-      lState: ImaxSubscriptionState;
     begin
       if not aTopic.PopPending(lKeyCopy, lInner) then
         exit;
-      lErrs := nil;
-
-      for i := 0 to High(aSubs) do
-      begin
-        lHandler := aSubs[i].Handler;
-        lMode := aSubs[i].Mode;
-        lToken := aSubs[i].Token;
-        lState := aSubs[i].State;
-
-        if (lState <> nil) and not lState.TryEnter then
-          continue;
-
-        if not aSubs[i].Target.IsAlive then
+      
+      aTopic.Enqueue(
+        procedure
+        var
+          i: Integer;
+          lHandler: TmaxProcOf<t>;
+          lMode: TmaxDelivery;
+          lToken: TmaxSubscriptionToken;
+          lState: ImaxSubscriptionState;
+          lErrs: TmaxExceptionList;
+          ex: EmaxAggregateException;
         begin
-          aTopic.RemoveByToken(lToken);
-          if lState <> nil then
-            lState.Leave;
-          continue;
-        end;
+          lErrs := nil;
 
-        try
-          Dispatch(aTopicName, lMode,
-            procedure
-            begin
-              if aTopic.ConsumeDropActive then
-                Exit;
-              try
-                try
-                  lHandler(lInner);
-                  aTopic.AddDelivered(1);
-                except
-                  on e: Exception do
-                  begin
-                    if (e is EAccessViolation) or (e is EInvalidPointer) then
-                      aTopic.RemoveByToken(lToken);
-                    raise;
-                  end;
-                end;
-              finally
-                if lState <> nil then
-                  lState.Leave;
-              end;
-            end,
-            procedure
-            begin
-              aTopic.AddException;
-            end);
-        except
-          on e: Exception do
+          for i := 0 to High(lSubsCopy) do
           begin
-            if lErrs = nil then
-              lErrs := TmaxExceptionList.Create(True);
-            {$IFDEF max_DELPHI}
-            lErrs.Add(Exception(AcquireExceptionObject));
-            {$ELSE}
-            lErrs.Add(e);
-            {$ENDIF}
-          end;
-        end;
-      end;
+            lHandler := lSubsCopy[i].Handler;
+            lMode := lSubsCopy[i].Mode;
+            lToken := lSubsCopy[i].Token;
+            lState := lSubsCopy[i].State;
 
-      if lErrs <> nil then
-      begin
-        if Assigned(gAsyncError) then
-        begin
-          ex := EmaxAggregateException.Create(lErrs);
-          try
-            gAsyncError(UnicodeString(aTopicName), ex);
-          finally
-            ex.Free;
+            if (lState <> nil) and not lState.TryEnter then
+              continue;
+
+            if not lSubsCopy[i].Target.IsAlive then
+            begin
+              aTopic.RemoveByToken(lToken);
+              if lState <> nil then
+                lState.Leave;
+              continue;
+            end;
+
+            try
+              Dispatch(aTopicName, lMode,
+                procedure
+                begin
+                  try
+                    try
+                      lHandler(lInner);
+                      aTopic.AddDelivered(1);
+                    except
+                      on e: Exception do
+                      begin
+                        if (e is EAccessViolation) or (e is EInvalidPointer) then
+                          aTopic.RemoveByToken(lToken);
+                        raise;
+                      end;
+                    end;
+                  finally
+                    if lState <> nil then
+                      lState.Leave;
+                  end;
+                end,
+                procedure
+                begin
+                  aTopic.AddException;
+                end);
+            except
+              on e: Exception do
+              begin
+                if lErrs = nil then
+                  lErrs := TmaxExceptionList.Create(True);
+                {$IFDEF max_DELPHI}
+                lErrs.Add(Exception(AcquireExceptionObject));
+                {$ELSE}
+                lErrs.Add(e);
+                {$ENDIF}
+              end;
+            end;
           end;
-        end
-        else
-          lErrs.Free;
-      end;
+
+          if lErrs <> nil then
+          begin
+            if Assigned(gAsyncError) then
+            begin
+              ex := EmaxAggregateException.Create(lErrs);
+              try
+                gAsyncError(UnicodeString(aTopicName), ex);
+              finally
+                ex.Free;
+              end;
+            end
+            else
+              lErrs.Free;
+          end;
+        end);
     end,
     aTopic.CoalesceWindow);
   Result := True;
