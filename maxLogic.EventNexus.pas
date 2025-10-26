@@ -2210,6 +2210,7 @@ begin
       lMode: TmaxDelivery;
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
+      lBox: {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>;
     begin
       lVal := aEvent;
       lErrs := nil;
@@ -2325,6 +2326,7 @@ begin
       lMode: TmaxDelivery;
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
+      lBox: {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>;
     begin
       lVal := aEvent;
       lErrs := nil;
@@ -2490,6 +2492,7 @@ begin
       lMode: TmaxDelivery;
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
+      lBox: TInvokeBoxNamed;
     begin
       lErrs := nil;
 
@@ -2581,6 +2584,7 @@ begin
       lMode: TmaxDelivery;
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
+      lBox: TInvokeBoxNamed;
     begin
       lErrs := nil;
 
@@ -2896,6 +2900,7 @@ begin
       lMode: TmaxDelivery;
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
+      lBox: {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>;
     begin
       lVal := aEvent;
       lErrs := nil;
@@ -3025,6 +3030,7 @@ begin
       lMode: TmaxDelivery;
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
+      lBox: {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>;
     begin
       lVal := aEvent;
       lErrs := nil;
@@ -3299,6 +3305,7 @@ begin
       lMode: TmaxDelivery;
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
+      lBox: {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>;
     begin
       lVal := aEvent;
       lErrs := nil;
