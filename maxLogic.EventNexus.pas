@@ -1,4 +1,4 @@
-unit {$IFDEF max_FPC}maxLogic_EventNexus{$ELSE}maxLogic.EventNexus{$ENDIF};
+unit {$IFDEF FPC}maxLogic_EventNexus{$ELSE}maxLogic.EventNexus{$ENDIF};
 
 {$I fpc_delphimode.inc}
 
@@ -271,7 +271,7 @@ type
     fCoalesce: boolean;
     fKeyFunc: TmaxKeyFunc<t>;
     fWindowUs: integer;
-    fPending: {$IFDEF max_FPC}specialize {$ENDIF}TDictionary<TmaxString, t>;
+    fPending: {$IFDEF FPC}specialize {$ENDIF}TDictionary<TmaxString, t>;
     fPendingLock: TmaxMonitorObject;
     fNextToken: TmaxSubscriptionToken;
     procedure PruneDead;
@@ -450,7 +450,7 @@ implementation
 
 uses
   maxLogic.Utils,
-  {$IFDEF max_FPC}
+  {$IFDEF FPC}
   SyncObjs,
   maxLogic_EventNexus_Threading_RawThread
   {$ELSE}
@@ -516,7 +516,7 @@ begin
 end;
 {$ENDIF}
 
-  {$IFDEF max_FPC}
+  {$IFDEF FPC}
 type
   TFpcWeakEntry = record
     Generation: UInt32;
@@ -549,7 +549,7 @@ var
 procedure FpcWeakFreeInstanceHook(aSelf: TObject); forward;
 {$ENDIF}
 
-{$IFDEF max_FPC}
+{$IFDEF FPC}
 
 { TFpcWeakRegistry }
 
@@ -1789,7 +1789,7 @@ begin
           lState: ImaxSubscriptionState;
           lErrs: TmaxExceptionList;
           ex: EmaxAggregateException;
-          lBox: {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>;
+          lBox: {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>;
         begin
           lErrs := nil;
 
@@ -2220,7 +2220,7 @@ begin
       lMode: TmaxDelivery;
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
-      lBox: {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>;
+      lBox: {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>;
     begin
       lVal := aEvent;
       lErrs := nil;
@@ -2341,7 +2341,7 @@ begin
       lMode: TmaxDelivery;
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
-      lBox: {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>;
+      lBox: {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>;
     begin
       lVal := aEvent;
       lErrs := nil;
@@ -2922,7 +2922,7 @@ begin
       lMode: TmaxDelivery;
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
-      lBox: {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>;
+      lBox: {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>;
     begin
       lVal := aEvent;
       lErrs := nil;
@@ -3057,7 +3057,7 @@ begin
       lMode: TmaxDelivery;
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
-      lBox: {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>;
+      lBox: {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>;
     begin
       lVal := aEvent;
       lErrs := nil;
@@ -3337,7 +3337,7 @@ begin
       lMode: TmaxDelivery;
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
-      lBox: {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>;
+      lBox: {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>;
     begin
       lVal := aEvent;
       lErrs := nil;
