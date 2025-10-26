@@ -1,4 +1,4 @@
-﻿unit {$IFDEF max_FPC}maxLogic_EventNexus{$ELSE}maxLogic.EventNexus{$ENDIF};
+unit {$IFDEF max_FPC}maxLogic_EventNexus{$ELSE}maxLogic.EventNexus{$ENDIF};
 
 {$I fpc_delphimode.inc}
 
@@ -2904,8 +2904,6 @@ begin
           Dispatch(lMetric, lMode,
             procedure
             begin
-              if lTopic.ConsumeDropActive then
-                Exit;
               try
                 try
                   lHandler(lVal);
@@ -3156,8 +3154,6 @@ begin
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
     begin
-      if lTopic.ConsumeDropActive then
-        Exit;
       lVal := aEvent;
       lErrs := nil;
       for i := 0 to High(lSubs) do
@@ -3182,8 +3178,6 @@ begin
           Dispatch(lMetric, lMode,
             procedure
             begin
-              if lTopic.ConsumeDropActive then
-                Exit;
               try
                 try
                   lHandler(lVal);
