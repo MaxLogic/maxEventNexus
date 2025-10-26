@@ -25,7 +25,7 @@ const
 type
   TmaxString = type UnicodeString;
 
-  {$IFDEF max_FPC}
+  {$IFDEF FPC}
   TmaxKeyFunc<t> = function(const aValue: t): TmaxString;
   {$ELSE}
   TmaxKeyFunc<t> = reference to function(const aValue: t): TmaxString;
@@ -40,7 +40,7 @@ type
 type
   TmaxObjProcOf<t> = procedure(const aValue: t) of object;
 
-  {$IFDEF max_FPC}
+  {$IFDEF FPC}
   TmaxProcQueue = specialize TQueue<TmaxProc>;
   TmaxExceptionList = specialize TObjectList<Exception>;
   {$ELSE}
@@ -64,7 +64,7 @@ type
     function SubscribeNamed(const aName: TmaxString; const aHandler: TmaxProc; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
     procedure PostNamed(const aName: TmaxString);
     function TryPostNamed(const aName: TmaxString): boolean;
-{$IFDEF max_FPC}
+{$IFDEF FPC}
     // FPC: expose generic methods on the interface
     function Subscribe<T>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
     procedure Post<T>(const aEvent: T);
@@ -87,7 +87,7 @@ type
   ImaxBusAdvanced = interface(ImaxBus)
     ['{AB5E6E6D-8B1F-4B63-8B59-8A3B9D8C71B1}']
     procedure EnableStickyNamed(const aName: string; aEnable: boolean);
-  {$IFDEF max_FPC}
+  {$IFDEF FPC}
     procedure EnableCoalesceOf<T>(const aKeyOf: TmaxKeyFunc<T>; aWindowUs: integer = 0);
     procedure EnableCoalesceNamedOf<T>(const aName: string; const aKeyOf: TmaxKeyFunc<T>; aWindowUs: integer = 0);
   {$ENDIF}
@@ -103,7 +103,7 @@ type
     ['{E55F7B60-9B31-4C80-9B2C-8D1F0E26FF9C}']
     procedure SetPolicyNamed(const aName: string; const aPolicy: TmaxQueuePolicy);
     function GetPolicyNamed(const aName: string): TmaxQueuePolicy;
-  {$IFDEF max_FPC}
+  {$IFDEF FPC}
     procedure SetPolicyFor<T>(const aPolicy: TmaxQueuePolicy);
     function GetPolicyFor<T>: TmaxQueuePolicy;
   {$ENDIF}
@@ -161,7 +161,7 @@ type
     property Inner: TmaxExceptionList read fInner;
   end;
 
-  {$IFDEF max_FPC}
+  {$IFDEF FPC}
   TOnAsyncError = procedure(const aTopic: string; const aE: Exception);
   TOnMetricSample = procedure(const aName: string; const aStats: TmaxTopicStats);
   {$ELSE}
@@ -220,7 +220,7 @@ type
     function GetStats: TmaxTopicStats; inline;
   end;
 
-  {$IFDEF max_FPC}
+  {$IFDEF FPC}
   TmaxTypeTopicBaseDict = specialize TObjectDictionary<PTypeInfo, TmaxTopicBase>;
   TmaxTypeTopicDict = specialize TObjectDictionary<PTypeInfo, TmaxTopicBase>;
   TmaxNameTopicDict = specialize TObjectDictionary<TmaxString, TmaxTopicBase>;
@@ -345,7 +345,7 @@ type
     procedure Dispatch(const aTopic: TmaxString; aDelivery: TmaxDelivery; const aHandler: TmaxProc; const aOnException: TmaxProc = nil);
   end;
 
-  {$IFDEF max_FPC}
+  {$IFDEF FPC}
   ImaxBusHelper = class helper for ImaxBus
   private
     function Impl: TmaxBus; inline;
@@ -1271,7 +1271,7 @@ begin
     begin
       if fPending = nil then
       begin
-        {$IFDEF max_FPC}
+        {$IFDEF FPC}
         fPending := specialize TDictionary<TmaxString, t>.Create;
         {$ELSE}
         fPending := TDictionary<TmaxString, t>.Create;
@@ -1307,7 +1307,7 @@ begin
   try
     if fPending = nil then
     begin
-      {$IFDEF max_FPC}
+      {$IFDEF FPC}
       fPending := specialize TDictionary<TmaxString, t>.Create;
       {$ELSE}
       fPending := TDictionary<TmaxString, t>.Create;
@@ -1811,7 +1811,7 @@ begin
               continue;
             end;
 
-            lBox := {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
+            lBox := {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
             lBox.Topic := aTopic;
             lBox.Handler := lHandler;
             lBox.Value := lInner;
@@ -2243,7 +2243,7 @@ begin
           continue;
         end;
 
-        lBox := {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
+        lBox := {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
         lBox.Topic := lTopic;
         lBox.Handler := lHandler;
         lBox.Value := lVal;
@@ -2364,7 +2364,7 @@ begin
           continue;
         end;
 
-        lBox := {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
+        lBox := {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
         lBox.Topic := lTopic;
         lBox.Handler := lHandler;
         lBox.Value := lVal;
@@ -2944,7 +2944,7 @@ begin
           continue;
         end;
 
-        lBox := {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
+        lBox := {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
         lBox.Topic := lTopic;
         lBox.Handler := lHandler;
         lBox.Value := lVal;
@@ -3079,7 +3079,7 @@ begin
           continue;
         end;
 
-        lBox := {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
+        lBox := {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
         lBox.Topic := lTopic;
         lBox.Handler := lHandler;
         lBox.Value := lVal;
@@ -3359,7 +3359,7 @@ begin
           continue;
         end;
 
-        lBox := {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
+        lBox := {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
         lBox.Topic := lTopic;
         lBox.Handler := lHandler;
         lBox.Value := lVal;
@@ -3395,7 +3395,7 @@ procedure TmaxBus.EnableSticky<t>(aEnable: boolean);
 var
   lKey: PTypeInfo;
   lObj: TmaxTopicBase;
-  {$IFDEF max_FPC}
+  {$IFDEF FPC}
   lKvName: specialize TPair<TmaxString, TmaxTypeTopicDict>;
   lKvInner: specialize TPair<PTypeInfo, TmaxTopicBase>;
   {$ELSE}
@@ -3439,7 +3439,7 @@ procedure TmaxBus.EnableStickyNamed(const aName: string; aEnable: boolean);
 var
   lObj: TmaxTopicBase;
   lTypeDict: TmaxTypeTopicDict;
-  {$IFDEF max_FPC}
+  {$IFDEF FPC}
   lKvInner: specialize TPair<PTypeInfo, TmaxTopicBase>;
   {$ELSE}
   lKvInner: TPair<PTypeInfo, TmaxTopicBase>;
@@ -3540,7 +3540,7 @@ end;
 
 procedure TmaxBus.UnsubscribeAllFor(const aTarget: TObject);
 var
-  {$IFDEF max_FPC}
+  {$IFDEF FPC}
   lKvTyped: specialize TPair<PTypeInfo, TmaxTopicBase>;
   lKvNamed: specialize TPair<TmaxString, TmaxTopicBase>;
   lKvName:  specialize TPair<TmaxString, TmaxTypeTopicDict>;
@@ -3619,7 +3619,7 @@ var
   lNameKey: TmaxString;
   lMetric: TmaxString;
   lTypeDict: TmaxTypeTopicDict;
-  {$IFDEF max_FPC}
+  {$IFDEF FPC}
   lKvInner: specialize TPair<PTypeInfo, TmaxTopicBase>;
   {$ELSE}
   lKvInner: TPair<PTypeInfo, TmaxTopicBase>;
@@ -3936,12 +3936,12 @@ end;
 {$ENDIF}
 
 initialization
-  {$IFDEF max_FPC}
+  {$IFDEF FPC}
   gFpcWeakRegistry := TFpcWeakRegistry.Create;
   {$ENDIF}
 
 finalization
-  {$IFDEF max_FPC}
+  {$IFDEF FPC}
   FreeAndNil(gFpcWeakRegistry);
   {$ENDIF}
   {$IFDEF max_DELPHI}
