@@ -13,7 +13,7 @@ interface
 uses
   Classes, SysUtils,
   {$IFDEF max_DELPHI}
-  System.Diagnostics, System.Generics.Collections, System.IOUtils, System.SyncObjs, System.TypInfo,
+  System.Diagnostics, System.Generics.Collections, System.SyncObjs, System.TypInfo,
   {$ELSE}
   Generics.Collections, TypInfo, maxLogic.fpc.compatibility, maxLogic.fpc.diagnostics,
   {$ENDIF}
@@ -452,6 +452,7 @@ uses
   MaxLogic.Utils,
   {$IFDEF max_FPC} SyncObjs, {$ENDIF}
   {$IFDEF max_FPC} maxLogic_EventNexus_Threading_RawThread {$ELSE} maxLogic.EventNexus.Threading.RawThread {$ENDIF}
+  {$IFDEF DEBUG}{$IFDEF max_DELPHI} , System.IOUtils{$ENDIF}{$ENDIF}
   ;
 
 resourcestring
