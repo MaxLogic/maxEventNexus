@@ -429,7 +429,9 @@ var
   gAsyncError: TOnAsyncError = nil;
 
 implementation
+
 uses
+  MaxLogic.Utils,
   {$IFDEF max_FPC} SyncObjs, {$ENDIF}
   maxLogic.EventNexus.Threading.RawThread;
 
