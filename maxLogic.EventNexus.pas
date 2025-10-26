@@ -1648,7 +1648,11 @@ begin
                       on e: Exception do
                       begin
                         if (e is EAccessViolation) or (e is EInvalidPointer) then
+                        begin
                           aTopic.RemoveByToken(lToken);
+                          aTopic.AddException;
+                          exit;
+                        end;
                         raise;
                       end;
                     end;
@@ -1883,7 +1887,11 @@ begin
                   on e: Exception do
                   begin
                     if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    begin
                       lTopic.RemoveByToken(lToken);
+                      lTopic.AddException;
+                      exit;
+                    end;
                     raise;
                   end;
                 end;
@@ -1964,7 +1972,11 @@ begin
                   on e: Exception do
                   begin
                     if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    begin
                       lTopic.RemoveByToken(lToken);
+                      lTopic.AddException;
+                      exit;
+                    end;
                     raise;
                   end;
                 end;
@@ -2083,7 +2095,11 @@ begin
                   on e: Exception do
                   begin
                     if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    begin
                       lTopic.RemoveByToken(lToken);
+                      lTopic.AddException;
+                      exit;
+                    end;
                     raise;
                   end;
                 end;
@@ -2214,7 +2230,11 @@ begin
                   on e: Exception do
                   begin
                     if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    begin
                       lTopic.RemoveByToken(lToken);
+                      lTopic.AddException;
+                      exit;
+                    end;
                     raise;
                   end;
                 end;
@@ -2293,7 +2313,11 @@ begin
                   on e: Exception do
                   begin
                     if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    begin
                       lTopic.RemoveByToken(lToken);
+                      lTopic.AddException;
+                      exit;
+                    end;
                     raise;
                   end;
                 end;
@@ -2390,7 +2414,11 @@ begin
                   on e: Exception do
                   begin
                     if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    begin
                       lTopic.RemoveByToken(lToken);
+                      lTopic.AddException;
+                      exit;
+                    end;
                     raise;
                   end;
                 end;
@@ -2498,7 +2526,11 @@ begin
                   on e: Exception do
                   begin
                     if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    begin
                       lTopic.RemoveByToken(lToken);
+                      lTopic.AddException;
+                      exit;
+                    end;
                     raise;
                   end;
                 end;
@@ -2593,7 +2625,11 @@ begin
                     on e: Exception do
                     begin
                       if (e is EAccessViolation) or (e is EInvalidPointer) then
+                      begin
                         lTopic.RemoveByToken(lToken);
+                        lTopic.AddException;
+                        exit;
+                      end;
                       raise;
                     end;
                   end;
@@ -2688,7 +2724,11 @@ begin
                   on e: Exception do
                   begin
                     if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    begin
                       lTopic.RemoveByToken(lToken);
+                      lTopic.AddException;
+                      exit;
+                    end;
                     raise;
                   end;
                 end;
@@ -2822,7 +2862,11 @@ begin
                   on e: Exception do
                   begin
                     if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    begin
                       lTopic.RemoveByToken(lToken);
+                      lTopic.AddException;
+                      exit;
+                    end;
                     raise;
                   end;
                 end;
@@ -2967,7 +3011,11 @@ begin
                   on e: Exception do
                   begin
                     if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    begin
                       lTopic.RemoveByToken(lToken);
+                      lTopic.AddException;
+                      exit;
+                    end;
                     raise;
                   end;
                 end;
@@ -3050,7 +3098,11 @@ begin
                   on e: Exception do
                   begin
                     if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    begin
                       lTopic.RemoveByToken(lToken);
+                      lTopic.AddException;
+                      exit;
+                    end;
                     raise;
                   end;
                 end;
@@ -3131,7 +3183,11 @@ begin
                   on e: Exception do
                   begin
                     if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    begin
                       lTopic.RemoveByToken(lToken);
+                      lTopic.AddException;
+                      exit;
+                    end;
                     raise;
                   end;
                 end;
@@ -3249,7 +3305,11 @@ begin
                   on e: Exception do
                   begin
                     if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    begin
                       lTopic.RemoveByToken(lToken);
+                      lTopic.AddException;
+                      exit;
+                    end;
                     raise;
                   end;
                 end;
