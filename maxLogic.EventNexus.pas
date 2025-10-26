@@ -1,4 +1,4 @@
-unit {$IFDEF FPC}maxLogic_EventNexus{$ELSE}maxLogic.EventNexus{$ENDIF};
+﻿unit {$IFDEF FPC}maxLogic_EventNexus{$ELSE}maxLogic.EventNexus{$ENDIF};
 
 {$I fpc_delphimode.inc}
 
@@ -1620,26 +1620,26 @@ begin
     var
       h: TmaxProcOf<T>;
       v: T;
-      t: TTypedTopic<T>;
+      lTopic: TTypedTopic<T>;
       st: ImaxSubscriptionState;
       tok: TmaxSubscriptionToken;
     begin
       h := aBox.Handler;
       v := aBox.Value;
-      t := aBox.Topic;
+      lTopic := aBox.Topic;
       st := aBox.State;
       tok := aBox.Token;
       try
         try
           h(v);
-          t.AddDelivered(1);
+          lTopic.AddDelivered(1);
         except
           on e: Exception do
           begin
             if (e is EAccessViolation) or (e is EInvalidPointer) then
             begin
-              t.RemoveByToken(tok);
-              t.AddException;
+              lTopic.RemoveByToken(tok);
+              lTopic.AddException;
               Exit;
             end;
             raise;
