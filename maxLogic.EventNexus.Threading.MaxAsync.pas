@@ -12,7 +12,7 @@ interface
 
 uses
   Classes, SysUtils, SyncObjs,
-  maxLogic.EventNexus.Threading.Adapter,
+  {$IFDEF max_FPC} maxLogic_EventNexus_Threading_Adapter {$ELSE} maxLogic.EventNexus.Threading.Adapter {$ENDIF},
   maxAsync;
 
 type

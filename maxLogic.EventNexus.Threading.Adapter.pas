@@ -1,4 +1,4 @@
-unit maxLogic.EventNexus.Threading.Adapter;
+unit {$IFDEF max_FPC}maxLogic_EventNexus_Threading_Adapter{$ELSE}maxLogic.EventNexus.Threading.Adapter{$ENDIF};
 
 {$I fpc_delphimode.inc}
 

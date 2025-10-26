@@ -1,4 +1,4 @@
-unit maxLogic.EventNexus.Threading.RawThread;
+unit {$IFDEF max_FPC}maxLogic_EventNexus_Threading_RawThread{$ELSE}maxLogic.EventNexus.Threading.RawThread{$ENDIF};
 
 {$I fpc_delphimode.inc}
 
@@ -12,7 +12,7 @@ interface
 
 uses
   Classes, SysUtils,
-  maxLogic.EventNexus.Threading.Adapter;
+  {$IFDEF max_FPC} maxLogic_EventNexus_Threading_Adapter {$ELSE} maxLogic.EventNexus.Threading.Adapter {$ENDIF};
 
 type
   TmaxRawThreadScheduler = class(TInterfacedObject, IEventNexusScheduler)

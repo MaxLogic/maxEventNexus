@@ -17,9 +17,13 @@ uses
   // Third-party
   mormot.core.Test,
   // Project
+  {$IFDEF max_FPC}
+  maxLogic_EventNexus_Threading_Adapter, maxLogic_EventNexus_Threading_RawThread, maxLogic_EventNexus;
+  {$ELSE}
   maxLogic.EventNexus.Threading.Adapter, maxLogic.EventNexus.Threading.RawThread,
   {$IFDEF max_DELPHI} maxLogic.EventNexus.Threading.MaxAsync, maxLogic.EventNexus.Threading.TTask, {$ENDIF}
   maxLogic.EventNexus;
+  {$ENDIF}
 
 type
   TKeyed = record
@@ -307,7 +311,7 @@ var
   lBus: ImaxBusAdvanced;
   lSub: ImaxSubscription;
   {$IFDEF max_FPC}
-  lValues: TList<TKeyed>;
+  lValues: specialize TList<TKeyed>;
 
   function KeyOf(const aEvt: TKeyed): TmaxString;
   begin
@@ -342,7 +346,7 @@ begin
   lBus.Clear;
   {$IFDEF max_FPC}
   lBus.EnableCoalesceOf<TKeyed>(@KeyOf, 10000);
-  lValues := TList<TKeyed>.Create;
+  lValues := specialize TList<TKeyed>.Create;
   lSub := lBus.Subscribe<TKeyed>(@Handler);
   {$ELSE}
   TmaxBus(maxAsBus(lBus)).EnableCoalesceOf<TKeyed>(
@@ -389,7 +393,7 @@ var
   lBus: ImaxBusAdvanced;
   lSub: ImaxSubscription;
   {$IFDEF max_FPC}
-  lValues: TList<TKeyed>;
+  lValues: specialize TList<TKeyed>;
 
   function KeyOf(const aEvt: TKeyed): TmaxString;
   begin
@@ -414,7 +418,7 @@ begin
   lBus.Clear;
   {$IFDEF max_FPC}
   lBus.EnableCoalesceOf<TKeyed>(@KeyOf, 0);
-  lValues := TList<TKeyed>.Create;
+  lValues := specialize TList<TKeyed>.Create;
   lSub := lBus.Subscribe<TKeyed>(@Handler);
   {$ELSE}
   TmaxBus(maxAsBus(lBus)).EnableCoalesceOf<TKeyed>(
@@ -1213,7 +1217,7 @@ var
   lBus: ImaxBus;
   lSub: ImaxSubscription;
   {$IFDEF max_FPC}
-  lValues: TList<integer>;
+  lValues: specialize TList<integer>;
 
   procedure Handler(const aValue: integer);
   begin
@@ -1237,7 +1241,7 @@ begin
     lBus.Post<integer>(42);
     {$ENDIF}
     {$IFDEF max_FPC}
-    lValues := TList<integer>.Create;
+    lValues := specialize TList<integer>.Create;
     lSub := lBus.Subscribe<integer>(@Handler);
     {$ELSE}
     lValues := TList<integer>.Create;
@@ -1276,7 +1280,7 @@ var
   lBus: ImaxBus;
   lSub: ImaxSubscription;
   {$IFDEF max_FPC}
-  lValues: TList<integer>;
+  lValues: specialize TList<integer>;
 
   procedure Handler(const aValue: integer);
   begin
@@ -1290,7 +1294,7 @@ begin
   lBus := maxBus;
   lBus.Clear;
   {$IFDEF max_FPC}
-  lValues := TList<integer>.Create;
+  lValues := specialize TList<integer>.Create;
   lSub := lBus.Subscribe<integer>(@Handler);
   {$ELSE}
   lValues := TList<integer>.Create;
