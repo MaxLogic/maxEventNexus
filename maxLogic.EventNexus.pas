@@ -1,4 +1,4 @@
-unit maxLogic.EventNexus;
+unit {$IFDEF max_FPC}maxLogic_EventNexus{$ELSE}maxLogic.EventNexus{$ENDIF};
 
 {$I fpc_delphimode.inc}
 
@@ -433,7 +433,7 @@ implementation
 uses
   MaxLogic.Utils,
   {$IFDEF max_FPC} SyncObjs, {$ENDIF}
-  maxLogic.EventNexus.Threading.RawThread
+  {$IFDEF max_FPC} maxLogic_EventNexus_Threading_RawThread {$ELSE} maxLogic.EventNexus.Threading.RawThread {$ENDIF}
   {$IFDEF DEBUG}{$IFDEF max_DELPHI}, System.IOUtils{$ENDIF}{$ENDIF}
   ;
 

@@ -20,6 +20,11 @@ uses
   SyncObjs,
   {$IFDEF max_DELPHI} System.IOUtils, {$ENDIF}
 
+  {$IFDEF max_FPC}
+  maxLogic_EventNexus_Threading_Adapter in '..\maxLogic.EventNexus.Threading.Adapter.pas',
+  maxLogic_EventNexus_Threading_RawThread in '..\maxLogic.EventNexus.Threading.RawThread.pas',
+  maxLogic_EventNexus in '..\maxLogic.EventNexus.pas',
+  {$ELSE}
   maxLogic.EventNexus.Threading.Adapter in '..\maxLogic.EventNexus.Threading.Adapter.pas',
   maxLogic.EventNexus.Threading.RawThread in '..\maxLogic.EventNexus.Threading.RawThread.pas',
   {$IFDEF max_DELPHI}
@@ -27,6 +32,7 @@ uses
   maxLogic.EventNexus.Threading.TTask in '..\maxLogic.EventNexus.Threading.TTask.pas',
   {$ENDIF }
   maxLogic.EventNexus in '..\maxLogic.EventNexus.pas',
+  {$ENDIF}
   MaxEventNexus.Main.Tests in 'src\MaxEventNexus.Main.Tests.pas';
 
 var
