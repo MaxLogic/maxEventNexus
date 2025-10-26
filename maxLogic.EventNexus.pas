@@ -17,7 +17,7 @@ uses
   {$ELSE}
   Generics.Collections, TypInfo, maxLogic.fpc.compatibility, maxLogic.fpc.diagnostics,
   {$ENDIF}
-  maxLogic.EventNexus.Threading.Adapter;
+  {$IFDEF max_FPC} maxLogic_EventNexus_Threading_Adapter {$ELSE} maxLogic.EventNexus.Threading.Adapter {$ENDIF};
 
 const
   max_BUS_VERSION = '0.1.0';
