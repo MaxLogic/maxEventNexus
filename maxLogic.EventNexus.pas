@@ -450,9 +450,13 @@ implementation
 
 uses
   maxLogic.Utils,
-  {$IFDEF max_FPC} SyncObjs, {$ENDIF}
-  {$IFDEF max_FPC} maxLogic_EventNexus_Threading_RawThread {$ELSE} maxLogic.EventNexus.Threading.RawThread {$ENDIF}
-  {$IFDEF DEBUG}{$IFDEF max_DELPHI} , System.IOUtils{$ENDIF}{$ENDIF}
+  {$IFDEF max_FPC}
+  SyncObjs,
+  maxLogic_EventNexus_Threading_RawThread
+  {$ELSE}
+  maxLogic.EventNexus.Threading.RawThread
+  {$IFDEF DEBUG}, System.IOUtils{$ENDIF}
+  {$ENDIF}
   ;
 
 resourcestring
