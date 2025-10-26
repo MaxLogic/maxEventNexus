@@ -17,7 +17,7 @@ uses
 type
   TmaxRawThreadScheduler = class(TInterfacedObject, IEventNexusScheduler)
   public
-    procedure RunAsync(const aProc: TmaxProc);
+    procedure RunAsync(aProc: TmaxProc);
     procedure RunOnMain(const aProc: TmaxProc);
     procedure RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);
     function IsMainThread: Boolean;
@@ -108,7 +108,7 @@ end;
 
 { TmaxRawThreadScheduler }
 
-procedure TmaxRawThreadScheduler.RunAsync(const aProc: TmaxProc);
+procedure TmaxRawThreadScheduler.RunAsync(aProc: TmaxProc);
 begin
   TmaxProcThread.Start(aProc);
 end;
