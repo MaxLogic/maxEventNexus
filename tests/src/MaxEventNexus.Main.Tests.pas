@@ -433,7 +433,12 @@ var
 
   procedure Handler(const aEvt: TKeyed);
   begin
-    lValues.Add(aEvt);
+    lLock.Enter;
+    try
+      lValues.Add(aEvt);
+    finally
+      lLock.Leave;
+    end;
   end;
   {$ELSE}
   lValues: TList<TKeyed>;
