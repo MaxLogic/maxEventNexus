@@ -1602,17 +1602,6 @@ end;
  // Stable-capture invoke helpers (avoid capturing loop locals by reference)
 
 {$IFDEF max_DELPHI}
-type
-  TInvokeBox<T> = class
-  public
-    Topic: TTypedTopic<T>;
-    Handler: TmaxProcOf<T>;
-    Value: T;
-    Token: TmaxSubscriptionToken;
-    State: ImaxSubscriptionState;
-    class function MakeProc(const aBox: TInvokeBox<T>): TmaxProc; static;
-  end;
-
 class function TInvokeBox<T>.MakeProc(const aBox: TInvokeBox<T>): TmaxProc;
 begin
   Result :=
