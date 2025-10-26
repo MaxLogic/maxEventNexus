@@ -328,7 +328,6 @@ var
   lValues: TList<TKeyed>;
   {$ENDIF}
   lLock: TCriticalSection;
-  lLock: TCriticalSection;
 
   function Make(const k: string; v: integer): TKeyed;
   begin
@@ -423,6 +422,7 @@ var
   {$ELSE}
   lValues: TList<TKeyed>;
   {$ENDIF}
+  lLock: TCriticalSection;
 
   function Make(const k: string; v: integer): TKeyed;
   begin
