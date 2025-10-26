@@ -896,7 +896,7 @@ end;
 function TmaxTopicBase.Enqueue(const aProc: TmaxProc): boolean;
 var
   lProc: TmaxProc;
-  lTimer: TStopWatch;
+  lTimer: TStopwatch;
   lDeadlineMs: Cardinal;
   lRemaining: integer;
   lElapsedMs: Int64;
@@ -957,7 +957,7 @@ begin
             else
             begin
               lDeadlineMs := Cardinal(fPolicy.DeadlineUs div 1000);
-              lTimer := TStopWatch.StartNew;
+              lTimer := TStopwatch.StartNew;
               while fQueue.Count >= fPolicy.MaxDepth do
               begin
                 lElapsedMs := lTimer.ElapsedMilliseconds;
