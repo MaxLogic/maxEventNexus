@@ -433,7 +433,9 @@ implementation
 uses
   MaxLogic.Utils,
   {$IFDEF max_FPC} SyncObjs, {$ENDIF}
-  maxLogic.EventNexus.Threading.RawThread;
+  maxLogic.EventNexus.Threading.RawThread
+  {$IFDEF DEBUG}{$IFDEF max_DELPHI}, System.IOUtils{$ENDIF}{$ENDIF}
+  ;
 
 resourcestring
   SAggregateOccurred = '%d exception(s) occurred';
@@ -445,6 +447,44 @@ var
   gBus: ImaxBus = nil;
   gAsyncScheduler: IEventNexusScheduler = nil;
   gAsyncFallback: IEventNexusScheduler = nil;
+
+{$IFDEF DEBUG}
+var
+  gDebugLogPath: string = '';
+
+procedure DebugEnsureLog;
+begin
+  {$IFDEF max_DELPHI}
+  if gDebugLogPath = '' then
+  begin
+    gDebugLogPath := TPath.Combine(ExtractFilePath(ParamStr(0)), 'logs\bus.log');
+    if not TDirectory.Exists(TPath.GetDirectoryName(gDebugLogPath)) then
+      TDirectory.CreateDirectory(TPath.GetDirectoryName(gDebugLogPath));
+  end;
+  {$ENDIF}
+end;
+
+procedure DebugLog(const aMsg: string);
+{$IFDEF max_DELPHI}
+var
+  f: TextFile;
+{$ENDIF}
+begin
+  {$IFDEF max_DELPHI}
+  DebugEnsureLog;
+  AssignFile(f, gDebugLogPath);
+  {$I-}
+  Append(f);
+  if IOResult <> 0 then Rewrite(f);
+  {$I+}
+  try
+    Writeln(f, FormatDateTime('hh:nn:ss.zzz', Now), ' [T', TThread.CurrentThread.ThreadID, '] ', aMsg);
+  finally
+    CloseFile(f);
+  end;
+  {$ENDIF}
+end;
+{$ENDIF}
 
   {$IFDEF max_FPC}
 type
@@ -900,22 +940,26 @@ begin
   Result := True;
   TMonitor.Enter(self);
   try
+    {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] pre: policy=%d Q=%d Active=%d Max=%d',
+      [UnicodeString(fMetricName), Ord(fPolicy.Overflow), fQueue.Count, Ord(fProcessing), fPolicy.MaxDepth])); {$ENDIF}
     // Capacity check
     if (fPolicy.MaxDepth > 0) then
     begin
       case fPolicy.Overflow of
         DropNewest:
           begin
-            if fQueue.Count >= fPolicy.MaxDepth then
+            if (fQueue.Count + Ord(fProcessing)) >= fPolicy.MaxDepth then
             begin
               AddDropped;
+              {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] DropNewest: rejected newest (Q=%d Active=%d)',
+                [UnicodeString(fMetricName), fQueue.Count, Ord(fProcessing)])); {$ENDIF}
               exit(False);
             end;
           end;
         DropOldest:
           begin
             lDroppedActive := False;
-            if fQueue.Count >= fPolicy.MaxDepth then
+            if (fQueue.Count + Ord(fProcessing)) >= fPolicy.MaxDepth then
             begin
               if fProcessing then
               begin
@@ -923,12 +967,16 @@ begin
                 if fDropActive = 0 then
                 begin
                   RequestDropActive; // AddDropped happens in ConsumeDropActive
+                  {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] DropOldest: requested drop ACTIVE (Q=%d)',
+                    [UnicodeString(fMetricName), fQueue.Count])); {$ENDIF}
                   lDroppedActive := True;
                 end
                 else if fQueue.Count > 0 then
                 begin
                   // Already scheduled to drop active; free capacity by dropping the oldest queued item
                   fQueue.Dequeue;
+                  {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] DropOldest: removed OLDEST QUEUED (Q now=%d)',
+                    [UnicodeString(fMetricName), fQueue.Count])); {$ENDIF}
                   if fStats.CurrentQueueDepth > 0 then
                     Dec(fStats.CurrentQueueDepth);
                   AddDropped;
@@ -938,6 +986,8 @@ begin
               begin
                 // Drop the oldest queued item to make room for the new one
                 fQueue.Dequeue;
+                {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] DropOldest: removed OLDEST QUEUED (Q now=%d)',
+                  [UnicodeString(fMetricName), fQueue.Count])); {$ENDIF}
                 if fStats.CurrentQueueDepth > 0 then
                   Dec(fStats.CurrentQueueDepth);
                 AddDropped;
@@ -955,20 +1005,26 @@ begin
           begin
             if fPolicy.DeadlineUs <= 0 then
             begin
-              while (fQueue.Count + Ord(fProcessing)) >= fPolicy.MaxDepth do
-                TMonitor.Wait(self, Cardinal(-1));
+              // per spec: 0 = immediate drop
+              AddDropped;
+              {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] Deadline: DeadlineUs=0 → drop at enqueue (Q=%d Active=%d)',
+                [UnicodeString(fMetricName), fQueue.Count, Ord(fProcessing)])); {$ENDIF}
+              exit(False);
             end
             else
             begin
+              // allow one queued item while active is in-flight: check only queued count
               lDeadlineMs := Cardinal(fPolicy.DeadlineUs div 1000);
               lTimer := TStopWatch.StartNew;
-              while (fQueue.Count + Ord(fProcessing)) >= fPolicy.MaxDepth do
+              while (fQueue.Count >= fPolicy.MaxDepth) do
               begin
                 lElapsedMs := lTimer.ElapsedMilliseconds;
                 lRemaining := integer(Int64(lDeadlineMs) - lElapsedMs);
                 if lRemaining <= 0 then
                 begin
                   AddDropped;
+                  {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] Deadline: timeout → drop at enqueue (Q=%d Active=%d)',
+                    [UnicodeString(fMetricName), fQueue.Count, Ord(fProcessing)])); {$ENDIF}
                   exit(False);
                 end;
                 TMonitor.Wait(self, Cardinal(lRemaining));
@@ -998,6 +1054,8 @@ begin
     Inc(fStats.CurrentQueueDepth);
     if fStats.CurrentQueueDepth > fStats.MaxQueueDepth then
       fStats.MaxQueueDepth := fStats.CurrentQueueDepth;
+    {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] queued; Q=%d Active=%d CurrDepth=%d',
+      [UnicodeString(fMetricName), fQueue.Count, Ord(fProcessing), fStats.CurrentQueueDepth])); {$ENDIF}
     CheckHighWater;
     TouchMetrics;
     if fProcessing then
@@ -1687,9 +1745,12 @@ end;
 
 procedure TmaxBus.Dispatch(const aTopic: TmaxString; aDelivery: TmaxDelivery; const aHandler: TmaxProc; const aOnException: TmaxProc);
 begin
+  {$IFDEF DEBUG} DebugLog(Format('Dispatch[%s] mode=%d from TID=%d',
+    [UnicodeString(aTopic), Ord(aDelivery), TThread.CurrentThread.ThreadID])); {$ENDIF}
   case aDelivery of
     Posting:
       try
+        {$IFDEF DEBUG} DebugLog(' → Posting inline'); {$ENDIF}
         aHandler();
       except
         on e: Exception do
@@ -1703,6 +1764,7 @@ begin
       if (TThread.CurrentThread.ThreadID = fMainThreadId) or fAsync.IsMainThread then
       begin
         try
+          {$IFDEF DEBUG} DebugLog(' → Main inline'); {$ENDIF}
           aHandler();
         except
           on e: Exception do
@@ -1717,6 +1779,7 @@ begin
       else
       begin
         // No reliable message pump in console tests: degrade to Async to guarantee progress
+        {$IFDEF DEBUG} DebugLog(' → Main degraded to Async'); {$ENDIF}
         fAsync.RunAsync(
           procedure
           begin
@@ -1734,6 +1797,7 @@ begin
           end);
       end;
     Async:
+      {$IFDEF DEBUG} DebugLog(' → Async schedule'); {$ENDIF}
       fAsync.RunAsync(
         procedure
         begin
@@ -1751,6 +1815,8 @@ begin
         end);
     Background:
       if (TThread.CurrentThread.ThreadID = fMainThreadId) or fAsync.IsMainThread then
+      begin
+        {$IFDEF DEBUG} DebugLog(' → Background schedule'); {$ENDIF}
         fAsync.RunAsync(
           procedure
           begin
@@ -1766,8 +1832,10 @@ begin
               end;
             end;
           end)
+      end
       else
       try
+        {$IFDEF DEBUG} DebugLog(' → Background inline (non-main)'); {$ENDIF}
         aHandler();
       except
         on e: Exception do

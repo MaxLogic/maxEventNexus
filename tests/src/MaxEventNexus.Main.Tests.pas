@@ -155,7 +155,35 @@ type
 implementation
 
 uses
-  maxLogic.Utils;
+  maxLogic.Utils
+  {$IFDEF max_DELPHI} , System.IOUtils {$ENDIF}
+  ;
+
+{$IFDEF max_DELPHI}
+function LogsDir: string;
+begin
+  Result := TPath.Combine(ExtractFilePath(ParamStr(0)), 'logs');
+end;
+
+procedure LogLine(const aTestName, aLine: string);
+var
+  fn: string;
+  f: TextFile;
+  line: string;
+begin
+  if not TDirectory.Exists(LogsDir) then
+    TDirectory.CreateDirectory(LogsDir);
+  fn := TPath.Combine(LogsDir, aTestName + '.log');
+  line := FormatDateTime('hh:nn:ss.zzz', Now) + ' [T' + IntToStr(TThread.CurrentThread.ThreadID) + '] ' + aLine + sLineBreak;
+  AssignFile(f, fn);
+  {$I-}
+  Append(f);
+  if IOResult <> 0 then Rewrite(f);
+  {$I+}
+  Write(f, line);
+  CloseFile(f);
+end;
+{$ENDIF}
 
 { TTestAggregateException }
 
@@ -229,6 +257,7 @@ begin
   lBus := maxBus;
   lBus.Clear;
   lMainId := TThread.CurrentThread.ThreadID;
+  {$IFDEF max_DELPHI} LogLine('TTestAsyncDelivery.AsyncAndBackgroundRunOffPostingThread', 'Start; MainTID=' + IntToStr(lMainId)); {$ENDIF}
   lEvAsync := TEvent.Create(nil, True, False, '');
   lEvBg := TEvent.Create(nil, True, False, '');
   try
@@ -251,9 +280,18 @@ begin
       end,
       Background);
     {$ENDIF}
+    {$IFDEF max_DELPHI} LogLine('TTestAsyncDelivery.AsyncAndBackgroundRunOffPostingThread', 'Subscribed Async and Background'); {$ENDIF}
     TmaxBus(maxAsBus(lBus)).Post<integer>(1);
+    {$IFDEF max_DELPHI} LogLine('TTestAsyncDelivery.AsyncAndBackgroundRunOffPostingThread', 'Posted integer=1'); {$ENDIF}
     Check(lEvAsync.WaitFor(1000) = wrSignaled);
     Check(lEvBg.WaitFor(1000) = wrSignaled);
+    {$IFDEF max_DELPHI}
+    LogLine('TTestAsyncDelivery.AsyncAndBackgroundRunOffPostingThread',
+      'Events signaled? Async=' + BoolToStr(lEvAsync.WaitFor(0)=wrSignaled, True) +
+      ', Bg=' + BoolToStr(lEvBg.WaitFor(0)=wrSignaled, True));
+    LogLine('TTestAsyncDelivery.AsyncAndBackgroundRunOffPostingThread',
+      Format('TIDs Main=%d, Async=%d, Bg=%d', [lMainId, lAsyncId, lBgId]));
+    {$ENDIF}
     Check(lMainId <> lAsyncId);
     Check(lMainId <> lBgId);
   finally
@@ -670,12 +708,14 @@ begin
   {$ELSE}
   ok := TmaxBus(maxAsBus(lBus)).TryPost<integer>(2);
   {$ENDIF}
+  {$IFDEF max_DELPHI} LogLine('TTestQueuePolicy.DropOldestRemoves', 'TryPost(2)=' + BoolToStr(ok, True)); {$ENDIF}
   Check(ok);
   {$IFDEF max_FPC}
   ok := lBus.TryPost<integer>(3);
   {$ELSE}
   ok := TmaxBus(maxAsBus(lBus)).TryPost<integer>(3);
   {$ENDIF}
+  {$IFDEF max_DELPHI} LogLine('TTestQueuePolicy.DropOldestRemoves', 'TryPost(3)=' + BoolToStr(ok, True)); {$ENDIF}
   Check(not ok);
   t.WaitFor;
   t.Free;
@@ -794,6 +834,7 @@ begin
         Result := 'odd';
     end);
   {$ENDIF}
+  {$IFDEF max_DELPHI} LogLine('TTestQueuePolicy.DropOldestRemoves', 'Policy MaxDepth=1, Overflow=DropOldest'); {$ENDIF}
   {$IFDEF max_FPC}
   lBus.PostNamedOf<integer>(lName, 10);
   {$ELSE}
@@ -811,6 +852,7 @@ begin
       Inc(lCount);
     end);
   {$ENDIF}
+  {$IFDEF max_DELPHI} LogLine('TTestQueuePolicy.DeadlineDrops', 'Policy MaxDepth=1, Overflow=Deadline, DeadlineUs=50000'); {$ENDIF}
   {$IFDEF max_FPC}
   lBus.PostNamedOf<integer>(lName, 1);
   lBus.PostNamedOf<integer>(lName, 3);
@@ -872,12 +914,14 @@ begin
   {$ELSE}
   ok := TmaxBus(maxAsBus(lBus)).TryPostNamedOf<integer>(lName, 2);
   {$ENDIF}
+  {$IFDEF max_DELPHI} LogLine('TTestQueuePolicy.DeadlineDrops', 'TryPost(2)=' + BoolToStr(ok, True)); {$ENDIF}
   Check(ok);
   {$IFDEF max_FPC}
   ok := lBus.TryPostNamedOf<integer>(lName, 3);
   {$ELSE}
   ok := TmaxBus(maxAsBus(lBus)).TryPostNamedOf<integer>(lName, 3);
   {$ENDIF}
+  {$IFDEF max_DELPHI} LogLine('TTestQueuePolicy.DeadlineDrops', 'TryPost(3)=' + BoolToStr(ok, True)); {$ENDIF}
   Check(not ok);
   t.WaitFor;
   t.Free;
@@ -950,6 +994,11 @@ begin
   {$ENDIF}
   Check(not ok);
   t.WaitFor;
+  {$IFDEF max_DELPHI}
+  LogLine('TTestQueuePolicy.DropOldestRemoves', 'Delivered count=' + IntToStr(lCount));
+  if lCount > 0 then LogLine('TTestQueuePolicy.DropOldestRemoves', 'Delivered[0]=' + IntToStr(lDelivered[0]));
+  if lCount > 1 then LogLine('TTestQueuePolicy.DropOldestRemoves', 'Delivered[1]=' + IntToStr(lDelivered[1]));
+  {$ENDIF}
   CheckEquals(2, lCount);
   CheckEquals(1, lDelivered[0]);
   CheckEquals(2, lDelivered[1]);
@@ -1148,6 +1197,10 @@ begin
   Check(not ok);
   t.WaitFor;
   Sleep(250);
+  {$IFDEF max_DELPHI}
+  LogLine('TTestQueuePolicy.DeadlineDrops', 'Delivered count=' + IntToStr(lCount));
+  if lCount > 0 then LogLine('TTestQueuePolicy.DeadlineDrops', 'Delivered[0]=' + IntToStr(lDelivered[0]));
+  {$ENDIF}
   CheckEquals(1, lCount);
   CheckEquals(1, lDelivered[0]);
   t.Free;
