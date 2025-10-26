@@ -931,7 +931,7 @@ var
   lDeadlineMs: Cardinal;
   lRemaining: integer;
   lElapsedMs: Int64;
-  lEnqueueMs: UInt64;
+  lEnqueueTimer: TMaxStopwatch;
   lWrapped: TmaxProc;
 begin
   Result := True;
@@ -1007,13 +1007,13 @@ begin
     end;
 
     // Wrap with deadline staleness guard
-    lEnqueueMs := GetTickCount64;
+    lEnqueueTimer := TMaxStopwatch.StartNew;
     lWrapped :=
       procedure
       begin
         if (fPolicy.Overflow = Deadline) and (fPolicy.DeadlineUs > 0) then
         begin
-          if (GetTickCount64 - lEnqueueMs) >= Cardinal(fPolicy.DeadlineUs div 1000) then
+          if lEnqueueTimer.ElapsedMilliseconds >= Cardinal(fPolicy.DeadlineUs div 1000) then
           begin
             AddDropped;
             Exit;
