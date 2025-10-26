@@ -20,7 +20,7 @@ uses
   {$IFDEF max_FPC}
   maxLogic_EventNexus_Threading_Adapter, maxLogic_EventNexus_Threading_RawThread, maxLogic_EventNexus;
   {$ELSE}
-  maxLogic.EventNexus.Threading.Adapter, maxLogic.EventNexus.Threading.RawThread,
+  maxLogic.EventNexus.Threading.Adapter,
   {$IFDEF max_DELPHI} maxLogic.EventNexus.Threading.MaxAsync, maxLogic.EventNexus.Threading.TTask, {$ENDIF}
   maxLogic.EventNexus;
   {$ENDIF}
@@ -159,7 +159,10 @@ type
 implementation
 
 uses
-  {$IFDEF max_DELPHI} System.IOUtils, {$ENDIF} maxLogic.Utils;
+  {$IFDEF max_DELPHI} System.IOUtils, {$ENDIF}
+  maxLogic.Utils
+  {$IFDEF max_DELPHI}, maxLogic.EventNexus.Threading.RawThread{$ENDIF}
+  ;
 
 {$IFDEF max_DELPHI}
 {$IFDEF DEBUG}
