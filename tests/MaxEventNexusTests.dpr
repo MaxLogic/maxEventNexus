@@ -18,6 +18,7 @@ uses
   Generics.Collections,
   {$ENDIF}
   SyncObjs,
+  {$IFDEF max_DELPHI} System.IOUtils, {$ENDIF}
 
   maxLogic.EventNexus.Threading.Adapter in '..\maxLogic.EventNexus.Threading.Adapter.pas',
   maxLogic.EventNexus.Threading.RawThread in '..\maxLogic.EventNexus.Threading.RawThread.pas',
@@ -30,7 +31,16 @@ uses
 
 var
   lTests: TSynTests;
+  {$IFDEF max_DELPHI}
+  L: string;
+  {$ENDIF}
 begin
+  {$IFDEF max_DELPHI}
+  L := TPath.Combine(ExtractFilePath(ParamStr(0)), 'logs');
+  if TDirectory.Exists(L) then
+    TDirectory.Delete(L, True);
+  TDirectory.CreateDirectory(L);
+  {$ENDIF}
   lTests := TSynTests.Create('MaxEventNexus');
   try
     lTests.AddCase(TTestAggregateException);
