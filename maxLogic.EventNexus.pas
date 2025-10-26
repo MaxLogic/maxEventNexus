@@ -1656,9 +1656,10 @@ type
     Value: T;
     Token: TmaxSubscriptionToken;
     State: ImaxSubscriptionState;
+    class function MakeProc(const aBox: TInvokeBox<T>): TmaxProc; static;
   end;
 
-function MakeTypedHandlerProc<T>(const aBox: TInvokeBox<T>): TmaxProc;
+class function TInvokeBox<T>.MakeProc(const aBox: TInvokeBox<T>): TmaxProc;
 begin
   Result :=
     procedure
@@ -1813,7 +1814,11 @@ begin
             lBox.Token := lToken;
             lBox.State := lState;
             try
-              Dispatch(aTopicName, lMode, MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(aTopic));
+              {$IFDEF max_DELPHI}
+                Dispatch(aTopicName, lMode, TInvokeBox<t>.MakeProc(lBox), MakeOnExceptionProc(aTopic));
+              {$ELSE}
+                Dispatch(aTopicName, lMode, MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(aTopic));
+              {$ENDIF}
             except
               on e: Exception do
               begin
@@ -2242,7 +2247,11 @@ begin
         lBox.State := lState;
 
         try
-          Dispatch(lMetric, lMode, MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(lTopic));
+          {$IFDEF max_DELPHI}
+            Dispatch(lMetric, lMode, TInvokeBox<t>.MakeProc(lBox), MakeOnExceptionProc(lTopic));
+          {$ELSE}
+            Dispatch(lMetric, lMode, MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(lTopic));
+          {$ENDIF}
         except
           on e: Exception do
           begin
@@ -2359,7 +2368,11 @@ begin
         lBox.State := lState;
 
         try
-          Dispatch(lMetric, lMode, MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(lTopic));
+          {$IFDEF max_DELPHI}
+            Dispatch(lMetric, lMode, TInvokeBox<t>.MakeProc(lBox), MakeOnExceptionProc(lTopic));
+          {$ELSE}
+            Dispatch(lMetric, lMode, MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(lTopic));
+          {$ENDIF}
         except
           on e: Exception do
           begin
@@ -2935,7 +2948,11 @@ begin
         lBox.State := lState;
 
         try
-          Dispatch(lMetric, lMode, MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(lTopic));
+          {$IFDEF max_DELPHI}
+            Dispatch(lMetric, lMode, TInvokeBox<t>.MakeProc(lBox), MakeOnExceptionProc(lTopic));
+          {$ELSE}
+            Dispatch(lMetric, lMode, MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(lTopic));
+          {$ENDIF}
         except
           on e: Exception do
           begin
@@ -3066,7 +3083,11 @@ begin
         lBox.State := lState;
 
         try
-          Dispatch(lMetric, lMode, MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(lTopic));
+          {$IFDEF max_DELPHI}
+            Dispatch(lMetric, lMode, TInvokeBox<t>.MakeProc(lBox), MakeOnExceptionProc(lTopic));
+          {$ELSE}
+            Dispatch(lMetric, lMode, MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(lTopic));
+          {$ENDIF}
         except
           on e: Exception do
           begin
@@ -3342,7 +3363,11 @@ begin
         lBox.State := lState;
 
         try
-          Dispatch(lMetric, lMode, MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(lTopic));
+          {$IFDEF max_DELPHI}
+            Dispatch(lMetric, lMode, TInvokeBox<t>.MakeProc(lBox), MakeOnExceptionProc(lTopic));
+          {$ELSE}
+            Dispatch(lMetric, lMode, MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(lTopic));
+          {$ENDIF}
         except
           on e: Exception do
           begin
