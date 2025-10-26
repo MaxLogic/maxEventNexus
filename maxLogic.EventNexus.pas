@@ -1843,8 +1843,6 @@ begin
         Dispatch(lMetricName, aMode,
           procedure
           begin
-            if lTopic.ConsumeDropActive then
-              Exit;
             try
               try
                 aHandler(lVal);
@@ -1922,8 +1920,6 @@ begin
         Dispatch(lMetricName, aMode,
           procedure
           begin
-            if lTopic.ConsumeDropActive then
-              Exit;
             try
               try
                 aHandler(lVal);
@@ -2040,8 +2036,6 @@ begin
           Dispatch(lMetric, lMode,
             procedure
             begin
-              if lTopic.ConsumeDropActive then
-                Exit;
               try
                 try
                   lHandler(lVal);
@@ -2173,8 +2167,6 @@ begin
           Dispatch(lMetric, lMode,
             procedure
             begin
-              if lTopic.ConsumeDropActive then
-                Exit;
               try
                 try
                   lHandler(lVal);
@@ -2253,8 +2245,6 @@ begin
         Dispatch(lMetric, aMode,
           procedure
           begin
-            if lTopic.ConsumeDropActive then
-              Exit;
             try
               try
                 aHandler();
@@ -2349,8 +2339,6 @@ begin
           Dispatch(lMetric, lMode,
             procedure
             begin
-              if lTopic.ConsumeDropActive then
-                Exit;
               try
                 try
                   lHandler();
@@ -2435,8 +2423,6 @@ begin
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
     begin
-      if lTopic.ConsumeDropActive then
-        Exit;
       lErrs := nil;
 
       for i := 0 to High(lSubs) do
@@ -2461,8 +2447,6 @@ begin
           Dispatch(lMetric, lMode,
             procedure
             begin
-              if lTopic.ConsumeDropActive then
-                Exit;
               try
                 try
                   lHandler();
@@ -2556,8 +2540,6 @@ begin
         Dispatch(lMetric, aMode,
           procedure
           begin
-            if lTopic.ConsumeDropActive then
-              Exit;
             try
               try
                 aHandler(lVal);
@@ -2640,16 +2622,12 @@ begin
       var
         lVal: t;
       begin
-        if lTopic.ConsumeDropActive then
-          Exit;
         lVal := lLast;
         if (lState = nil) or not lState.TryEnter then
           exit;
         Dispatch(lMetric, aMode,
           procedure
           begin
-            if lTopic.ConsumeDropActive then
-              Exit;
             try
               try
                 aHandler(lVal);
@@ -2781,8 +2759,6 @@ begin
           Dispatch(lMetric, lMode,
             procedure
             begin
-              if lTopic.ConsumeDropActive then
-                Exit;
               try
                 try
                   lHandler(lVal);
@@ -3006,8 +2982,6 @@ begin
       var
         lVal: t;
       begin
-        if lTopic.ConsumeDropActive then
-          Exit;
         lVal := lLast;
         if (lState = nil) or not lState.TryEnter then
           exit;
@@ -3085,8 +3059,6 @@ begin
       var
         lVal: t;
       begin
-        if lTopic.ConsumeDropActive then
-          Exit;
         lVal := lLast;
         if (lState = nil) or not lState.TryEnter then
           exit;
