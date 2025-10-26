@@ -15,7 +15,7 @@ uses
 type
   TmaxTTaskScheduler = class(TInterfacedObject, IEventNexusScheduler)
   public
-    procedure RunAsync(const aProc: TmaxProc);
+    procedure RunAsync(aProc: TmaxProc);
     procedure RunOnMain(const aProc: TmaxProc);
     procedure RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);
     function IsMainThread: Boolean;
@@ -25,7 +25,7 @@ function CreateTTaskScheduler: IEventNexusScheduler;
 
 implementation
 
-procedure TmaxTTaskScheduler.RunAsync(const aProc: TmaxProc);
+procedure TmaxTTaskScheduler.RunAsync(aProc: TmaxProc);
 begin
   if not ProcAssigned(aProc) then
     Exit;

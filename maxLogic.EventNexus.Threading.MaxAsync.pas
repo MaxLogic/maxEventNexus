@@ -26,7 +26,7 @@ type
     class procedure Untrack(const aAsync: iAsync); static;
     procedure ScheduleAsync(const aProc: TmaxProc; aDelayUs: Integer);
   public
-    procedure RunAsync(const aProc: TmaxProc);
+    procedure RunAsync(aProc: TmaxProc);
     procedure RunOnMain(const aProc: TmaxProc);
     procedure RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);
     function IsMainThread: Boolean;
@@ -174,7 +174,7 @@ begin
   Track(handle);
 end;
 
-procedure TmaxAsyncScheduler.RunAsync(const aProc: TmaxProc);
+procedure TmaxAsyncScheduler.RunAsync(aProc: TmaxProc);
 begin
   ScheduleAsync(aProc, 0);
 end;
