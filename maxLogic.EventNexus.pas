@@ -1663,7 +1663,7 @@ type
     State: ImaxSubscriptionState;
   end;
 
-function MakeTypedHandlerProc<T>(const aBox: specialize TInvokeBox<T>): TmaxProc;
+generic function MakeTypedHandlerProc<T>(const aBox: specialize TInvokeBox<T>): TmaxProc;
 begin
   Result :=
     procedure
