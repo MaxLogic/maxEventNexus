@@ -469,6 +469,7 @@ var
 {$IFDEF DEBUG}
 var
   gDebugLogPath: string = '';
+  gDebugCs: TCriticalSection = nil;
 
 procedure DebugEnsureLog;
 begin
@@ -479,6 +480,8 @@ begin
     if not TDirectory.Exists(TPath.GetDirectoryName(gDebugLogPath)) then
       TDirectory.CreateDirectory(TPath.GetDirectoryName(gDebugLogPath));
   end;
+  if gDebugCs = nil then
+    gDebugCs := TCriticalSection.Create;
   {$ENDIF}
 end;
 
@@ -490,15 +493,20 @@ var
 begin
   {$IFDEF max_DELPHI}
   DebugEnsureLog;
-  AssignFile(f, gDebugLogPath);
-  {$I-}
-  Append(f);
-  if IOResult <> 0 then Rewrite(f);
-  {$I+}
+  gDebugCs.Enter;
   try
-    Writeln(f, FormatDateTime('hh:nn:ss.zzz', Now), ' [T', TThread.CurrentThread.ThreadID, '] ', aMsg);
+    AssignFile(f, gDebugLogPath);
+    {$I-}
+    Append(f);
+    if IOResult <> 0 then Rewrite(f);
+    {$I+}
+    try
+      Writeln(f, FormatDateTime('hh:nn:ss.zzz', Now), ' [T', TThread.CurrentThread.ThreadID, '] ', aMsg);
+    finally
+      CloseFile(f);
+    end;
   finally
-    CloseFile(f);
+    gDebugCs.Leave;
   end;
   {$ENDIF}
 end;
@@ -1586,6 +1594,167 @@ begin
   else
     Result := DefaultAsync;
 end;
+
+// Stable-capture invoke helpers (avoid capturing loop locals by reference)
+
+{$IFDEF max_FPC}
+type
+  generic TInvokeBox<T> = class
+  public
+    Topic: TTypedTopic<T>;
+    Handler: TmaxProcOf<T>;
+    Value: T;
+    Token: TmaxSubscriptionToken;
+    State: ImaxSubscriptionState;
+  end;
+
+function MakeTypedHandlerProc<T>(const aBox: specialize TInvokeBox<T>): TmaxProc;
+begin
+  Result :=
+    procedure
+    var
+      h: TmaxProcOf<T>;
+      v: T;
+      t: TTypedTopic<T>;
+      st: ImaxSubscriptionState;
+      tok: TmaxSubscriptionToken;
+    begin
+      h := aBox.Handler;
+      v := aBox.Value;
+      t := aBox.Topic;
+      st := aBox.State;
+      tok := aBox.Token;
+      try
+        try
+          h(v);
+          t.AddDelivered(1);
+        except
+          on e: Exception do
+          begin
+            if (e is EAccessViolation) or (e is EInvalidPointer) then
+            begin
+              t.RemoveByToken(tok);
+              t.AddException;
+              Exit;
+            end;
+            raise;
+          end;
+        end;
+      finally
+        if st <> nil then
+          st.Leave;
+        aBox.Free;
+      end;
+    end;
+end;
+{$ELSE}
+type
+  TInvokeBox<T> = class
+  public
+    Topic: TTypedTopic<T>;
+    Handler: TmaxProcOf<T>;
+    Value: T;
+    Token: TmaxSubscriptionToken;
+    State: ImaxSubscriptionState;
+  end;
+
+function MakeTypedHandlerProc<T>(const aBox: TInvokeBox<T>): TmaxProc;
+begin
+  Result :=
+    procedure
+    var
+      h: TmaxProcOf<T>;
+      v: T;
+      t: TTypedTopic<T>;
+      st: ImaxSubscriptionState;
+      tok: TmaxSubscriptionToken;
+    begin
+      h := aBox.Handler;
+      v := aBox.Value;
+      t := aBox.Topic;
+      st := aBox.State;
+      tok := aBox.Token;
+      try
+        try
+          h(v);
+          t.AddDelivered(1);
+        except
+          on e: Exception do
+          begin
+            if (e is EAccessViolation) or (e is EInvalidPointer) then
+            begin
+              t.RemoveByToken(tok);
+              t.AddException;
+              Exit;
+            end;
+            raise;
+          end;
+        end;
+      finally
+        if st <> nil then
+          st.Leave;
+        aBox.Free;
+      end;
+    end;
+end;
+{$ENDIF}
+
+type
+  TInvokeBoxNamed = class
+  public
+    Topic: TNamedTopic;
+    Handler: TmaxProc;
+    Token: TmaxSubscriptionToken;
+    State: ImaxSubscriptionState;
+  end;
+
+function MakeNamedHandlerProc(const aBox: TInvokeBoxNamed): TmaxProc;
+begin
+  Result :=
+    procedure
+    var
+      h: TmaxProc;
+      t: TNamedTopic;
+      st: ImaxSubscriptionState;
+      tok: TmaxSubscriptionToken;
+    begin
+      h := aBox.Handler;
+      t := aBox.Topic;
+      st := aBox.State;
+      tok := aBox.Token;
+      try
+        try
+          h();
+          t.AddDelivered(1);
+        except
+          on e: Exception do
+          begin
+            if (e is EAccessViolation) or (e is EInvalidPointer) then
+            begin
+              t.RemoveByToken(tok);
+              t.AddException;
+              Exit;
+            end;
+            raise;
+          end;
+        end;
+      finally
+        if st <> nil then
+          st.Leave;
+        aBox.Free;
+      end;
+    end;
+end;
+
+function MakeOnExceptionProc(const aTopic: TmaxTopicBase): TmaxProc;
+begin
+  Result :=
+    procedure
+    begin
+      aTopic.AddException;
+    end;
+end;
+
 { TmaxBus }
 
 function TmaxBus.ScheduleTypedCoalesce<t>(const aTopicName: TmaxString;
@@ -1615,6 +1784,7 @@ begin
           lState: ImaxSubscriptionState;
           lErrs: TmaxExceptionList;
           ex: EmaxAggregateException;
+          lBox: {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>;
         begin
           lErrs := nil;
 
@@ -1636,35 +1806,14 @@ begin
               continue;
             end;
 
+            lBox := {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
+            lBox.Topic := aTopic;
+            lBox.Handler := lHandler;
+            lBox.Value := lInner;
+            lBox.Token := lToken;
+            lBox.State := lState;
             try
-              Dispatch(aTopicName, lMode,
-                procedure
-                begin
-                  try
-                    try
-                      lHandler(lInner);
-                      aTopic.AddDelivered(1);
-                    except
-                      on e: Exception do
-                      begin
-                        if (e is EAccessViolation) or (e is EInvalidPointer) then
-                        begin
-                          aTopic.RemoveByToken(lToken);
-                          aTopic.AddException;
-                          exit;
-                        end;
-                        raise;
-                      end;
-                    end;
-                  finally
-                    if lState <> nil then
-                      lState.Leave;
-                  end;
-                end,
-                procedure
-                begin
-                  aTopic.AddException;
-                end);
+              Dispatch(aTopicName, lMode, MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(aTopic));
             except
               on e: Exception do
               begin
@@ -2083,35 +2232,15 @@ begin
           continue;
         end;
 
+        lBox := {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
+        lBox.Topic := lTopic;
+        lBox.Handler := lHandler;
+        lBox.Value := lVal;
+        lBox.Token := lToken;
+        lBox.State := lState;
+
         try
-          Dispatch(lMetric, lMode,
-            procedure
-            begin
-              try
-                try
-                  lHandler(lVal);
-                  lTopic.AddDelivered(1);
-                except
-                  on e: Exception do
-                  begin
-                    if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    begin
-                      lTopic.RemoveByToken(lToken);
-                      lTopic.AddException;
-                      exit;
-                    end;
-                    raise;
-                  end;
-                end;
-              finally
-                if lState <> nil then
-                  lState.Leave;
-              end;
-            end,
-            procedure
-            begin
-              lTopic.AddException;
-            end);
+          Dispatch(lMetric, lMode, MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(lTopic));
         except
           on e: Exception do
           begin
@@ -2218,35 +2347,15 @@ begin
           continue;
         end;
 
+        lBox := {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
+        lBox.Topic := lTopic;
+        lBox.Handler := lHandler;
+        lBox.Value := lVal;
+        lBox.Token := lToken;
+        lBox.State := lState;
+
         try
-          Dispatch(lMetric, lMode,
-            procedure
-            begin
-              try
-                try
-                  lHandler(lVal);
-                  lTopic.AddDelivered(1);
-                except
-                  on e: Exception do
-                  begin
-                    if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    begin
-                      lTopic.RemoveByToken(lToken);
-                      lTopic.AddException;
-                      exit;
-                    end;
-                    raise;
-                  end;
-                end;
-              finally
-                if lState <> nil then
-                  lState.Leave;
-              end;
-            end,
-            procedure
-            begin
-              lTopic.AddException;
-            end);
+          Dispatch(lMetric, lMode, MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(lTopic));
         except
           on e: Exception do
           begin
@@ -2402,35 +2511,14 @@ begin
           continue;
         end;
 
+        lBox := TInvokeBoxNamed.Create;
+        lBox.Topic := lTopic;
+        lBox.Handler := lHandler;
+        lBox.Token := lToken;
+        lBox.State := lState;
+
         try
-          Dispatch(lMetric, lMode,
-            procedure
-            begin
-              try
-                try
-                  lHandler();
-                  lTopic.AddDelivered(1);
-                except
-                  on e: Exception do
-                  begin
-                    if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    begin
-                      lTopic.RemoveByToken(lToken);
-                      lTopic.AddException;
-                      exit;
-                    end;
-                    raise;
-                  end;
-                end;
-              finally
-                if lState <> nil then
-                  lState.Leave;
-              end;
-            end,
-            procedure
-            begin
-              lTopic.AddException;
-            end);
+          Dispatch(lMetric, lMode, MakeNamedHandlerProc(lBox), MakeOnExceptionProc(lTopic));
         except
           on e: Exception do
           begin
@@ -2514,35 +2602,14 @@ begin
           continue;
         end;
 
+        lBox := TInvokeBoxNamed.Create;
+        lBox.Topic := lTopic;
+        lBox.Handler := lHandler;
+        lBox.Token := lToken;
+        lBox.State := lState;
+
         try
-          Dispatch(lMetric, lMode,
-            procedure
-            begin
-              try
-                try
-                  lHandler();
-                  lTopic.AddDelivered(1);
-                except
-                  on e: Exception do
-                  begin
-                    if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    begin
-                      lTopic.RemoveByToken(lToken);
-                      lTopic.AddException;
-                      exit;
-                    end;
-                    raise;
-                  end;
-                end;
-              finally
-                if lState <> nil then
-                  lState.Leave;
-              end;
-            end,
-            procedure
-            begin
-              lTopic.AddException;
-            end);
+          Dispatch(lMetric, lMode, MakeNamedHandlerProc(lBox), MakeOnExceptionProc(lTopic));
         except
           on e: Exception do
           begin
@@ -2850,35 +2917,15 @@ begin
           continue;
         end;
 
+        lBox := {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
+        lBox.Topic := lTopic;
+        lBox.Handler := lHandler;
+        lBox.Value := lVal;
+        lBox.Token := lToken;
+        lBox.State := lState;
+
         try
-          Dispatch(lMetric, lMode,
-            procedure
-            begin
-              try
-                try
-                  lHandler(lVal);
-                  lTopic.AddDelivered(1);
-                except
-                  on e: Exception do
-                  begin
-                    if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    begin
-                      lTopic.RemoveByToken(lToken);
-                      lTopic.AddException;
-                      exit;
-                    end;
-                    raise;
-                  end;
-                end;
-              finally
-                if lState <> nil then
-                  lState.Leave;
-              end;
-            end,
-            procedure
-            begin
-              lTopic.AddException;
-            end);
+          Dispatch(lMetric, lMode, MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(lTopic));
         except
           on e: Exception do
           begin
@@ -2999,35 +3046,15 @@ begin
           continue;
         end;
 
+        lBox := {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
+        lBox.Topic := lTopic;
+        lBox.Handler := lHandler;
+        lBox.Value := lVal;
+        lBox.Token := lToken;
+        lBox.State := lState;
+
         try
-          Dispatch(lMetric, lMode,
-            procedure
-            begin
-              try
-                try
-                  lHandler(lVal);
-                  lTopic.AddDelivered(1);
-                except
-                  on e: Exception do
-                  begin
-                    if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    begin
-                      lTopic.RemoveByToken(lToken);
-                      lTopic.AddException;
-                      exit;
-                    end;
-                    raise;
-                  end;
-                end;
-              finally
-                if lState <> nil then
-                  lState.Leave;
-              end;
-            end,
-            procedure
-            begin
-              lTopic.AddException;
-            end);
+          Dispatch(lMetric, lMode, MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(lTopic));
         except
           on e: Exception do
           begin
@@ -3293,35 +3320,15 @@ begin
           continue;
         end;
 
+        lBox := {$IFDEF max_FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
+        lBox.Topic := lTopic;
+        lBox.Handler := lHandler;
+        lBox.Value := lVal;
+        lBox.Token := lToken;
+        lBox.State := lState;
+
         try
-          Dispatch(lMetric, lMode,
-            procedure
-            begin
-              try
-                try
-                  lHandler(lVal);
-                  lTopic.AddDelivered(1);
-                except
-                  on e: Exception do
-                  begin
-                    if (e is EAccessViolation) or (e is EInvalidPointer) then
-                    begin
-                      lTopic.RemoveByToken(lToken);
-                      lTopic.AddException;
-                      exit;
-                    end;
-                    raise;
-                  end;
-                end;
-              finally
-                if lState <> nil then
-                  lState.Leave;
-              end;
-            end,
-            procedure
-            begin
-              lTopic.AddException;
-            end);
+          Dispatch(lMetric, lMode, MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(lTopic));
         except
           on e: Exception do
           begin
@@ -3892,6 +3899,11 @@ initialization
 finalization
   {$IFDEF max_FPC}
   FreeAndNil(gFpcWeakRegistry);
+  {$ENDIF}
+  {$IFDEF max_DELPHI}
+  {$IFDEF DEBUG}
+  FreeAndNil(gDebugCs);
+  {$ENDIF}
   {$ENDIF}
 
 end.
