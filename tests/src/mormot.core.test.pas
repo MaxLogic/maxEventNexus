@@ -11,8 +11,8 @@ unit mormot.core.Test;
 interface
 
 uses
-  SysUtils, Classes, generics.collections
-  {$IFDEF max_DELPHI}, System.Rtti{$ENDIF};
+  SysUtils, Classes,
+  {$IFDEF max_DELPHI} System.Generics.Collections, System.Rtti {$ELSE} Generics.Collections {$ENDIF};
 
 type
   TSynTestCase = class
