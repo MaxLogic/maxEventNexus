@@ -1,4 +1,4 @@
-﻿unit {$IFDEF FPC}maxLogic_EventNexus{$ELSE}maxLogic.EventNexus{$ENDIF};
+unit {$IFDEF FPC}maxLogic_EventNexus{$ELSE}maxLogic.EventNexus{$ENDIF};
 
 {$I fpc_delphimode.inc}
 
