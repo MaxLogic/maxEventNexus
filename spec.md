@@ -342,7 +342,18 @@ function TryPostNamed(const aName: string): Boolean; overload;
 function TryPostNamedOf<T>(const aName: string; const aEvent: T): Boolean; overload;
 ```
 
-Return `False` when dropped by policy.
+Return value semantics:
+- Returns True if the new event was successfully enqueued (regardless of whether an older event was dropped to make room).
+- Returns False if the new event was rejected/not enqueued (e.g., DropNewest when queue is full, or Deadline timeout).
+- Drops are always recorded in metrics (DroppedTotal) regardless of the return value.
+
+Examples:
+- DropOldest with full queue: drops oldest item, enqueues new item → returns True (new item enqueued), DroppedTotal increments.
+- DropNewest with full queue: rejects new item → returns False (new item rejected), DroppedTotal increments.
+- Deadline with timeout: rejects new item → returns False, DroppedTotal increments.
+- Block: waits for space, enqueues new item → returns True (no drops).
+
+To detect drops: Check ImaxBusMetrics.GetStatsFor<T>().DroppedTotal before and after the call.
 
 **Rationale:** Bounded policies keep memory predictable and let callers choose semantics per topic.
 

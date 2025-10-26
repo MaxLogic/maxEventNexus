@@ -967,7 +967,6 @@ begin
                 if fStats.CurrentQueueDepth > 0 then
                   Dec(fStats.CurrentQueueDepth);
                 AddDropped;
-                Result := False;
               end;
             end;
           end;
