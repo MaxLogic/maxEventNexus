@@ -159,34 +159,36 @@ type
 implementation
 
 uses
-  maxLogic.Utils
-  {$IFDEF max_DELPHI} , System.IOUtils, System.Generics.Collections {$ELSE} , Generics.Collections {$ENDIF}
-  ;
+  ioUtils, maxLogic.Utils;
 
 {$IFDEF max_DELPHI}
+{$IFDEF DEBUG}
 function LogsDir: string;
 begin
   Result := TPath.Combine(ExtractFilePath(ParamStr(0)), 'logs');
 end;
 
+var
+  glLogCs: TCriticalSection;
+
 procedure LogLine(const aTestName, aLine: string);
 var
-  fn: string;
-  f: TextFile;
-  line: string;
+  lLine, fn: string;
+  lBytes: TBytes;
 begin
-  if not TDirectory.Exists(LogsDir) then
-    TDirectory.CreateDirectory(LogsDir);
-  fn := TPath.Combine(LogsDir, aTestName + '.log');
-  line := FormatDateTime('hh:nn:ss.zzz', Now) + ' [T' + IntToStr(TThread.CurrentThread.ThreadID) + '] ' + aLine + sLineBreak;
-  AssignFile(f, fn);
-  {$I-}
-  Append(f);
-  if IOResult <> 0 then Rewrite(f);
-  {$I+}
-  Write(f, line);
-  CloseFile(f);
+  glLogCs.Enter;
+  try
+    if not TDirectory.Exists(LogsDir) then
+      TDirectory.CreateDirectory(LogsDir);
+    fn := TPath.Combine(LogsDir, aTestName + '.log');
+    lLine := FormatDateTime('hh:nn:ss.zzz', Now) + ' [T' + IntToStr(TThread.CurrentThread.ThreadID) + '] ' + aLine + sLineBreak+sLineBreak;
+    // lBytes:= TEncoding.Utf8.GetBytes(lLine);
+    TFile.AppendAllText(fn, lLine, TEncoding.Utf8);
+  finally
+    glLogCs.Leave;
+  end;
 end;
+{$ENDIF}
 {$ENDIF}
 
 { TTestAggregateException }
@@ -1466,5 +1468,13 @@ begin
 end;
 {$ENDIF}
 
+initialization
+  {$IF DEFINED(MAX_DELPHI) AND DEFINED(DEBUG)}
+  glLogCs:= TCriticalSection.Create  ;
+  {$IFEND}
+finalization
+  {$IF DEFINED(MAX_DELPHI) AND DEFINED(DEBUG)}
+  FreeAndNil(glLogCs);
+  {$IFEND}
 end.
 
