@@ -1817,6 +1817,7 @@ begin
             except
               on e: Exception do
               begin
+                lBox.Free;
                 if lErrs = nil then
                   lErrs := TmaxExceptionList.Create(True);
                 {$IFDEF max_DELPHI}
@@ -2245,6 +2246,7 @@ begin
         except
           on e: Exception do
           begin
+            lBox.Free;
             if lErrs = nil then
               lErrs := TmaxExceptionList.Create(True);
             {$IFDEF max_DELPHI}
@@ -2361,6 +2363,7 @@ begin
         except
           on e: Exception do
           begin
+            lBox.Free;
             if lErrs = nil then
               lErrs := TmaxExceptionList.Create(True);
             {$IFDEF max_DELPHI}
@@ -2525,6 +2528,7 @@ begin
         except
           on e: Exception do
           begin
+            lBox.Free;
             if lErrs = nil then
               lErrs := TmaxExceptionList.Create(True);
             {$IFDEF max_DELPHI}
@@ -2617,6 +2621,7 @@ begin
         except
           on e: Exception do
           begin
+            lBox.Free;
             if lErrs = nil then
               lErrs := TmaxExceptionList.Create(True);
             {$IFDEF max_DELPHI}
@@ -2934,6 +2939,7 @@ begin
         except
           on e: Exception do
           begin
+            lBox.Free;
             if lErrs = nil then
               lErrs := TmaxExceptionList.Create(True);
             {$IFDEF max_DELPHI}
@@ -3064,6 +3070,7 @@ begin
         except
           on e: Exception do
           begin
+            lBox.Free;
             if lErrs = nil then
               lErrs := TmaxExceptionList.Create(True);
             {$IFDEF max_DELPHI}
@@ -3339,6 +3346,7 @@ begin
         except
           on e: Exception do
           begin
+            lBox.Free;
             if lErrs = nil then
               lErrs := TmaxExceptionList.Create(True);
             {$IFDEF max_DELPHI}
