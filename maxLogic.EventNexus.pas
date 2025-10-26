@@ -163,8 +163,6 @@ procedure AutoUnsubscribe(const aInstance: TObject);
 
 type
   TmaxTopicBase = class(TmaxMonitorObject)
-  private
-    fDropActive: Integer; // number of active-item drops requested
   protected
     fQueue: TmaxProcQueue;
     fProcessing: boolean;
@@ -189,8 +187,6 @@ type
     procedure AddDropped; inline;
     procedure AddException; inline;
     function GetStats: TmaxTopicStats; inline;
-    procedure RequestDropActive; inline;
-    function ConsumeDropActive: Boolean; inline;
   end;
 
   {$IFDEF max_FPC}
@@ -820,7 +816,6 @@ begin
   fPolicy.DeadlineUs := 0;
   fMetricName := '';
   fWarnedHighWater := False;
-  fDropActive := 0;
   FillChar(fStats, SizeOf(fStats), 0);
 end;
 
@@ -896,26 +891,7 @@ begin
   Result := fStats;
 end;
 
-procedure TmaxTopicBase.RequestDropActive;
-begin
-  Inc(fDropActive);
-end;
 
-function TmaxTopicBase.ConsumeDropActive: Boolean;
-begin
-  Result := False;
-  TMonitor.Enter(self);
-  try
-    if fDropActive > 0 then
-    begin
-      Dec(fDropActive);
-      AddDropped; // count as a drop
-      Result := True;
-    end;
-  finally
-    TMonitor.exit(self);
-  end;
-end;
 
 function TmaxTopicBase.Enqueue(const aProc: TmaxProc): boolean;
 var
@@ -926,20 +902,20 @@ var
   lElapsedMs: Int64;
   lEnqueueMs: UInt64;
   lWrapped: TmaxProc;
-  lDroppedActive: Boolean;
 begin
   Result := True;
   TMonitor.Enter(self);
   try
     {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] pre: policy=%d Q=%d Active=%d Max=%d',
       [UnicodeString(fMetricName), Ord(fPolicy.Overflow), fQueue.Count, Ord(fProcessing), fPolicy.MaxDepth])); {$ENDIF}
-    // Capacity check
+    
+    // Capacity check - ONLY count queued items, not the active one
     if (fPolicy.MaxDepth > 0) then
     begin
       case fPolicy.Overflow of
         DropNewest:
           begin
-            if (fQueue.Count + Ord(fProcessing)) >= fPolicy.MaxDepth then
+            if fQueue.Count >= fPolicy.MaxDepth then
             begin
               AddDropped;
               {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] DropNewest: rejected newest (Q=%d Active=%d)',
@@ -949,54 +925,29 @@ begin
           end;
         DropOldest:
           begin
-            lDroppedActive := False;
-            if (fQueue.Count + Ord(fProcessing)) >= fPolicy.MaxDepth then
+            if fQueue.Count >= fPolicy.MaxDepth then
             begin
-              if fProcessing then
+              if fQueue.Count > 0 then
               begin
-                // Prefer dropping the in-flight (oldest) item once; if already requested, drop the oldest queued item.
-                if fDropActive = 0 then
-                begin
-                  RequestDropActive; // AddDropped happens in ConsumeDropActive
-                  {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] DropOldest: requested drop ACTIVE (Q=%d)',
-                    [UnicodeString(fMetricName), fQueue.Count])); {$ENDIF}
-                  lDroppedActive := True;
-                end
-                else if fQueue.Count > 0 then
-                begin
-                  // Already scheduled to drop active; free capacity by dropping the oldest queued item
-                  fQueue.Dequeue;
-                  {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] DropOldest: removed OLDEST QUEUED (Q now=%d)',
-                    [UnicodeString(fMetricName), fQueue.Count])); {$ENDIF}
-                  if fStats.CurrentQueueDepth > 0 then
-                    Dec(fStats.CurrentQueueDepth);
-                  AddDropped;
-                end;
-              end
-              else if fQueue.Count > 0 then
-              begin
-                // Drop the oldest queued item to make room for the new one
                 fQueue.Dequeue;
-                {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] DropOldest: removed OLDEST QUEUED (Q now=%d)',
+                {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] DropOldest: removed oldest queued (Q now=%d)',
                   [UnicodeString(fMetricName), fQueue.Count])); {$ENDIF}
                 if fStats.CurrentQueueDepth > 0 then
                   Dec(fStats.CurrentQueueDepth);
                 AddDropped;
               end;
-              // Signal that a drop occurred (either active or queued), but still enqueue the new item
-              Result := False;
+              Result := False; // signal a drop occurred
             end;
           end;
         Block:
           begin
-            while (fQueue.Count + Ord(fProcessing)) >= fPolicy.MaxDepth do
+            while fQueue.Count >= fPolicy.MaxDepth do
               TMonitor.Wait(self, Cardinal(-1));
           end;
         Deadline:
           begin
             if fPolicy.DeadlineUs <= 0 then
             begin
-              // per spec: 0 = immediate drop
               AddDropped;
               {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] Deadline: DeadlineUs=0 → drop at enqueue (Q=%d Active=%d)',
                 [UnicodeString(fMetricName), fQueue.Count, Ord(fProcessing)])); {$ENDIF}
@@ -1004,10 +955,9 @@ begin
             end
             else
             begin
-              // allow one queued item while active is in-flight: check only queued count
               lDeadlineMs := Cardinal(fPolicy.DeadlineUs div 1000);
               lTimer := TStopWatch.StartNew;
-              while (fQueue.Count >= fPolicy.MaxDepth) do
+              while fQueue.Count >= fPolicy.MaxDepth do
               begin
                 lElapsedMs := lTimer.ElapsedMilliseconds;
                 lRemaining := integer(Int64(lDeadlineMs) - lElapsedMs);
@@ -1055,6 +1005,8 @@ begin
   finally
     TMonitor.exit(self);
   end;
+  
+  // Processing loop (unchanged)
   while True do
   begin
     TMonitor.Enter(self);
@@ -1879,8 +1831,6 @@ begin
       var
         lVal: t;
       begin
-        if lTopic.ConsumeDropActive then
-          Exit;
         lVal := lLast;
         if (lState = nil) or not lState.TryEnter then
           exit;
@@ -1960,8 +1910,6 @@ begin
       var
         lVal: t;
       begin
-        if lTopic.ConsumeDropActive then
-          Exit;
         lVal := lLast;
         if (lState = nil) or not lState.TryEnter then
           exit;
@@ -2061,8 +2009,6 @@ begin
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
     begin
-      if lTopic.ConsumeDropActive then
-        Exit;
       lVal := aEvent;
       lErrs := nil;
 
@@ -2196,8 +2142,6 @@ begin
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
     begin
-      if lTopic.ConsumeDropActive then
-        Exit;
       lVal := aEvent;
       lErrs := nil;
 
@@ -2298,8 +2242,6 @@ begin
     lTopic.Enqueue(
       procedure
       begin
-        if lTopic.ConsumeDropActive then
-          Exit;
         if (lState = nil) or not lState.TryEnter then
           exit;
         Dispatch(lMetric, aMode,
@@ -2377,8 +2319,6 @@ begin
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
     begin
-      if lTopic.ConsumeDropActive then
-        Exit;
       lErrs := nil;
 
       for i := 0 to High(lSubs) do
@@ -2604,8 +2544,6 @@ begin
       var
         lVal: t;
       begin
-        if lTopic.ConsumeDropActive then
-          Exit;
         lVal := lLast;
         if (lState = nil) or not lState.TryEnter then
           exit;
@@ -2813,8 +2751,6 @@ begin
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
     begin
-      if lTopic.ConsumeDropActive then
-        Exit;
       lVal := aEvent;
       lErrs := nil;
       for i := 0 to High(lSubs) do
@@ -2962,8 +2898,6 @@ begin
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
     begin
-      if lTopic.ConsumeDropActive then
-        Exit;
       lVal := aEvent;
       lErrs := nil;
       for i := 0 to High(lSubs) do
