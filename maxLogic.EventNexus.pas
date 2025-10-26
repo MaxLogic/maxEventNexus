@@ -293,6 +293,19 @@ type
     destructor Destroy; override;
   end;
 
+  {$IFDEF max_DELPHI}
+  type
+    TInvokeBox<T> = class
+    public
+      Topic: TTypedTopic<T>;
+      Handler: TmaxProcOf<T>;
+      Value: T;
+      Token: TmaxSubscriptionToken;
+      State: ImaxSubscriptionState;
+      class function MakeProc(const aBox: TInvokeBox<T>): TmaxProc; static;
+    end;
+  {$ENDIF}
+
   TmaxBus = class(TInterfacedObject, ImaxBus, ImaxBusAdvanced, ImaxBusQueues, ImaxBusMetrics, ImaxBusImpl)
   private
     fAsync: IEventNexusScheduler;
