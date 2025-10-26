@@ -31,6 +31,11 @@ type
   TmaxKeyFunc<t> = reference to function(const aValue: t): TmaxString;
   {$ENDIF}
 
+{$IFDEF max_DELPHI}
+  TMaxStopwatch = TStopwatch;
+{$ELSE}
+  TMaxStopwatch = TStopWatch;
+{$ENDIF}
 
 type
   TmaxObjProcOf<t> = procedure(const aValue: t) of object;
@@ -922,7 +927,7 @@ end;
 function TmaxTopicBase.Enqueue(const aProc: TmaxProc): boolean;
 var
   lProc: TmaxProc;
-  lTimer: TStopwatch;
+  lTimer: TMaxStopwatch;
   lDeadlineMs: Cardinal;
   lRemaining: integer;
   lElapsedMs: Int64;
@@ -983,7 +988,7 @@ begin
             else
             begin
               lDeadlineMs := Cardinal(fPolicy.DeadlineUs div 1000);
-              lTimer := TStopwatch.StartNew;
+              lTimer := TMaxStopwatch.StartNew;
               while fQueue.Count >= fPolicy.MaxDepth do
               begin
                 lElapsedMs := lTimer.ElapsedMilliseconds;
