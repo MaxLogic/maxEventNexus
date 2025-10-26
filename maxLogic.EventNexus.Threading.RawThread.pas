@@ -121,7 +121,7 @@ begin
     Exit;
   lAdapter := TmaxProcAdapter.Create(aProc);
   try
-    TThread.ForceQueue(nil, lAdapter.Invoke);
+    TThread.Queue(nil, lAdapter.Invoke);
   except
     lAdapter.Free;
     raise;
