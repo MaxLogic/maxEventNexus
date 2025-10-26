@@ -1,4 +1,4 @@
-unit {$IFDEF max_FPC}maxLogic_EventNexus{$ELSE}maxLogic.EventNexus{$ENDIF};
+﻿unit {$IFDEF max_FPC}maxLogic_EventNexus{$ELSE}maxLogic.EventNexus{$ENDIF};
 
 {$I fpc_delphimode.inc}
 
@@ -1788,22 +1788,24 @@ begin
           end);
       end;
     Async:
-      {$IFDEF DEBUG} DebugLog(' → Async schedule'); {$ENDIF}
-      fAsync.RunAsync(
-        procedure
-        begin
-          try
-            aHandler();
-          except
-            on e: Exception do
-            begin
-              if Assigned(aOnException) then
-                aOnException();
-              if Assigned(gAsyncError) then
-                gAsyncError(UnicodeString(aTopic), e);
+      begin
+        {$IFDEF DEBUG} DebugLog(' → Async schedule'); {$ENDIF}
+        fAsync.RunAsync(
+          procedure
+          begin
+            try
+              aHandler();
+            except
+              on e: Exception do
+              begin
+                if Assigned(aOnException) then
+                  aOnException();
+                if Assigned(gAsyncError) then
+                  gAsyncError(UnicodeString(aTopic), e);
+              end;
             end;
-          end;
-        end);
+          end);
+      end;
     Background:
       if (TThread.CurrentThread.ThreadID = fMainThreadId) or fAsync.IsMainThread then
       begin
