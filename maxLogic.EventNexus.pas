@@ -1595,9 +1595,9 @@ begin
     Result := DefaultAsync;
 end;
 
-// Stable-capture invoke helpers (avoid capturing loop locals by reference)
+ // Stable-capture invoke helpers (avoid capturing loop locals by reference)
 
-{$IFDEF max_FPC}
+{$IFDEF FPC}
 type
   generic TInvokeBox<T> = class
   public
