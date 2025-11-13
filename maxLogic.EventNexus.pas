@@ -13,7 +13,7 @@ interface
 uses
   Classes, SysUtils,
   {$IFDEF max_DELPHI}
-  System.Diagnostics, System.Generics.Collections, System.SyncObjs, System.TypInfo,
+  System.Diagnostics, System.Generics.Collections, System.SyncObjs, System.TypInfo, System.Rtti,
   {$ELSE}
   Generics.Collections, TypInfo, maxLogic.fpc.compatibility, maxLogic.fpc.diagnostics,
   {$ENDIF}
@@ -151,6 +151,8 @@ type
     procedure Deactivate;
     function IsActive: boolean;
   end;
+
+  EmaxInvalidSubscription = class(Exception);
 
   EmaxAggregateException = class(Exception)
   private
@@ -316,10 +318,20 @@ type
     fGuid: TmaxGuidTopicDict;
     fStickyTypes: TmaxBoolDictOfTypeInfo;
     fStickyNames: TmaxBoolDictOfString;
+    {$IFDEF max_DELPHI}
+    fAutoSubs: TmaxAutoSubDict;
+    {$ENDIF}
     fMainThreadId: TThreadID;
     function ScheduleTypedCoalesce<t>(const aTopicName: TmaxString;
       aTopic: TTypedTopic<t>; const aSubs: TArray<TTypedSubscriber<t>>;
       const aKey: TmaxString): boolean;
+  {$IFDEF max_DELPHI}
+    function InvokeGenericObjectSubscribe(const aMethodName: string; const aGenericType: PTypeInfo;
+      const aMethodPtr: TMethod; aDelivery: TmaxDelivery; const aPrefixArgs: array of TValue): ImaxSubscription;
+    procedure RememberAutoSubscription(const aInstance: TObject; const aSub: ImaxSubscription);
+    procedure AutoSubscribeInstance(const aInstance: TObject);
+    procedure AutoUnsubscribeInstance(const aInstance: TObject);
+  {$ENDIF}
   public
     function Subscribe<t>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
     function Subscribe<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
@@ -463,6 +475,7 @@ implementation
 
 uses
   maxLogic.Utils,
+  {$IFDEF max_DELPHI} System.Rtti, {$ENDIF}
   {$IFDEF FPC}
   SyncObjs,
   maxLogic_EventNexus_Threading_RawThread
@@ -750,13 +763,20 @@ begin
 end;
 
 procedure AutoSubscribe(const aInstance: TObject);
+var
+  lBus: ImaxBus;
 begin
-  // Delphi RTTI-based auto-subscribe is not implemented yet on this branch.
+  if aInstance = nil then
+    Exit;
+  lBus := maxBus;
+  TmaxBus(maxAsBus(lBus)).AutoSubscribeInstance(aInstance);
 end;
 
 procedure AutoUnsubscribe(const aInstance: TObject);
 begin
-  // No-op; explicit unsubscribe via tokens is still supported.
+  if (aInstance = nil) or (gBus = nil) then
+    Exit;
+  TmaxBus(maxAsBus(gBus)).AutoUnsubscribeInstance(aInstance);
 end;
 {$ENDIF}
 
@@ -1762,6 +1782,217 @@ begin
     end;
 end;
 
+{$IFDEF max_DELPHI}
+function TmaxBus.InvokeGenericObjectSubscribe(const aMethodName: string; const aGenericType: PTypeInfo;
+  const aMethodPtr: TMethod; aDelivery: TmaxDelivery; const aPrefixArgs: array of TValue): ImaxSubscription;
+var
+  lCtx: TRttiContext;
+  lBusType: TRttiType;
+  lBaseMethod: TRttiMethod;
+  lGeneric: TRttiMethod;
+  lParams: TArray<TRttiParameter>;
+  lHandlerType: PTypeInfo;
+  lArgs: TArray<TValue>;
+  i, lPrefixCount: Integer;
+begin
+  lCtx := TRttiContext.Create;
+  try
+    lBusType := lCtx.GetType(Self.ClassType);
+    for lBaseMethod in lBusType.GetMethods do
+    begin
+      if not SameText(lBaseMethod.Name, aMethodName) then
+        Continue;
+      if not lBaseMethod.IsGenericMethod then
+        Continue;
+      lParams := lBaseMethod.GetParameters;
+      lPrefixCount := Length(aPrefixArgs);
+      if Length(lParams) <> lPrefixCount + 2 then
+        Continue;
+      if lParams[lPrefixCount].ParamType.Handle.Kind <> tkMethod then
+        Continue;
+      lGeneric := lBaseMethod.MakeGenericMethod([aGenericType]);
+      lParams := lGeneric.GetParameters;
+      SetLength(lArgs, Length(lParams));
+      for i := 0 to lPrefixCount - 1 do
+        lArgs[i] := aPrefixArgs[i];
+      lHandlerType := lParams[lPrefixCount].ParamType.Handle;
+      lArgs[lPrefixCount] := TValue.Make(@aMethodPtr, lHandlerType);
+      lArgs[lPrefixCount + 1] := TValue.From<TmaxDelivery>(aDelivery);
+      Exit(lGeneric.Invoke(TValue.From<TObject>(Self), lArgs).AsType<ImaxSubscription>);
+    end;
+  finally
+    lCtx.Free;
+  end;
+  raise EmaxInvalidSubscription.CreateFmt('Unable to bind auto subscription via %s', [aMethodName]);
+end;
+
+procedure TmaxBus.RememberAutoSubscription(const aInstance: TObject; const aSub: ImaxSubscription);
+var
+  lList: TmaxSubList;
+begin
+  if (aInstance = nil) or (aSub = nil) then
+    Exit;
+  TMonitor.Enter(fLock);
+  try
+    if not fAutoSubs.TryGetValue(aInstance, lList) then
+    begin
+      lList := TmaxSubList.Create;
+      fAutoSubs.Add(aInstance, lList);
+    end;
+    lList.Add(aSub);
+  finally
+    TMonitor.Exit(fLock);
+  end;
+end;
+
+procedure TmaxBus.AutoUnsubscribeInstance(const aInstance: TObject);
+var
+  lList: TmaxSubList;
+  lSubs: TArray<ImaxSubscription>;
+  i: Integer;
+begin
+  if aInstance = nil then
+    Exit;
+  lList := nil;
+  TMonitor.Enter(fLock);
+  try
+    if not fAutoSubs.TryGetValue(aInstance, lList) then
+      Exit;
+    fAutoSubs.Remove(aInstance);
+    SetLength(lSubs, lList.Count);
+    for i := 0 to lList.Count - 1 do
+      lSubs[i] := lList[i];
+  finally
+    TMonitor.Exit(fLock);
+  end;
+  try
+    for i := 0 to High(lSubs) do
+      if lSubs[i] <> nil then
+        lSubs[i].Unsubscribe;
+  finally
+    lList.Free;
+  end;
+end;
+
+procedure TmaxBus.AutoSubscribeInstance(const aInstance: TObject);
+var
+  lCtx: TRttiContext;
+  lType: TRttiType;
+
+  procedure ProcessType(const aType: TRttiType);
+  var
+    lMethod: TRttiMethod;
+    lAttr: TCustomAttribute;
+    lAttrInstance: maxSubscribeAttribute;
+    lParams: TArray<TRttiParameter>;
+    lParamType: TRttiType;
+    lFlags: TParamFlags;
+    lSub: ImaxSubscription;
+    lMethodPtr: TMethod;
+    lName: string;
+    lDelivery: TmaxDelivery;
+  begin
+    for lMethod in aType.GetMethods do
+    begin
+      if lMethod.Parent <> aType then
+        Continue;
+      if lMethod.Visibility not in [mvPublic, mvProtected, mvPublished] then
+        Continue;
+      if lMethod.IsClassMethod or lMethod.IsConstructor or lMethod.IsDestructor then
+        Continue;
+      lAttrInstance := nil;
+      for lAttr in lMethod.GetAttributes do
+        if lAttr is maxSubscribeAttribute then
+        begin
+          if lAttrInstance <> nil then
+            raise EmaxInvalidSubscription.CreateFmt('Multiple maxSubscribe attributes on %s.%s', [aType.ToString, lMethod.Name]);
+          lAttrInstance := maxSubscribeAttribute(lAttr);
+        end;
+      if lAttrInstance = nil then
+        Continue;
+      if lMethod.MethodKind <> mkProcedure then
+        raise EmaxInvalidSubscription.CreateFmt('Method %s.%s must be a procedure', [aType.ToString, lMethod.Name]);
+      lParams := lMethod.GetParameters;
+      if Length(lParams) > 1 then
+        raise EmaxInvalidSubscription.CreateFmt('Method %s.%s must have at most one parameter', [aType.ToString, lMethod.Name]);
+
+      lDelivery := lAttrInstance.Delivery;
+      lName := lAttrInstance.Name;
+      lSub := nil;
+
+      if lName = '' then
+      begin
+        if Length(lParams) <> 1 then
+          raise EmaxInvalidSubscription.CreateFmt('Method %s.%s must have exactly one parameter for typed topics', [aType.ToString, lMethod.Name]);
+        lParamType := lParams[0].ParamType;
+        if lParamType = nil then
+          raise EmaxInvalidSubscription.CreateFmt('Unable to resolve parameter type for %s.%s', [aType.ToString, lMethod.Name]);
+        lFlags := lParams[0].Flags;
+        if (pfVar in lFlags) or (pfOut in lFlags) then
+          raise EmaxInvalidSubscription.CreateFmt('Parameter of %s.%s must be passed by value or const', [aType.ToString, lMethod.Name]);
+        if lMethod.CodeAddress = nil then
+          raise EmaxInvalidSubscription.CreateFmt('Method %s.%s is abstract and cannot be subscribed', [aType.ToString, lMethod.Name]);
+        lMethodPtr.Code := lMethod.CodeAddress;
+        lMethodPtr.Data := aInstance;
+        if (lParamType is TRttiInterfaceType) and not IsEqualGUID(TRttiInterfaceType(lParamType).GUID, GUID_NULL) then
+          lSub := InvokeGenericObjectSubscribe('SubscribeGuidOf', lParamType.Handle, lMethodPtr, lDelivery, [])
+        else
+          lSub := InvokeGenericObjectSubscribe('Subscribe', lParamType.Handle, lMethodPtr, lDelivery, []);
+      end
+      else
+      begin
+        if Length(lParams) = 0 then
+        begin
+          lSub := SubscribeNamed(TmaxString(lName),
+            procedure
+            begin
+              lMethod.Invoke(aInstance, []);
+            end,
+            lDelivery);
+        end
+        else
+        begin
+          if Length(lParams) <> 1 then
+            raise EmaxInvalidSubscription.CreateFmt('Method %s.%s must have zero or one parameter for named topics', [aType.ToString, lMethod.Name]);
+          lParamType := lParams[0].ParamType;
+          if lParamType = nil then
+            raise EmaxInvalidSubscription.CreateFmt('Unable to resolve parameter type for %s.%s', [aType.ToString, lMethod.Name]);
+          lFlags := lParams[0].Flags;
+          if (pfVar in lFlags) or (pfOut in lFlags) then
+            raise EmaxInvalidSubscription.CreateFmt('Parameter of %s.%s must be passed by value or const', [aType.ToString, lMethod.Name]);
+          if lMethod.CodeAddress = nil then
+            raise EmaxInvalidSubscription.CreateFmt('Method %s.%s is abstract and cannot be subscribed', [aType.ToString, lMethod.Name]);
+          lMethodPtr.Code := lMethod.CodeAddress;
+          lMethodPtr.Data := aInstance;
+          lSub := InvokeGenericObjectSubscribe('SubscribeNamedOf', lParamType.Handle, lMethodPtr, lDelivery,
+            [TValue.From<TmaxString>(TmaxString(lName))]);
+        end;
+      end;
+
+      if lSub = nil then
+        raise EmaxInvalidSubscription.CreateFmt('Failed to subscribe %s.%s', [aType.ToString, lMethod.Name]);
+      RememberAutoSubscription(aInstance, lSub);
+    end;
+  end;
+
+begin
+  if aInstance = nil then
+    Exit;
+  AutoUnsubscribeInstance(aInstance);
+  lCtx := TRttiContext.Create;
+  try
+    lType := lCtx.GetType(aInstance.ClassType);
+    while lType <> nil do
+    begin
+      ProcessType(lType);
+      lType := lType.BaseType;
+    end;
+  finally
+    lCtx.Free;
+  end;
+end;
+{$ENDIF}
+
 { TmaxBus }
 
 function TmaxBus.ScheduleTypedCoalesce<t>(const aTopicName: TmaxString;
@@ -1873,6 +2104,9 @@ begin
   fGuid := TmaxGuidTopicDict.Create([doOwnsValues]);
   fStickyTypes := TmaxBoolDictOfTypeInfo.Create;
   fStickyNames := TmaxBoolDictOfString.Create;
+  {$IFDEF max_DELPHI}
+  fAutoSubs := TmaxAutoSubDict.Create([doOwnsValues]);
+  {$ENDIF}
   fMainThreadId := TThread.CurrentThread.ThreadID;
 end;
 
@@ -1884,6 +2118,9 @@ begin
   fGuid.Free;
   fStickyTypes.Free;
   fStickyNames.Free;
+  {$IFDEF max_DELPHI}
+  fAutoSubs.Free;
+  {$ENDIF}
   fLock.Free;
   inherited Destroy;
 end;
@@ -3575,7 +3812,23 @@ begin
 end;
 
 procedure TmaxBus.Clear;
+{$IFDEF max_DELPHI}
+var
+  lAutoKeys: TArray<TObject>;
+  lKey: TObject;
+{$ENDIF}
 begin
+  {$IFDEF max_DELPHI}
+  lAutoKeys := nil;
+  TMonitor.Enter(fLock);
+  try
+    lAutoKeys := fAutoSubs.Keys.ToArray;
+  finally
+    TMonitor.exit(fLock);
+  end;
+  for lKey in lAutoKeys do
+    AutoUnsubscribeInstance(lKey);
+  {$ENDIF}
   TMonitor.Enter(fLock);
   try
     fTyped.Clear;
