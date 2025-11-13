@@ -130,6 +130,15 @@ type
     procedure StickyGuidDeliversLast;
   end;
 
+  {$IFDEF max_DELPHI}
+  TTestAutoSubscribe = class(TSynTestCase)
+  published
+    procedure RegistersTypedNamedAndInherited;
+    procedure AutoUnsubscribeClearsHandlers;
+    procedure InvalidSignatureRaises;
+  end;
+  {$ENDIF}
+
   IIntEvent = interface
     ['{E0A90F15-6C16-4BD7-9057-CC95B2E98F03}']
     function GetValue: integer;
@@ -165,6 +174,57 @@ uses
   ;
 
 {$IFDEF max_DELPHI}
+type
+  TAutoSubBase = class
+  public
+    IntHits: integer;
+    LastInt: integer;
+    [maxSubscribe]
+    procedure OnInt(const aValue: integer);
+  end;
+
+  TAutoSubDerived = class(TAutoSubBase)
+  public
+    PingHits: integer;
+    DataHits: integer;
+    LastData: integer;
+    [maxSubscribe('ping')]
+    procedure OnPing;
+    [maxSubscribe('data')]
+    procedure OnData(const aValue: integer);
+  end;
+
+  TBadAutoSub = class
+  public
+    [maxSubscribe]
+    procedure Bad(const aFirst, aSecond: integer);
+  end;
+{$ENDIF}
+
+{$IFDEF max_DELPHI}
+procedure TAutoSubBase.OnInt(const aValue: integer);
+begin
+  Inc(IntHits);
+  LastInt := aValue;
+end;
+
+procedure TAutoSubDerived.OnPing;
+begin
+  Inc(PingHits);
+end;
+
+procedure TAutoSubDerived.OnData(const aValue: integer);
+begin
+  Inc(DataHits);
+  LastData := aValue;
+end;
+
+procedure TBadAutoSub.Bad(const aFirst, aSecond: integer);
+begin
+  if aFirst = aSecond then
+    Exit;
+end;
+
 {$IFDEF DEBUG}
 function LogsDir: string;
 begin
@@ -657,6 +717,89 @@ begin
   TmaxBus(maxAsBus(lBus)).EnableSticky<IIntEvent>(False);
   {$ENDIF}
 end;
+
+{$IFDEF max_DELPHI}
+procedure TTestAutoSubscribe.RegistersTypedNamedAndInherited;
+var
+  lTarget: TAutoSubDerived;
+  lBus: ImaxBus;
+  lBusObj: TmaxBus;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lBusObj := TmaxBus(maxAsBus(lBus));
+  lTarget := TAutoSubDerived.Create;
+  try
+    AutoSubscribe(lTarget);
+    lBusObj.Post<integer>(7);
+    lBusObj.PostNamed('ping');
+    lBusObj.PostNamedOf<integer>('data', 88);
+    CheckEquals(1, lTarget.IntHits);
+    CheckEquals(7, lTarget.LastInt);
+    CheckEquals(1, lTarget.PingHits);
+    CheckEquals(1, lTarget.DataHits);
+    CheckEquals(88, lTarget.LastData);
+  finally
+    AutoUnsubscribe(lTarget);
+    lTarget.Free;
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestAutoSubscribe.AutoUnsubscribeClearsHandlers;
+var
+  lTarget: TAutoSubDerived;
+  lBus: ImaxBus;
+  lBusObj: TmaxBus;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lBusObj := TmaxBus(maxAsBus(lBus));
+  lTarget := TAutoSubDerived.Create;
+  try
+    AutoSubscribe(lTarget);
+    AutoUnsubscribe(lTarget);
+    lTarget.IntHits := 0;
+    lTarget.LastInt := 0;
+    lTarget.PingHits := 0;
+    lTarget.DataHits := 0;
+    lTarget.LastData := 0;
+    lBusObj.Post<integer>(3);
+    lBusObj.PostNamed('ping');
+    lBusObj.PostNamedOf<integer>('data', 12);
+    CheckEquals(0, lTarget.IntHits);
+    CheckEquals(0, lTarget.PingHits);
+    CheckEquals(0, lTarget.DataHits);
+  finally
+    AutoUnsubscribe(lTarget);
+    lTarget.Free;
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestAutoSubscribe.InvalidSignatureRaises;
+var
+  lBad: TBadAutoSub;
+  lRaised: boolean;
+begin
+  lBad := TBadAutoSub.Create;
+  try
+    maxBus.Clear;
+    lRaised := False;
+    try
+      AutoSubscribe(lBad);
+    except
+      on E: EmaxInvalidSubscription do
+        lRaised := True;
+    end;
+    Check(lRaised, 'Expected EmaxInvalidSubscription to be raised');
+  finally
+    AutoUnsubscribe(lBad);
+    lBad.Free;
+    maxBus.Clear;
+  end;
+end;
+{$ENDIF}
 
 { TPostThread }
 
