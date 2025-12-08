@@ -50,14 +50,6 @@ Details:
   - DegradeToPosting (default) → run handler inline in the calling thread.
 - Add TTestMainThreadPolicy in tests/src/MaxEventNexus.Main.Tests.pas to verify each mode across Posting/Main/Async/Background paths.
 
-### T-1033 Rename EmaxAggregateException to EmaxDispatchError
-Summary: Rename the aggregate exception class to match spec and ensure async error aggregation uses consistent naming.
-
-Details:
-- Spec: spec.md §11 (Error Semantics) specifies EmaxDispatchError.
-- Rename EmaxAggregateException to EmaxDispatchError throughout the codebase and update all references.
-- Ensure that the async error hook still receives the correct exception type (likely still Exception).
-- Update documentation and changelog accordingly.
 
 ### T-1035 Extend GUID topics to advanced controls
 Summary: Ensure GUID-keyed topics participate in sticky, coalesce, queue policy, and metrics APIs just like typed/named topics.
@@ -232,6 +224,15 @@ Details:
 - Document that Post no longer takes the global bus lock and reference the per-topic locking strategy.
 - Mention any new diagnostics or guidance for integrators in README/DESIGN as appropriate.
 - Add changelog entry under [Unreleased] “Changed”.
+
+### T-1033 Rename EmaxAggregateException to EmaxDispatchError
+Summary: Rename the aggregate exception class to match spec and ensure async error aggregation uses consistent naming.
+
+Details:
+- Spec: spec.md §11 (Error Semantics) specifies EmaxDispatchError.
+- Rename EmaxAggregateException to EmaxDispatchError throughout the codebase and update all references.
+- Ensure that the async error hook still receives the correct exception type (likely still Exception).
+- Update documentation and changelog accordingly.
 
 ## Next – Later
 

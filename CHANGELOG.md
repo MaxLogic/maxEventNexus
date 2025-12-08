@@ -24,6 +24,8 @@
 
 - Defined `max_BUS_VERSION` constant and VERSION file to start SemVer at v0.1.0. (spec-bus.md#1.1-goals)
 
+### Changed
+- Renamed the aggregate dispatch exception type from EmaxAggregateException to EmaxDispatchError. (T-1033)
 
 ### Fixed
  - Defined `TmaxProc` as plain procedure on FPC to align cross-compiler handler types. (spec-bus.md#3-platform--compiler-support)
