@@ -21,6 +21,7 @@ uses
   maxLogic_EventNexus_Threading_Adapter, maxLogic_EventNexus_Threading_RawThread, maxLogic_EventNexus;
   {$ELSE}
   maxLogic.EventNexus.Threading.Adapter,
+  maxLogic.EventNexus.Threading.RawThread,
   {$IFDEF max_DELPHI} maxLogic.EventNexus.Threading.MaxAsync, maxLogic.EventNexus.Threading.TTask, {$ENDIF}
   maxLogic.EventNexus;
   {$ENDIF}
