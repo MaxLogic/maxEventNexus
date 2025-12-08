@@ -166,6 +166,11 @@ type
     procedure PreservesOrderAndHandlesChurn;
   end;
 
+  TTestInterfaceGenerics = class(TSynTestCase)
+  published
+    procedure UsesInterfaceGenerics;
+  end;
+
 implementation
 
 uses

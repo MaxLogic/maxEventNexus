@@ -26,6 +26,7 @@
 
 ### Changed
 - Renamed the aggregate dispatch exception type from EmaxAggregateException to EmaxDispatchError. (T-1033)
+- Generic Subscribe/Post/Advanced/Queue/Metrics methods are now directly available on the core interfaces (ImaxBus, ImaxBusAdvanced, ImaxBusQueues, ImaxBusMetrics) on all supported compilers. (T-1028)
 
 ### Fixed
  - Defined `TmaxProc` as plain procedure on FPC to align cross-compiler handler types. (spec-bus.md#3-platform--compiler-support)
