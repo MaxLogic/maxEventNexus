@@ -12,17 +12,6 @@ Details:
 - Retain the current EAccessViolation/EInvalidPointer handling in TInvokeBox/MakeNamedHandlerProc only as a last-resort safety net, not as the primary liveness guard.
 - Coordinate with T-1023 to validate behavior when objects are freed without explicit Unsubscribe/UnsubscribeAllFor and when AutoSubscribe is used.
 
-### T-1028 Expose generic methods on Delphi interfaces
-Summary: Expose generic Subscribe/Post/Advanced/Queue/Metrics methods on the Delphi interfaces, removing conditional compilation guards, and add regression tests that consume them via ImaxBus.
-
-Details:
-- Remove {$IFDEF FPC} guards around generic method declarations in ImaxBus, ImaxBusAdvanced, ImaxBusQueues, ImaxBusMetrics so they are compiled for Delphi as well.
-- Ensure that ImaxBus includes Subscribe<T>, Post<T>, TryPost<T>, SubscribeNamedOf<T>, PostNamedOf<T>, TryPostNamedOf<T>, SubscribeGuidOf<T>, PostGuidOf<T>.
-- Ensure ImaxBusAdvanced includes EnableSticky<T> (in addition to EnableStickyNamed) and the generic coalesce methods.
-- Ensure ImaxBusQueues includes SetPolicyFor<T> and GetPolicyFor<T>.
-- Ensure ImaxBusMetrics includes GetStatsFor<T>.
-- Add a test case TTestInterfaceGenerics that obtains ImaxBus from maxBus and calls these generic methods without casting to TmaxBus, verifying they work.
-- Update documentation to reflect that the generic API is fully available on the interface in both compilers.
 
 ### T-1040 Remove global bus lock
 Summary: Eliminate the global bus lock (fLock) and implement fine-grained or lock-free structures for topic dictionary access to meet performance requirements.
@@ -325,6 +314,18 @@ Details:
 - Spec: spec.md §11.2, bench/readme.md.
 - Extend bench/BenchHarness.pas to compute latency percentiles (p50/p99/p999) and throughput for varying subscriber counts.
 - Output CSV for external plotting and document methodology and KPIs in bench/readme.md.
+
+### T-1028 Expose generic methods on Delphi interfaces
+Summary: Expose generic Subscribe/Post/Advanced/Queue/Metrics methods on the Delphi interfaces, removing conditional compilation guards, and add regression tests that consume them via ImaxBus.
+
+Details:
+- Remove {$IFDEF FPC} guards around generic method declarations in ImaxBus, ImaxBusAdvanced, ImaxBusQueues, ImaxBusMetrics so they are compiled for Delphi as well.
+- Ensure that ImaxBus includes Subscribe<T>, Post<T>, TryPost<T>, SubscribeNamedOf<T>, PostNamedOf<T>, TryPostNamedOf<T>, SubscribeGuidOf<T>, PostGuidOf<T>.
+- Ensure ImaxBusAdvanced includes EnableSticky<T> (in addition to EnableStickyNamed) and the generic coalesce methods.
+- Ensure ImaxBusQueues includes SetPolicyFor<T> and GetPolicyFor<T>.
+- Ensure ImaxBusMetrics includes GetStatsFor<T>.
+- Add a test case TTestInterfaceGenerics that obtains ImaxBus from maxBus and calls these generic methods without casting to TmaxBus, verifying they work.
+- Update documentation to reflect that the generic API is fully available on the interface in both compilers.
 
 ## Blocked
 

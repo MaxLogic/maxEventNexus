@@ -9,6 +9,7 @@
   * **FPC 3.2.2**: lightweight `(Ptr → Generation)` registry; invoke only if generation matches.
 * **Queued‑before‑cancel safety** — Enqueued work prior to cancel uses the liveness check; dead targets are skipped and subscriptions are pruned lazily.
 * **Design & Spec updated** — See [`DESIGN.md`](DESIGN.md) and [`spec.md`](spec.md) for full details (tokens, pruning, dispatch path, executors).
+* **Generic API on interfaces** — All generic methods (`Subscribe<T>`, `Post<T>`, `TryPost<T>`, and advanced/queue/metrics generics) are now directly available on the core interfaces (`ImaxBus`, `ImaxBusAdvanced`, `ImaxBusQueues`, `ImaxBusMetrics`) on all supported compilers. (T-1028)
 
 
 EventNexus is a type‑safe, high‑performance event bus for Delphi 12+ and FPC 3.2.2. It decouples publishers and subscribers across typed, GUID, and string‑named topics while remaining thread‑safe and allocation‑light.

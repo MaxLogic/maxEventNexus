@@ -64,8 +64,8 @@ type
     function SubscribeNamed(const aName: TmaxString; const aHandler: TmaxProc; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
     procedure PostNamed(const aName: TmaxString);
     function TryPostNamed(const aName: TmaxString): boolean;
-{$IFDEF FPC}
-    // FPC: expose generic methods on the interface
+
+    // Generic methods (available on all compilers)
     function Subscribe<T>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
     procedure Post<T>(const aEvent: T);
     function TryPost<T>(const aEvent: T): boolean; overload;
@@ -78,7 +78,6 @@ type
     function SubscribeGuidOf<T: IInterface>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
     function SubscribeGuidOf<T: IInterface>(const aHandler: TmaxObjProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
     procedure PostGuidOf<T: IInterface>(const aEvent: T);
-{$ENDIF}
 
     procedure UnsubscribeAllFor(const aTarget: TObject);
     procedure Clear;
@@ -86,11 +85,12 @@ type
 
   ImaxBusAdvanced = interface(ImaxBus)
     ['{AB5E6E6D-8B1F-4B63-8B59-8A3B9D8C71B1}']
+    procedure EnableSticky<T>(aEnable: boolean);
     procedure EnableStickyNamed(const aName: string; aEnable: boolean);
-  {$IFDEF FPC}
+
+    // Coalescing configuration
     procedure EnableCoalesceOf<T>(const aKeyOf: TmaxKeyFunc<T>; aWindowUs: integer = 0);
     procedure EnableCoalesceNamedOf<T>(const aName: string; const aKeyOf: TmaxKeyFunc<T>; aWindowUs: integer = 0);
-  {$ENDIF}
   end;
 
   TmaxQueuePolicy = record
@@ -103,10 +103,10 @@ type
     ['{E55F7B60-9B31-4C80-9B2C-8D1F0E26FF9C}']
     procedure SetPolicyNamed(const aName: string; const aPolicy: TmaxQueuePolicy);
     function GetPolicyNamed(const aName: string): TmaxQueuePolicy;
-  {$IFDEF FPC}
+
+    // Generic policy configuration
     procedure SetPolicyFor<T>(const aPolicy: TmaxQueuePolicy);
     function GetPolicyFor<T>: TmaxQueuePolicy;
-  {$ENDIF}
   end;
 
   TmaxTopicStats = record
@@ -121,9 +121,10 @@ type
   ImaxBusMetrics = interface
     ['{2C4B91E3-1C0A-4B5C-B8B0-0C1A5C3E6D10}']
     function GetStatsNamed(const aName: string): TmaxTopicStats;
-  {$IFDEF max_FPC}
+
+    // Generic statistics
     function GetStatsFor<T>: TmaxTopicStats;
-  {$ENDIF}
+
     function GetTotals: TmaxTopicStats;
   end;
 
