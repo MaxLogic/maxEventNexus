@@ -154,7 +154,7 @@ type
 
   EmaxInvalidSubscription = class(Exception);
 
-  EmaxAggregateException = class(Exception)
+  EmaxDispatchError = class(Exception)
   private
     fInner: TmaxExceptionList;
   public
@@ -780,15 +780,15 @@ begin
 end;
 {$ENDIF}
 
-{ EmaxAggregateException }
+{ EmaxDispatchError }
 
-constructor EmaxAggregateException.Create(const aInner: TmaxExceptionList);
+constructor EmaxDispatchError.Create(const aInner: TmaxExceptionList);
 begin
   fInner := aInner;
   inherited CreateFmt(SAggregateOccurred, [fInner.Count]);
 end;
 
-destructor EmaxAggregateException.Destroy;
+destructor EmaxDispatchError.Destroy;
 begin
   fInner.Free;
   inherited Destroy;
@@ -2021,7 +2021,7 @@ begin
           lToken: TmaxSubscriptionToken;
           lState: ImaxSubscriptionState;
           lErrs: TmaxExceptionList;
-          ex: EmaxAggregateException;
+          ex: EmaxDispatchError;
           lBox: {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>;
         begin
           lErrs := nil;
@@ -2510,7 +2510,7 @@ begin
         end;
       end;
       if lErrs <> nil then
-        raise EmaxAggregateException.Create(lErrs);
+        raise EmaxDispatchError.Create(lErrs);
     end);
 end;
 
@@ -2631,7 +2631,7 @@ begin
         end;
       end;
       if lErrs <> nil then
-        raise EmaxAggregateException.Create(lErrs);
+        raise EmaxDispatchError.Create(lErrs);
     end);
 end;
 

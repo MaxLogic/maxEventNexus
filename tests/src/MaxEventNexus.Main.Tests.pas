@@ -292,7 +292,7 @@ begin
     TmaxBus(maxAsBus(lBus)).Post<integer>(42);
     Check(False, 'Expected aggregate exception');
   except
-    on e: EmaxAggregateException do
+    on e: EmaxDispatchError do
     begin
       CheckEquals(2, e.Inner.Count);
       CheckEquals('first', e.Inner.Items[0].Message);
@@ -957,7 +957,7 @@ begin
     TmaxBus(maxAsBus(lBus)).Post<integer>(1);
     {$ENDIF}
   except
-    on EmaxAggregateException do ;
+    on EmaxDispatchError do ;
   end;
   lMetrics := lBus as ImaxBusMetrics;
   {$IFDEF max_FPC}
