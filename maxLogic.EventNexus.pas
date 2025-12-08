@@ -2074,7 +2074,7 @@ begin
           begin
             if Assigned(gAsyncError) then
             begin
-              ex := EmaxAggregateException.Create(lErrs);
+              ex := EmaxDispatchError.Create(lErrs);
               try
                 gAsyncError(UnicodeString(aTopicName), ex);
               finally
