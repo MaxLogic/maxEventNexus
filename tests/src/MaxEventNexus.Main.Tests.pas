@@ -171,6 +171,11 @@ type
     procedure UsesInterfaceGenerics;
   end;
 
+  TTestInterfaceGenerics = class(TSynTestCase)
+  published
+    procedure UsesInterfaceGenerics;
+  end;
+
 implementation
 
 uses
@@ -1663,6 +1668,87 @@ begin
   ExerciseScheduler(CreateTTaskScheduler, 'TTask');
 end;
 {$ENDIF}
+
+{ TTestInterfaceGenerics }
+
+procedure TTestInterfaceGenerics.UsesInterfaceGenerics;
+var
+  lBus: ImaxBus;
+  lAdv: ImaxBusAdvanced;
+  lQueues: ImaxBusQueues;
+  lMetrics: ImaxBusMetrics;
+  lReceived: integer;
+  lPolicy: TmaxQueuePolicy;
+  lStats: TmaxTopicStats;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+
+  // Test Subscribe/Post with integer
+  lReceived := 0;
+  {$IFDEF max_FPC}
+  procedure Handler(const aValue: integer);
+  begin
+    lReceived := aValue;
+  end;
+  lBus.Subscribe<integer>(@Handler, Posting);
+  {$ELSE}
+  lBus.Subscribe<integer>(
+    procedure(const aValue: integer)
+    begin
+      lReceived := aValue;
+    end,
+    Posting);
+  {$ENDIF}
+  lBus.Post<integer>(42);
+  CheckEquals(42, lReceived, 'Post/Subscribe delivery');
+
+  // Test TryPost
+  Check(lBus.TryPost<integer>(43), 'TryPost should succeed');
+  // Since we are in Posting mode, the handler should have been called synchronously
+  CheckEquals(43, lReceived, 'TryPost delivery');
+
+  // Test EnableSticky via ImaxBusAdvanced
+  lAdv := lBus as ImaxBusAdvanced;
+  lAdv.EnableSticky<integer>(True);
+  lBus.Post<integer>(100);
+  // Now subscribe a new handler and check it gets the sticky value
+  lReceived := 0;
+  {$IFDEF max_FPC}
+  procedure StickyHandler(const aValue: integer);
+  begin
+    lReceived := aValue;
+  end;
+  lBus.Subscribe<integer>(@StickyHandler, Posting);
+  {$ELSE}
+  lBus.Subscribe<integer>(
+    procedure(const aValue: integer)
+    begin
+      lReceived := aValue;
+    end,
+    Posting);
+  {$ENDIF}
+  CheckEquals(100, lReceived, 'Sticky delivery');
+
+  // Test SetPolicyFor/GetPolicyFor via ImaxBusQueues
+  lQueues := lBus as ImaxBusQueues;
+  lPolicy.MaxDepth := 5;
+  lPolicy.Overflow := DropOldest;
+  lPolicy.DeadlineUs := 0;
+  lQueues.SetPolicyFor<integer>(lPolicy);
+  lPolicy := lQueues.GetPolicyFor<integer>;
+  CheckEquals(5, lPolicy.MaxDepth, 'Policy MaxDepth round-trip');
+  Check(lPolicy.Overflow = DropOldest, 'Policy Overflow round-trip');
+
+  // Test GetStatsFor via ImaxBusMetrics
+  lMetrics := lBus as ImaxBusMetrics;
+  lStats := lMetrics.GetStatsFor<integer>;
+  Check(lStats.PostsTotal >= 3, Format('PostsTotal should be at least 3, got %d', [lStats.PostsTotal]));
+  Check(lStats.DeliveredTotal >= 3, Format('DeliveredTotal should be at least 3, got %d', [lStats.DeliveredTotal]));
+
+  // Cleanup
+  lBus.Clear;
+end;
 
 initialization
   {$IF DEFINED(max_DELPHI) AND DEFINED(DEBUG)}
