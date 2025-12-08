@@ -2021,7 +2021,6 @@ begin
           lToken: TmaxSubscriptionToken;
           lState: ImaxSubscriptionState;
           lErrs: TmaxExceptionList;
-          ex: EmaxDispatchError;
           lBox: {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>;
         begin
           lErrs := nil;
@@ -2796,7 +2795,7 @@ begin
         end;
       end;
       if lErrs <> nil then
-        raise EmaxAggregateException.Create(lErrs);
+        raise EmaxDispatchError.Create(lErrs);
     end);
 end;
 
