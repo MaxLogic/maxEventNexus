@@ -75,3 +75,4 @@ todo.md
 reference/
 *.otares
 *.cmds
+*.log
