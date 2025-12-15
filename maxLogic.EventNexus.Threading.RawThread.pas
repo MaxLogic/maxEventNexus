@@ -12,6 +12,7 @@ interface
 
 uses
   Classes, SysUtils,
+  {$IFDEF max_DELPHI} System.Threading, {$ENDIF}
   {$IFDEF max_FPC} maxLogic_EventNexus_Threading_Adapter {$ELSE} maxLogic.EventNexus.Threading.Adapter {$ENDIF};
 
 type
@@ -97,13 +98,32 @@ begin
 end;
 
 class procedure TmaxProcThread.Start(const aProc: TmaxProc; aDelayUs: Integer);
+{$IFDEF max_DELPHI}
+var
+  lDelayMs: Integer;
+{$ELSE}
 var
   lThread: TmaxProcThread;
+{$ENDIF}
 begin
   if not ProcAssigned(aProc) then
     Exit;
+  {$IFDEF max_DELPHI}
+  if aDelayUs > 0 then
+    lDelayMs := (aDelayUs + 999) div 1000
+  else
+    lDelayMs := 0;
+  TTask.Run(
+    procedure
+    begin
+      if lDelayMs > 0 then
+        TThread.Sleep(lDelayMs);
+      aProc();
+    end);
+  {$ELSE}
   lThread := TmaxProcThread.Create(aProc, aDelayUs);
   TThread(lThread).Start;
+  {$ENDIF}
 end;
 
 { TmaxRawThreadScheduler }
