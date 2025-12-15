@@ -43,6 +43,38 @@ implementation
 uses
   TypInfo;
 
+{$IFDEF max_DELPHI}
+function ProgressFileName: string;
+begin
+  Result := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0))) +
+    'logs' + PathDelim + '__progress.log';
+end;
+
+procedure WriteProgress(const aLine: string);
+var
+  f: TextFile;
+  fn: string;
+begin
+  fn := ProgressFileName;
+  try
+    if not DirectoryExists(ExtractFilePath(fn)) then
+      Exit;
+    AssignFile(f, fn);
+    if FileExists(fn) then
+      Append(f)
+    else
+      Rewrite(f);
+    try
+      Writeln(f, FormatDateTime('hh:nn:ss.zzz', Now) + ' ' + aLine);
+    finally
+      CloseFile(f);
+    end;
+  except
+    // keep tests running even if logging fails
+  end;
+end;
+{$ENDIF}
+
 procedure TSynTestCase.Check(Condition: boolean; const msg: string);
 begin
   if not Condition then
@@ -132,6 +164,7 @@ var
   Meth: TRttiMethod;
   Params: TArray<TRttiParameter>;
   Passed, Failed: integer;
+  TestName: string;
 begin
   Passed := 0;
   Failed := 0;
@@ -148,15 +181,20 @@ begin
             Params := Meth.GetParameters;
             if length(Params) = 0 then
             begin
-              Write('[', TestClass.classname, '.', Meth.Name, '] ');
+              TestName := TestClass.classname + '.' + Meth.Name;
+              Write('[', TestName, '] ');
+              Flush(Output);
+              WriteProgress('START ' + TestName);
               try
                 Meth.Invoke(TestObj, []);
                 writeln('OK');
+                WriteProgress('END   ' + TestName + ' OK');
                 Inc(Passed);
               except
                 on e: Exception do
                 begin
                   writeln('FAIL - ', e.classname, ': ', e.Message);
+                  WriteProgress('END   ' + TestName + ' FAIL - ' + e.classname + ': ' + e.Message);
                   Inc(Failed);
                 end;
               end;

@@ -98,7 +98,7 @@ end;
 * Replace `GetTickCount64`/`QWord` timing with `TStopwatch` from `lib/MaxLogicFoundation/maxlogic.fpc.diagnostics.pas` and `UInt64` counters.
 * Implement case‑insensitive topic lookup via `SysUtils.CompareText` or a delegated comparer rather than `TStringComparer.OrdinalIgnoreCase`.
 * Hide `TThread.Queue/Synchronize` differences behind `IEventNexusScheduler` so dispatching code is compiler‑agnostic.
-* **Weak‑target shim**: Delphi uses `System.WeakReference.TWeakReference<TObject>` for method targets; FPC uses a `{Ptr, Gen}` registry. Both paths share the same dispatch‑time “rehydrate‑or‑skip” logic.
+* **Weak‑target shim**: Delphi 12+ and FPC 3.2.2 use a lightweight `{Ptr, Gen}` registry (Delphi hooks `FreeInstance`; FPC uses the same generation concept) so dispatch can “rehydrate‑or‑skip” without AV probing.
 
 ---
 
@@ -217,8 +217,7 @@ function maxBus: ImaxBus; // Unit: maxLogic.EventNexus // thread‑safe singleto
 
    * Returned `ImaxSubscription` is reference‑counted; releasing it auto‑unsubscribes.
    * **Object-method liveness:** For object‑method handlers, the bus stores `{CodePtr, WeakTarget}` and reconstructs the method pointer at dispatch time.
-     - **Delphi 12+**: `WeakTarget` = `System.WeakReference.TWeakReference<TObject>`. On invoke, `TryGetTarget` must succeed; otherwise the call is skipped and the subscription is **pruned lazily**.
-     - **FPC 3.2.2**: `WeakTarget` = lightweight registry (pointer → generation). On object finalization, the instance’s generation increments. On invoke, if `{Ptr, GenAtSubscribe}` ≠ current generation, skip and **prune lazily**.
+     - **Delphi 12+ / FPC 3.2.2**: `WeakTarget` = lightweight registry (pointer → generation). When an instance is freed, its generation increments. On invoke, if `{Ptr, GenAtSubscribe}` ≠ current generation, skip and **prune lazily**.
    * **Already‑queued work:** Events queued *before* `Unsubscribe` or token release may still reach the dispatcher. The liveness check above guarantees such invocations are **no‑ops** if the target is dead; otherwise they proceed.
 
 2. **Reentrancy**
@@ -454,16 +453,14 @@ end;
 * **Data Races**: The bus’s internal structures are protected by fine‑grained locks (per‑topic). Reader‑heavy paths use atomic snapshots + hazard pointers or versioned arrays to avoid long locks during `Post`.
 * **Handler Node Pool**: Lock‑free freelist per topic to recycle nodes.
 * **Weak Targets**: For method handlers, store `{TargetPtr(weak), CodePtr}`.
-  - **Delphi 12+**: use `System.WeakReference.TWeakReference<TObject>`; invoke only if `TryGetTarget` succeeds.
-  - **FPC 3.2.2**: use a registry + generation counter to detect finalized instances; invoke only if generation matches.
-  No try/except probing on the hot path.
+  - **Delphi 12+ / FPC 3.2.2**: use a `{Ptr, Gen}` registry; invoke only if the generation matches. No try/except probing on the hot path.
 
 ---
 
 ## 11. Error Semantics
 
 * Sync dispatch (`Posting`, non‑main) collects handler errors and raises
-  `EmaxAggregateException` with all inner exceptions after all handlers run.
+  `EmaxDispatchError` with all inner exceptions after all handlers run.
 * `Main/Async` errors are forwarded to the global async hook. Implementers must not swallow exceptions silently.
 * Add diagnostic counters: posts, deliveries, exceptions, queue depth (if any). Each handler exception increments `ExceptionsTotal`.
 

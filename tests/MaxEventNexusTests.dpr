@@ -48,19 +48,30 @@ begin
   TDirectory.CreateDirectory(L);
   {$ENDIF}
   lTests := TSynTests.Create('MaxEventNexus');
-  try
-    lTests.AddCase(TTestAggregateException);
-    lTests.AddCase(TTestAsyncDelivery);
-    lTests.AddCase(TTestCoalesce);
-    lTests.AddCase(TTestFuzz);
-    lTests.AddCase(TTestGuidTopics);
-    lTests.AddCase(TTestMetrics);
+	  try
+	    lTests.AddCase(TTestAggregateException);
+	    lTests.AddCase(TTestAsyncDelivery);
+	    lTests.AddCase(TTestAsyncExceptions);
+	    lTests.AddCase(TTestCoalesce);
+	    lTests.AddCase(TTestFuzz);
+	    lTests.AddCase(TTestGuidTopics);
+    lTests.AddCase(TTestHighWaterReset);
+	    lTests.AddCase(TTestMainThreadPolicy);
+	    lTests.AddCase(TTestMetrics);
+	    lTests.AddCase(TTestMetricsConcurrent);
+	    lTests.AddCase(TTestMetricsThrottling);
+	    lTests.AddCase(TTestMetricsCallbackTotals);
     lTests.AddCase(TTestNamedTopics);
     lTests.AddCase(TTestQueuePolicy);
+    lTests.AddCase(TTestQueuePolicyPresets);
     lTests.AddCase(TTestSchedulers);
     lTests.AddCase(TTestSticky);
+    lTests.AddCase(TTestStress);
     lTests.AddCase(TTestSubscribeOrdering);
+    lTests.AddCase(TTestSubscriptionTokens);
     lTests.AddCase(TTestUnsubscribeAll);
+    lTests.AddCase(TTestWeakTargets);
+    lTests.AddCase(TTestWeakTargetABA);
 
     lTests.Run;
   finally

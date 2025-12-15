@@ -2,108 +2,9 @@
 
 ## In Progress
 
-### T-1022 Implement Delphi weak-target references
-Summary: Implement proper weak-target support on Delphi using System.WeakReference so method subscriptions do not rely on access-violation probing.
-
-Details:
-- Spec: spec.md §6 (Handler lifetime), §10 (Weak Targets), references/weak-references*.md.
-- Replace the Delphi branch of TmaxWeakTarget with an implementation backed by System.WeakReference.TWeakReference<TObject> (or equivalent shim) so IsAlive only returns True when the target can still be rehydrated.
-- Ensure typed, named, and GUID subscriber records consistently store and consult the weak target before dispatch; keep PruneDead/RemoveByTarget fast and allocation-free on the hot path.
-- Retain the current EAccessViolation/EInvalidPointer handling in TInvokeBox/MakeNamedHandlerProc only as a last-resort safety net, not as the primary liveness guard.
-- Coordinate with T-1023 to validate behavior when objects are freed without explicit Unsubscribe/UnsubscribeAllFor and when AutoSubscribe is used.
-
-
-### T-1040 Remove global bus lock
-Summary: Eliminate the global bus lock (fLock) and implement fine-grained or lock-free structures for topic dictionary access to meet performance requirements.
-
-Details:
-- Spec: spec.md §7 (Performance Requirements) requires no global lock around Post.
-- Replace the global TMonitor fLock with per-topic or lock-free dictionaries for fTyped, fNamed, fNamedTyped, fGuid.
-- Use concurrent dictionaries or striped locks to protect topic lookup and creation.
-- Ensure that Subscribe, Unsubscribe, Post, etc. are thread-safe without a single global lock.
-- Preserve the existing per-topic locking for queue processing.
-- Update tests to verify no global lock contention (T-1038 already provides concurrency tests; ensure they pass).
-- Measure performance impact to confirm improvements.
-
 ## Next – Today
 
-### T-1003 Add Main-Thread Degradation Policy
-Summary: Introduce a configurable policy controlling how Main delivery behaves when invoked off the main thread.
-
-Details:
-- Spec: spec.md §8.5.
-- Add TmaxMainThreadPolicy = (Strict, DegradeToAsync, DegradeToPosting) plus global gMainThreadPolicy defaulting to DegradeToPosting and maxSetMainThreadPolicy(aPolicy).
-- In Dispatch for Main: when the current thread is not the main thread (neither TThread.CurrentThread.ThreadID = fMainThreadId nor IEventNexusScheduler.IsMainThread), first attempt to marshal via IEventNexusScheduler.RunOnMain; if the policy forbids marshaling, branch on gMainThreadPolicy:
-  - Strict → raise EmaxMainThreadRequired with a clear message.
-  - DegradeToAsync → schedule via IEventNexusScheduler.RunAsync.
-  - DegradeToPosting (default) → run handler inline in the calling thread.
-- Add TTestMainThreadPolicy in tests/src/MaxEventNexus.Main.Tests.pas to verify each mode across Posting/Main/Async/Background paths.
-
-
-### T-1035 Extend GUID topics to advanced controls
-Summary: Ensure GUID-keyed topics participate in sticky, coalesce, queue policy, and metrics APIs just like typed/named topics.
-
-Details:
-- Spec: spec.md §5.1, §8.4, §8.7, §11.1.
-- Teach EnableSticky/EnableCoalesce*/SetPolicy*/GetPolicy*/GetStats* helpers to operate on GUID topics; add GUID-aware cache/pending dictionaries where missing.
-- Update metrics aggregation so GUID topics surface via GetStatsNamed/GetTotals consistently.
-- Add unit tests covering sticky/coalesce/queue policies for GUID topics plus TryPostGuidOf semantics.
-
 ## Next – This Week
-
-### T-1002 Verify async error hook behavior
-Summary: Ensure Async/Main/Background deliveries forward handler exceptions to the async error hook without breaking synchronous aggregate semantics.
-
-Details:
-- Spec: spec.md §6, §11.
-- Confirm current Dispatch implementation behaves as designed: Posting aggregates handler exceptions into EmaxAggregateException; Async/Main/Background route handler exceptions to gAsyncError.
-- Add TTestAsyncExceptions to tests/src/MaxEventNexus.Main.Tests.pas that:
-  - Registers an Async-mode handler that always raises.
-  - Installs a gAsyncError hook capturing topic name and exception instances.
-  - Posts an event via Post<Integer> and verifies the hook is invoked and no exception escapes to the caller.
-- Extend the test to cover Main and Background modes as well; only adjust implementation if tests expose a discrepancy with the spec.
-
-### T-1004 Implement Metrics Throttling
-Summary: Throttle metric callback invocations so high-frequency topics do not call the sampling hook on every counter update.
-
-Details:
-- Spec: spec.md §11.1, §11.2.
-- Add fLastMetricSample: UInt64 to TmaxTopicBase and gMetricSampleIntervalMs: Cardinal defaulting to 1000 ms.
-- Implement maxSetMetricSampleInterval(aIntervalMs: Cardinal).
-- Update TouchMetrics to check elapsed time via GetTickCount64 and only invoke gMetricSample when enough time has passed and a metric name is set.
-- Add TTestMetricsThrottling to tests/src/MaxEventNexus.Main.Tests.pas.
-
-### T-1005 Fix High-Water Reset Logic
-Summary: Make high-water queue depth warnings reset when depth falls back below the low-water threshold.
-
-Details:
-- Spec: TmaxTopicBase.CheckHighWater in maxLogic.EventNexus.pas.
-- For unbounded topics (MaxDepth = 0), set fWarnedHighWater to True and call TouchMetrics when CurrentQueueDepth > 10000.
-- Reset fWarnedHighWater to False (and TouchMetrics) once depth drops to ≤ 5000 so new warnings can fire later.
-- Add TTestHighWaterReset to tests/src/MaxEventNexus.Main.Tests.pas.
-
-### T-1009 Remove DEBUG Logging
-Summary: Remove or hard-gate DebugLog so production builds aren’t cluttered with debug plumbing.
-
-Details:
-- Replace ad-hoc {$IFDEF DEBUG} DebugLog(...) {$ENDIF} calls with either removal or a dedicated {$IFDEF max_TRACE} guard that is off by default.
-- Remove gDebugLogPath, gDebugCs, DebugEnsureLog, and DebugLog from maxLogic.EventNexus.pas if no longer needed.
-- Optionally add {$UNDEF max_TRACE} to fpc_delphimode.inc.
-
-### T-1016 Add Weak-Target ABA Test
-Summary: Add a unit test that verifies weak-target generation/weak refs prevent ABA reuse issues.
-
-Details:
-- Spec: spec.md §15 (testing matrix).
-- Allocate object at address A, free it, allocate another object reusing A, and check that queued work for the old object does not dispatch to the new instance.
-- Implement as TTestWeakTargetABA in tests/src/MaxEventNexus.Main.Tests.pas.
-
-### T-1017 Add Stress Test (1M posts)
-Summary: Add a stress test posting 1M events across topics and delivery modes to validate stability.
-
-Details:
-- Spec: spec.md §15 (testing matrix).
-- Implement TTestStress that posts ~1M events across ~10 topics with mixed delivery modes, asserting no deadlocks or crashes and optionally checking metrics.
 
 ### T-1018 Add FPC Compatibility Test
 Summary: Run the full test suite on FPC 3.2.2 under CI to guarantee cross-compiler parity.
@@ -122,27 +23,6 @@ Details:
 - Summarize major features, fixes, and any breaking changes.
 - Keep task IDs referenced (e.g., “(T-1001)”) for traceability.
 
-### T-1021 Update README.md
-Summary: Update README.md with performance notes and advanced usage examples (sticky, coalesce, queue policies).
-
-Details:
-- Add a performance section summarizing expected throughput/latency envelopes and links to benchmarks.
-- Add examples showing EnableSticky, EnableCoalesce*, and queue policy configuration with TryPost* semantics.
-- Keep README focused and practical; defer deep details to spec.md and DESIGN.md.
-
-### T-1023 Add weak-target and auto-unsubscribe tests
-Summary: Add focused unit tests covering weak-target liveness, AutoSubscribe cleanup, and UnsubscribeAllFor across Delphi and FPC.
-
-Details:
-- Spec: spec.md §6, §15; DESIGN.md “Weak-Target Liveness”; references/weak-references*.md.
-- Extend tests/src/MaxEventNexus.Main.Tests.pas with scenarios that:
-  - Subscribe object methods (typed, named, GUID) and verify no further deliveries after the object is freed without explicit Unsubscribe, relying on weak targets to prevent use-after-free.
-  - Verify AutoSubscribe + AutoUnsubscribe cooperate with UnsubscribeAllFor, including when AutoUnsubscribe is forgotten, and that fAutoSubs does not leak subscriptions.
-  - Confirm releasing the last ImaxSubscription reference (assigning the interface to nil) automatically unsubscribes and stops further deliveries.
-  - Simulate queued-before-cancel behavior by posting Async/Main work, releasing the subscription before dispatch, and asserting the liveness guard skips execution.
-  - Validate that handler exceptions still increment ExceptionsTotal and do not mask weak-target liveness failures.
-- Ensure these tests run on both Delphi and FPC, adapting where necessary for anonymous vs nested method forms.
-
 ### T-1025 Align spec/docs with actual API
 Summary: Reconcile spec.md/README.md with the implemented API, especially around generic interfaces, helpers, and scheduler behavior.
 
@@ -152,15 +32,6 @@ Details:
 - Clarify how Main delivery degrades under different TmaxMainThreadPolicy modes once T-1003 is implemented, and update examples to use the current scheduling adapters.
 - Ensure migration notes (MIGRATION.md) clearly map iPub/NX Horizon concepts to the actual EventNexus APIs as implemented.
 
-### T-1026 Add metrics callback and GetTotals tests
-Summary: Add tests around maxSetMetricCallback and ImaxBusMetrics.GetTotals to validate metrics aggregation.
-
-Details:
-- Spec: spec.md §11.1, §11.2.
-- Add tests that install a metric callback, perform posts across typed, named, and GUID topics, and verify that the callback sees consistent TmaxTopicStats snapshots.
-- Add tests for GetTotals aggregating across all topics and verifying PostsTotal/DeliveredTotal/DroppedTotal/ExceptionsTotal and queue depth fields.
-- Ensure tests remain cheap to run and do not introduce background timers.
-
 ### T-1027 Clarify/default queue policy categories
 Summary: Capture the queue-category preset strategy and override hooks so behavior stays transparent.
 
@@ -168,43 +39,6 @@ Details:
 - Spec: spec.md §8.7.
 - Produce a short ADR outlining how topics map to the “state/action/control-plane” presets, how overrides work, and how this integrates with metrics/high-water warnings (coordinate with T-1029).
 - After implementation, update spec.md/README.md with a clear table of defaults plus override guidance, and ensure tests cover the override entry points.
-
-### T-1029 Implement default queue policy presets
-Summary: Apply the state/action/control-plane defaults from the spec when no explicit queue policy is provided.
-
-Details:
-- Spec: spec.md §8.7.
-- Define simple heuristics/configuration to map topics into "state", "action", or "control-plane" categories (e.g., via explicit registration or sane defaults) and apply the required MaxDepth/Overflow/DeadlineUs values automatically.
-- Ensure unnamed typed topics adopt the correct preset on first subscription/post; named topics should inherit defaults unless caller overrides via SetPolicy*.
-- Update queue bookkeeping so warnings/metrics reflect the preset policies, and extend tests to cover default policy selection and overflow behavior without manual configuration.
-- Document the preset behavior (tie-in with T-1025) and provide an escape hatch for callers needing custom defaults.
-
-### T-1030 Ensure runtime scheduler swaps take effect
-Summary: Ensure maxSetAsyncScheduler updates the active bus instance even after construction.
-
-Details:
-- Spec: spec.md §4.1 (Threading & maxAsync Integration).
-- Under the same lock protecting gBus, update the live TmaxBus.fAsync reference (and any fallback scheduler) whenever maxSetAsyncScheduler is called after the singleton exists; treat nil as a request to revert to the default scheduler.
-- Add a test in tests/src/MaxEventNexus.Main.Tests.pas that installs a capturing scheduler after creating maxBus and verifies subsequent Async/Main/Background posts run on the swapped scheduler.
-- Confirm no leaks by releasing references to the previous scheduler once swapped, and coordinate with T-1024 for concurrency safety.
-
-### T-1031 Remove Post hot-path heap allocations
-Summary: Eliminate steady-state allocations in Post/TryPost paths to satisfy spec performance requirements.
-
-Details:
-- Spec: spec.md §7 (Performance Requirements).
-- Profile Post<T> and PostNamedOf<T> to identify allocations (e.g., TInvokeBox instances) under Delphi and FPC using FastMM or FPC heap tracing.
-- Introduce stack-based invoke shims or per-topic object pools so dispatch uses preallocated records; validate that warmed Post loops allocate zero bytes.
-- Extend bench/BenchHarness.pas or add a dedicated regression test that asserts allocation counts remain flat once the bus is warmed.
-
-### T-1036 Make metrics snapshot lock-free
-Summary: Serve GetStats*/GetTotals without taking the global bus lock so metrics reads stay cheap under contention.
-
-Details:
-- Spec: spec.md §11.1 (Diagnostics & Metrics) and §7 (Performance Requirements) require lock-free/low-contention metrics.
-- Refactor TmaxTopicBase stats storage so reads use atomics or per-topic snapshots (e.g., UInt64/UInt32 atomics or versioned records) instead of the monolithic bus lock; ensure TouchMetrics remains cheap.
-- Update GetStatsFor/GetStatsNamed/GetTotals to aggregate using lock-free snapshots; document memory-ordering assumptions.
-- Add concurrency tests (e.g., TTestMetricsConcurrent) that hammer Post/metrics reads from multiple threads to confirm no deadlocks and acceptable performance.
 
 ### T-1039 Document lock-free posting changes
 Summary: Update DESIGN.md and CHANGELOG.md to describe the new concurrency model and user-visible behavior.
@@ -214,26 +48,7 @@ Details:
 - Mention any new diagnostics or guidance for integrators in README/DESIGN as appropriate.
 - Add changelog entry under [Unreleased] “Changed”.
 
-### T-1033 Rename EmaxAggregateException to EmaxDispatchError
-Summary: Rename the aggregate exception class to match spec and ensure async error aggregation uses consistent naming.
-
-Details:
-- Spec: spec.md §11 (Error Semantics) specifies EmaxDispatchError.
-- Rename EmaxAggregateException to EmaxDispatchError throughout the codebase and update all references.
-- Ensure that the async error hook still receives the correct exception type (likely still Exception).
-- Update documentation and changelog accordingly.
-
 ## Next – Later
-
-### T-1006 Optimize Deadline Wrapper Allocation
-Summary: Reduce allocations in Deadline overflow policy by avoiding per-item closure creation when unnecessary.
-
-Details:
-- Spec: spec.md §11.2.
-- Pre-check at enqueue time: if the queue is empty and the item will run immediately, bypass the deadline wrapper.
-- Only wrap items when Deadline policy is active and the item will sit in the queue.
-- Consider storing enqueue time in a lightweight record rather than capturing a TStopwatch in a closure.
-- Benchmark Post throughput with Deadline enabled.
 
 ### T-1007 Mitigate False Sharing in Metrics
 Summary: Reduce cache-line contention in metrics counters under multi-threaded load.
@@ -329,7 +144,146 @@ Details:
 
 ## Blocked
 
+## Ongoing
+
+### T-1042 Keep README.md in sync
+Summary: Update `README.md` when we finish a task that changes user-visible behavior so docs don’t drift from implementation.
+
+Details:
+- Add/update short “What’s New” bullets for completed tasks and keep links/current APIs accurate.
+- Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
+
 ## Done
+
+### T-1022 Implement Delphi weak-target references
+Summary: Implement proper weak-target support on Delphi so method subscriptions do not rely on access-violation probing.
+
+Details:
+- Implemented a Delphi weak-target shim (generation registry + `FreeInstance` hook) so dispatch-time liveness checks can reliably skip freed targets and lazily prune dead subscriptions.
+- Added `TTestWeakTargets` covering typed, named-of, and GUID-of method subscriptions after the target is freed.
+
+### T-1041 Fix coalescing flush and exception-path invoke ownership
+Summary: Fix coalescing dispatch reliability and remove exception-path double-frees in invoke boxing.
+
+Details:
+- Coalescing now schedules a single per-topic flush and clears pending state when there are no subscribers, preventing later posts from being starved.
+- Removed `lBox.Free` from exception capture paths because invoke boxes free themselves in their generated handler procs.
+
+### T-1040 Remove global bus lock
+Summary: Eliminate the global bus lock and use fine-grained synchronization for topic registries.
+
+Details:
+- Replaced the single `fLock` monitor with per-registry locks and made per-topic subscriber COW mutation thread-safe.
+- Updated dispatch/queue logic to avoid serializing posts across unrelated topics.
+
+### T-1003 Add Main-Thread Degradation Policy
+Summary: Introduce a configurable policy controlling how `Main` delivery behaves when invoked off the main thread.
+
+Details:
+- Added `TmaxMainThreadPolicy` + `maxSetMainThreadPolicy(...)` and implemented Strict/DegradeToAsync/DegradeToPosting behavior.
+- Added unit tests covering each policy mode.
+
+### T-1035 Extend GUID topics to advanced controls
+Summary: Ensure GUID-keyed topics participate in coalescing, queue policy, and metrics APIs like typed/named topics.
+
+Details:
+- Added `TryPostGuidOf`, GUID coalescing (`EnableCoalesceGuidOf`), GUID queue policy (`SetPolicyGuidOf`/`GetPolicyGuidOf`), and GUID stats (`GetStatsGuidOf`).
+- Added unit tests for GUID coalescing and GUID queue policy/metrics.
+
+### T-1031 Remove Post hot-path heap allocations
+Summary: Eliminate steady-state allocations in Post/TryPost paths to satisfy spec performance requirements.
+
+Details:
+- Updated Posting-mode dispatch loops to avoid per-subscriber heap allocations on the hot Post/TryPost path (Delphi/FPC), and moved exception metrics accounting into the invoke shims so Posting calls can dispatch without allocating helper closures.
+
+### T-1036 Make metrics snapshot lock-free
+Summary: Serve GetStats*/GetTotals without taking the global bus lock so metrics reads stay cheap under contention.
+
+Details:
+- Topic stats snapshots now read atomic counters without taking the bus lock; metrics aggregation reads from an immutable index snapshot.
+- Added concurrency coverage to hammer posting and metrics reads concurrently.
+
+### T-1033 Rename EmaxAggregateException to EmaxDispatchError
+Summary: Rename the aggregate exception class to match spec and ensure async error aggregation uses consistent naming.
+
+Details:
+- Renamed the aggregate dispatch exception type to `EmaxDispatchError` and updated callers.
+- Updated documentation and changelog accordingly.
+
+### T-1005 Fix High-Water Reset Logic
+Summary: Make high-water queue depth warnings reset when depth falls back below the low-water threshold.
+
+Details:
+- High-water reset now emits a metric sample on reset and added `TTestHighWaterReset`.
+
+### T-1004 Implement Metrics Throttling
+Summary: Throttle metric callback invocations so high-frequency topics do not call the sampling hook on every counter update.
+
+Details:
+- Added `gMetricSampleIntervalMs` (default 1000ms) + `maxSetMetricSampleInterval(...)` and per-topic `fLastMetricSample` to throttle `maxSetMetricCallback`.
+- Added `TTestMetricsThrottling` and ensured high-water edges emit a sample so warnings can re-trigger.
+
+### T-1002 Verify async error hook behavior
+Summary: Ensure Async/Main/Background deliveries forward handler exceptions to the async error hook without breaking synchronous aggregate semantics.
+
+Details:
+- Added `TTestAsyncExceptions.ErrorsForwardToHookNoRaise`, covering Main/Async/Background exception forwarding to `maxSetAsyncErrorHandler` without exceptions escaping to the caller.
+
+### T-1006 Optimize Deadline Wrapper Allocation
+Summary: Reduce allocations in Deadline overflow policy by avoiding per-item wrapper creation when unnecessary.
+
+Details:
+- Deadline staleness wrappers are only created when the item can actually sit in the queue (i.e., backlog exists); immediate execution skips the wrapper.
+
+### T-1030 Ensure runtime scheduler swaps take effect
+Summary: Ensure maxSetAsyncScheduler updates the active bus instance even after construction.
+
+Details:
+- `maxSetAsyncScheduler` now updates the live singleton bus (when already constructed) so subsequent Async/Main/Background deliveries use the new scheduler.
+- Added `TTestSchedulers.SchedulerSwapUpdatesLiveBus`.
+
+### T-1009 Remove DEBUG Logging
+Summary: Remove DebugLog so production builds aren’t cluttered with debug plumbing.
+
+Details:
+- Removed DEBUG logging helpers and all call-sites from `maxLogic.EventNexus.Core.pas`.
+
+### T-1016 Add Weak-Target ABA Test
+Summary: Add a unit test that verifies weak-target generation prevents ABA reuse issues.
+
+Details:
+- Added `TTestWeakTargetABA` covering address reuse and queued work safety.
+
+### T-1017 Add Stress Test (1M posts)
+Summary: Add a stress test posting 1M events across topics and delivery modes to validate stability.
+
+Details:
+- Added `TTestStress.OneMillionPosts` using the inline scheduler to avoid thread explosion.
+
+### T-1026 Add metrics callback and GetTotals tests
+Summary: Add tests around maxSetMetricCallback and ImaxBusMetrics.GetTotals to validate metrics aggregation.
+
+Details:
+- Added `TTestMetricsCallbackTotals` verifying callback snapshots and GetTotals aggregation across topic types.
+
+### T-1023 Add weak-target and auto-unsubscribe tests
+Summary: Add focused unit tests covering weak-target liveness and auto-unsubscribe/token teardown.
+
+Details:
+- Added tests covering token auto-unsubscribe, queued-before-cancel skipping, and Delphi-only AutoSubscribe cleanup.
+
+### T-1029 Implement default queue policy presets
+Summary: Apply the state/action/control-plane defaults when no explicit queue policy is provided.
+
+Details:
+- Added `TmaxQueuePreset` + `maxSetQueuePresetNamed/maxSetQueuePresetForType/maxSetQueuePresetGuid`.
+- Applied presets on topic creation and via GetPolicy* when a preset exists but the topic hasn’t been created yet.
+
+### T-1021 Update README.md
+Summary: Update README.md with performance notes and advanced usage examples (sticky, coalesce, queue policies).
+
+Details:
+- Updated README with new features callouts, Delphi vs FPC usage notes, and advanced usage snippets.
 
 ### T-1001 Implement AutoSubscribe/AutoUnsubscribe (Delphi only)
 Summary: Implement AutoSubscribe/AutoUnsubscribe using RTTI and maxSubscribeAttribute so attribute-based subscriptions work as specified on Delphi.
@@ -373,7 +327,7 @@ Summary: Implement weak-target handling for method subscribers across Delphi and
 
 Details:
 - Status: DONE.
-- Notes: FPC uses a generation registry; Delphi uses raw pointers for now; liveness checked on dispatch.
+- Notes: Delphi 12+ and FPC use a generation registry; liveness is checked on dispatch.
 
 ### T-1024 Make maxBus singleton factory thread-safe
 Summary: Guarded `maxBus` construction and async scheduler swapping with a global monitor and added regression tests.

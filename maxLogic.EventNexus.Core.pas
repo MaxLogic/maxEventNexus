@@ -13,7 +13,7 @@ interface
 uses
   Classes, SysUtils,
   {$IFDEF max_DELPHI}
-  System.Diagnostics, System.Generics.Collections, System.SyncObjs, System.TypInfo, System.Rtti,
+  System.Diagnostics, System.Generics.Collections, System.Generics.Defaults, System.SyncObjs, System.TypInfo, System.Rtti,
   {$ELSE}
   Generics.Collections, TypInfo, maxLogic.fpc.compatibility, maxLogic.fpc.diagnostics,
   {$ENDIF}
@@ -48,10 +48,15 @@ type
   TmaxExceptionList = TObjectList<Exception>;
   {$ENDIF}
 
+  {$IFDEF max_FPC}
+  TmaxMonitorObject = TMLMonitorObject;
+  {$ELSE}
   TmaxMonitorObject = TObject;
+  {$ENDIF}
 
   TmaxDelivery = (Posting, Main, Async, Background);
   TmaxOverflow = (DropNewest, DropOldest, Block, Deadline);
+  TmaxMainThreadPolicy = (Strict, DegradeToAsync, DegradeToPosting);
 
   ImaxSubscription = interface
     ['{79C1B0D9-6A9E-4C6B-8E96-88A84E4F1E03}']
@@ -65,7 +70,8 @@ type
     procedure PostNamed(const aName: TmaxString);
     function TryPostNamed(const aName: TmaxString): boolean;
 
-    // Generic methods (available on all compilers)
+    {$IFDEF max_FPC}
+    // Generic methods (FPC supports generic interface methods)
     function Subscribe<T>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
     procedure Post<T>(const aEvent: T);
     function TryPost<T>(const aEvent: T): boolean; overload;
@@ -78,6 +84,8 @@ type
     function SubscribeGuidOf<T: IInterface>(const aHandler: TmaxProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
     function SubscribeGuidOf<T: IInterface>(const aHandler: TmaxObjProcOf<T>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
     procedure PostGuidOf<T: IInterface>(const aEvent: T);
+    function TryPostGuidOf<T: IInterface>(const aEvent: T): boolean; overload;
+    {$ENDIF}
 
     procedure UnsubscribeAllFor(const aTarget: TObject);
     procedure Clear;
@@ -85,12 +93,17 @@ type
 
   ImaxBusAdvanced = interface(ImaxBus)
     ['{AB5E6E6D-8B1F-4B63-8B59-8A3B9D8C71B1}']
+    {$IFDEF max_FPC}
     procedure EnableSticky<T>(aEnable: boolean);
+    {$ENDIF}
     procedure EnableStickyNamed(const aName: string; aEnable: boolean);
 
     // Coalescing configuration
+    {$IFDEF max_FPC}
     procedure EnableCoalesceOf<T>(const aKeyOf: TmaxKeyFunc<T>; aWindowUs: integer = 0);
     procedure EnableCoalesceNamedOf<T>(const aName: string; const aKeyOf: TmaxKeyFunc<T>; aWindowUs: integer = 0);
+    procedure EnableCoalesceGuidOf<T: IInterface>(const aKeyOf: TmaxKeyFunc<T>; aWindowUs: integer = 0);
+    {$ENDIF}
   end;
 
   TmaxQueuePolicy = record
@@ -99,14 +112,20 @@ type
     DeadlineUs: Int64;
   end;
 
+  TmaxQueuePreset = (Unspecified, State, Action, ControlPlane);
+
   ImaxBusQueues = interface
     ['{E55F7B60-9B31-4C80-9B2C-8D1F0E26FF9C}']
     procedure SetPolicyNamed(const aName: string; const aPolicy: TmaxQueuePolicy);
     function GetPolicyNamed(const aName: string): TmaxQueuePolicy;
 
     // Generic policy configuration
+    {$IFDEF max_FPC}
     procedure SetPolicyFor<T>(const aPolicy: TmaxQueuePolicy);
     function GetPolicyFor<T>: TmaxQueuePolicy;
+    procedure SetPolicyGuidOf<T: IInterface>(const aPolicy: TmaxQueuePolicy);
+    function GetPolicyGuidOf<T: IInterface>: TmaxQueuePolicy;
+    {$ENDIF}
   end;
 
   TmaxTopicStats = record
@@ -123,7 +142,10 @@ type
     function GetStatsNamed(const aName: string): TmaxTopicStats;
 
     // Generic statistics
+    {$IFDEF max_FPC}
     function GetStatsFor<T>: TmaxTopicStats;
+    function GetStatsGuidOf<T: IInterface>: TmaxTopicStats;
+    {$ENDIF}
 
     function GetTotals: TmaxTopicStats;
   end;
@@ -154,6 +176,7 @@ type
   end;
 
   EmaxInvalidSubscription = class(Exception);
+  EmaxMainThreadRequired = class(Exception);
 
   EmaxDispatchError = class(Exception)
   private
@@ -174,8 +197,13 @@ type
 function maxBus: ImaxBus;
 procedure maxSetAsyncErrorHandler(const aHandler: TOnAsyncError);
 procedure maxSetMetricCallback(const aSampler: TOnMetricSample);
+procedure maxSetMetricSampleInterval(aIntervalMs: Cardinal);
+procedure maxSetQueuePresetNamed(const aName: string; aPreset: TmaxQueuePreset);
+procedure maxSetQueuePresetForType(const aType: PTypeInfo; aPreset: TmaxQueuePreset);
+procedure maxSetQueuePresetGuid(const aGuid: TGuid; aPreset: TmaxQueuePreset);
 procedure maxSetAsyncScheduler(const aScheduler: IEventNexusScheduler);
 function maxGetAsyncScheduler: IEventNexusScheduler;
+procedure maxSetMainThreadPolicy(aPolicy: TmaxMainThreadPolicy);
 
 {$IFDEF max_DELPHI}
 function maxAsBus(const aIntf: IInterface): TObject;
@@ -202,8 +230,15 @@ type
     fProcessing: boolean;
     fSticky: boolean;
     fPolicy: TmaxQueuePolicy;
-    fStats: TmaxTopicStats;
+    fPolicyExplicit: boolean;
+    fPostsTotal: Int64;
+    fDeliveredTotal: Int64;
+    fDroppedTotal: Int64;
+    fExceptionsTotal: Int64;
+    fMaxQueueDepth: UInt32;
+    fCurrentQueueDepth: UInt32;
     fMetricName: TmaxString;
+    fLastMetricSample: UInt64;
     fWarnedHighWater: boolean;
     procedure TouchMetrics;
     procedure CheckHighWater; inline;
@@ -215,12 +250,66 @@ type
     procedure RemoveByTarget(const aTarget: TObject); virtual; abstract;
     procedure SetSticky(aEnable: boolean); virtual;
     procedure SetPolicy(const aPolicy: TmaxQueuePolicy);
+    procedure SetPolicyImplicit(const aPolicy: TmaxQueuePolicy);
     function GetPolicy: TmaxQueuePolicy;
+    function HasExplicitPolicy: boolean; inline;
     procedure AddPost; inline;
     procedure AddDelivered(aCount: integer); inline;
     procedure AddDropped; inline;
     procedure AddException; inline;
     function GetStats: TmaxTopicStats; inline;
+    procedure ResetTopic; virtual;
+  end;
+
+  TmaxTypedMetricTopic = record
+    Key: PTypeInfo;
+    Topic: TmaxTopicBase;
+  end;
+
+  TmaxNamedMetricTopic = record
+    NameKey: TmaxString;
+    Topic: TmaxTopicBase;
+  end;
+
+  TmaxNamedTypedMetricTopic = record
+    NameKey: TmaxString;
+    Key: PTypeInfo;
+    Topic: TmaxTopicBase;
+  end;
+
+  TmaxGuidMetricTopic = record
+    Key: TGuid;
+    Topic: TmaxTopicBase;
+  end;
+
+  ImaxMetricsIndex = interface
+    ['{8DCCB2C3-3B63-4E9C-9F01-1F2A0D7D4B3A}']
+    function AddTyped(const aKey: PTypeInfo; const aTopic: TmaxTopicBase): ImaxMetricsIndex;
+    function AddNamed(const aNameKey: TmaxString; const aTopic: TmaxTopicBase): ImaxMetricsIndex;
+    function AddNamedTyped(const aNameKey: TmaxString; const aKey: PTypeInfo; const aTopic: TmaxTopicBase): ImaxMetricsIndex;
+    function AddGuid(const aKey: TGuid; const aTopic: TmaxTopicBase): ImaxMetricsIndex;
+    function GetStatsForType(const aKey: PTypeInfo): TmaxTopicStats;
+    function GetStatsNamed(const aNameKey: TmaxString): TmaxTopicStats;
+    function GetStatsGuid(const aKey: TGuid): TmaxTopicStats;
+    function GetTotals: TmaxTopicStats;
+  end;
+
+  TmaxMetricsIndex = class(TInterfacedObject, ImaxMetricsIndex)
+  private
+    fTyped: TArray<TmaxTypedMetricTopic>;
+    fNamed: TArray<TmaxNamedMetricTopic>;
+    fNamedTyped: TArray<TmaxNamedTypedMetricTopic>;
+    fGuid: TArray<TmaxGuidMetricTopic>;
+  public
+    constructor CreateEmpty;
+    function AddTyped(const aKey: PTypeInfo; const aTopic: TmaxTopicBase): ImaxMetricsIndex;
+    function AddNamed(const aNameKey: TmaxString; const aTopic: TmaxTopicBase): ImaxMetricsIndex;
+    function AddNamedTyped(const aNameKey: TmaxString; const aKey: PTypeInfo; const aTopic: TmaxTopicBase): ImaxMetricsIndex;
+    function AddGuid(const aKey: TGuid; const aTopic: TmaxTopicBase): ImaxMetricsIndex;
+    function GetStatsForType(const aKey: PTypeInfo): TmaxTopicStats;
+    function GetStatsNamed(const aNameKey: TmaxString): TmaxTopicStats;
+    function GetStatsGuid(const aKey: TGuid): TmaxTopicStats;
+    function GetTotals: TmaxTopicStats;
   end;
 
   {$IFDEF FPC}
@@ -231,6 +320,9 @@ type
   TmaxGuidTopicDict = specialize TObjectDictionary<TGuid, TmaxTopicBase>;
   TmaxBoolDictOfTypeInfo = specialize TDictionary<PTypeInfo, boolean>;
   TmaxBoolDictOfString = specialize TDictionary<TmaxString, boolean>;
+  TmaxPresetDictOfTypeInfo = specialize TDictionary<PTypeInfo, TmaxQueuePreset>;
+  TmaxPresetDictOfString = specialize TDictionary<TmaxString, TmaxQueuePreset>;
+  TmaxPresetDictOfGuid = specialize TDictionary<TGuid, TmaxQueuePreset>;
   TmaxSubList = specialize TList<ImaxSubscription>;
   TmaxAutoSubDict = specialize TObjectDictionary<TObject, TmaxSubList>;
   {$ELSE}
@@ -240,6 +332,9 @@ type
   TmaxGuidTopicDict = TObjectDictionary<TGuid, TmaxTopicBase>;
   TmaxBoolDictOfTypeInfo = TDictionary<PTypeInfo, boolean>;
   TmaxBoolDictOfString = TDictionary<TmaxString, boolean>;
+  TmaxPresetDictOfTypeInfo = TDictionary<PTypeInfo, TmaxQueuePreset>;
+  TmaxPresetDictOfString = TDictionary<TmaxString, TmaxQueuePreset>;
+  TmaxPresetDictOfGuid = TDictionary<TGuid, TmaxQueuePreset>;
   TmaxSubList = TList<ImaxSubscription>;
   TmaxAutoSubDict = TObjectDictionary<TObject, TmaxSubList>;
   {$ENDIF}
@@ -248,11 +343,7 @@ type
 
   TmaxWeakTarget = record
     Raw: TObject;
-    {$IFDEF max_DELPHI}
-    // no extra fields on Delphi; fallback to raw pointer only
-    {$ELSE}
     Generation: UInt32;
-    {$ENDIF}
     class function Create(const aObj: TObject): TmaxWeakTarget; static;
     function Matches(const aObj: TObject): boolean;
     function IsAlive: boolean;
@@ -276,8 +367,9 @@ type
     fWindowUs: integer;
     fPending: {$IFDEF FPC}specialize {$ENDIF}TDictionary<TmaxString, t>;
     fPendingLock: TmaxMonitorObject;
+    fFlushScheduled: boolean;
     fNextToken: TmaxSubscriptionToken;
-    procedure PruneDead;
+    procedure PruneDeadLocked;
   public
     constructor Create;
     function Add(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery; out aState: ImaxSubscriptionState; const aTarget: TObject = nil): TmaxSubscriptionToken;
@@ -285,6 +377,7 @@ type
     function Snapshot: TArray<TTypedSubscriber<t>>;
     procedure RemoveByTarget(const aTarget: TObject); override;
     procedure SetSticky(aEnable: boolean); override;
+    procedure ResetTopic; override;
     procedure Cache(const aEvent: t);
     function TryGetCached(out aEvent: t): boolean;
     procedure SetCoalesce(const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer);
@@ -292,6 +385,8 @@ type
     function CoalesceKey(const aEvent: t): TmaxString;
     function AddOrUpdatePending(const aKey: TmaxString; const aEvent: t): boolean;
     function PopPending(const aKey: TmaxString; out aEvent: t): boolean;
+    function PopAllPending(out aEvents: TArray<t>): boolean;
+    procedure ClearPending;
     function CoalesceWindow: integer;
     destructor Destroy; override;
   end;
@@ -310,34 +405,52 @@ type
   {$ENDIF}
 
   TmaxBus = class(TInterfacedObject, ImaxBus, ImaxBusAdvanced, ImaxBusQueues, ImaxBusMetrics, ImaxBusImpl)
-  private
-    fAsync: IEventNexusScheduler;
-    fLock: TmaxMonitorObject;
-    fTyped: TmaxTypeTopicDict;
-    fNamed: TmaxNameTopicDict;
-    fNamedTyped: TmaxNameTypeTopicDict;
-    fGuid: TmaxGuidTopicDict;
-    fStickyTypes: TmaxBoolDictOfTypeInfo;
-    fStickyNames: TmaxBoolDictOfString;
-    {$IFDEF max_DELPHI}
-    fAutoSubs: TmaxAutoSubDict;
-    {$ENDIF}
-    fMainThreadId: TThreadID;
-    function ScheduleTypedCoalesce<t>(const aTopicName: TmaxString;
-      aTopic: TTypedTopic<t>; const aSubs: TArray<TTypedSubscriber<t>>;
-      const aKey: TmaxString): boolean;
-  {$IFDEF max_DELPHI}
-    function InvokeGenericObjectSubscribe(const aMethodName: string; const aGenericType: PTypeInfo;
-      const aMethodPtr: TMethod; aDelivery: TmaxDelivery; const aPrefixArgs: array of TValue): ImaxSubscription;
+	  private
+	    fAsync: IEventNexusScheduler;
+	    fTypedLock: TmaxMonitorObject;
+	    fNamedLock: TmaxMonitorObject;
+	    fNamedTypedLock: TmaxMonitorObject;
+	    fGuidLock: TmaxMonitorObject;
+	    fConfigLock: TmaxMonitorObject;
+	    fMetricsLock: TmaxMonitorObject;
+	    fMetricsIndex: ImaxMetricsIndex;
+	    fTyped: TmaxTypeTopicDict;
+	    fNamed: TmaxNameTopicDict;
+	    fNamedTyped: TmaxNameTypeTopicDict;
+		    fGuid: TmaxGuidTopicDict;
+	    fStickyTypes: TmaxBoolDictOfTypeInfo;
+	    fStickyNames: TmaxBoolDictOfString;
+	    fPresetTypes: TmaxPresetDictOfTypeInfo;
+	    fPresetNames: TmaxPresetDictOfString;
+	    fPresetGuids: TmaxPresetDictOfGuid;
+		    {$IFDEF max_DELPHI}
+		    fAutoSubsLock: TmaxMonitorObject;
+		    fAutoSubs: TmaxAutoSubDict;
+		    {$ENDIF}
+			    fMainThreadId: TThreadID;
+			    procedure SetAsyncScheduler(const aAsync: IEventNexusScheduler);
+		    function ScheduleTypedCoalesce<t>(const aTopicName: TmaxString;
+		      aTopic: TTypedTopic<t>; const aSubs: TArray<TTypedSubscriber<t>>): boolean;
+		    procedure PublishMetricTypedTopic(const aKey: PTypeInfo; const aTopic: TmaxTopicBase);
+		    procedure PublishMetricNamedTopic(const aNameKey: TmaxString; const aTopic: TmaxTopicBase);
+		    procedure PublishMetricNamedTypedTopic(const aNameKey: TmaxString; const aKey: PTypeInfo; const aTopic: TmaxTopicBase);
+		    procedure PublishMetricGuidTopic(const aKey: TGuid; const aTopic: TmaxTopicBase);
+	  {$IFDEF max_DELPHI}
+	    function InvokeGenericObjectSubscribe(const aMethodName: string; const aGenericType: PTypeInfo;
+	      const aMethodPtr: TMethod; aDelivery: TmaxDelivery; const aPrefixArgs: array of TValue): ImaxSubscription;
     procedure RememberAutoSubscription(const aInstance: TObject; const aSub: ImaxSubscription);
     procedure AutoSubscribeInstance(const aInstance: TObject);
     procedure AutoUnsubscribeInstance(const aInstance: TObject);
-  {$ENDIF}
-  public
-    function Subscribe<t>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
-    function Subscribe<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
-    procedure Post<t>(const aEvent: t);
-    function TryPost<t>(const aEvent: t): boolean; overload;
+	  {$ENDIF}
+	  public
+	    class function PolicyForPreset(aPreset: TmaxQueuePreset): TmaxQueuePolicy; static;
+	    procedure SetQueuePresetForType(const aKey: PTypeInfo; aPreset: TmaxQueuePreset);
+	    procedure SetQueuePresetNamed(const aNameKey: TmaxString; aPreset: TmaxQueuePreset);
+	    procedure SetQueuePresetGuid(const aGuid: TGuid; aPreset: TmaxQueuePreset);
+	    function Subscribe<t>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
+	    function Subscribe<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
+	    procedure Post<t>(const aEvent: t);
+	    function TryPost<t>(const aEvent: t): boolean; overload;
 
     function SubscribeNamed(const aName: TmaxString; const aHandler: TmaxProc; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
     procedure PostNamed(const aName: TmaxString);
@@ -351,18 +464,23 @@ type
     function SubscribeGuidOf<t: IInterface>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
     function SubscribeGuidOf<t: IInterface>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
     procedure PostGuidOf<t: IInterface>(const aEvent: t);
+    function TryPostGuidOf<t: IInterface>(const aEvent: t): boolean; overload;
     procedure UnsubscribeAllFor(const aTarget: TObject);
     procedure Clear;
     procedure EnableSticky<t>(aEnable: boolean);
     procedure EnableStickyNamed(const aName: string; aEnable: boolean);
     procedure EnableCoalesceOf<t>(const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer = 0);
     procedure EnableCoalesceNamedOf<t>(const aName: string; const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer = 0);
+    procedure EnableCoalesceGuidOf<t: IInterface>(const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer = 0);
     procedure SetPolicyFor<t>(const aPolicy: TmaxQueuePolicy);
     procedure SetPolicyNamed(const aName: string; const aPolicy: TmaxQueuePolicy);
+    procedure SetPolicyGuidOf<t: IInterface>(const aPolicy: TmaxQueuePolicy);
     function GetPolicyFor<t>: TmaxQueuePolicy;
     function GetPolicyNamed(const aName: string): TmaxQueuePolicy;
+    function GetPolicyGuidOf<t: IInterface>: TmaxQueuePolicy;
     function GetStatsFor<t>: TmaxTopicStats;
     function GetStatsNamed(const aName: string): TmaxTopicStats;
+    function GetStatsGuidOf<t: IInterface>: TmaxTopicStats;
     function GetTotals: TmaxTopicStats;
   public
     function GetSelf: TObject;
@@ -387,6 +505,7 @@ type
     function SubscribeGuidOf<t: IInterface>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; inline;
     function SubscribeGuidOf<t: IInterface>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; inline;
     procedure PostGuidOf<t: IInterface>(const aEvent: t); inline;
+    function TryPostGuidOf<t: IInterface>(const aEvent: t): boolean; inline;
     procedure EnableSticky<t>(aEnable: boolean); inline;
     procedure EnableCoalesceNamedOf<t>(const aName: string; const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer = 0); inline;
   end;
@@ -397,6 +516,7 @@ type
   public
     procedure EnableCoalesceOf<t>(const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer = 0); inline;
     procedure EnableCoalesceNamedOf<t>(const aName: string; const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer = 0); inline;
+    procedure EnableCoalesceGuidOf<t: IInterface>(const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer = 0); inline;
   end;
 
   ImaxBusQueuesHelper = record helper for ImaxBusQueues
@@ -405,6 +525,8 @@ type
   public
     procedure SetPolicyFor<t>(const aPolicy: TmaxQueuePolicy); inline;
     function GetPolicyFor<t>: TmaxQueuePolicy; inline;
+    procedure SetPolicyGuidOf<t: IInterface>(const aPolicy: TmaxQueuePolicy); inline;
+    function GetPolicyGuidOf<t: IInterface>: TmaxQueuePolicy; inline;
   end;
 
   ImaxBusMetricsHelper = record helper for ImaxBusMetrics
@@ -412,6 +534,7 @@ type
     function Impl: TmaxBus; inline;
   public
     function GetStatsFor<t>: TmaxTopicStats; inline;
+    function GetStatsGuidOf<t: IInterface>: TmaxTopicStats; inline;
   end;
   {$ENDIF}
 
@@ -429,13 +552,14 @@ type
     fSubs: TArray<TNamedSubscriber>;
     fHasLast: boolean;
     fNextToken: TmaxSubscriptionToken;
-    procedure PruneDead;
+    procedure PruneDeadLocked;
   public
     function Add(const aHandler: TmaxProc; aMode: TmaxDelivery; out aState: ImaxSubscriptionState): TmaxSubscriptionToken;
     procedure RemoveByToken(aToken: TmaxSubscriptionToken);
     function Snapshot: TArray<TNamedSubscriber>;
     procedure RemoveByTarget(const aTarget: TObject); override;
     procedure SetSticky(aEnable: boolean); override;
+    procedure ResetTopic; override;
     procedure Cache;
     function HasCached: boolean;
   end;
@@ -471,77 +595,67 @@ type
 
 var
   gAsyncError: TOnAsyncError = nil;
+  gMainThreadPolicy: TmaxMainThreadPolicy = TmaxMainThreadPolicy.DegradeToPosting;
 
 implementation
 
 uses
+  {$IFDEF max_DELPHI}
+  {$IFDEF MSWINDOWS}
+  Winapi.Windows,
+  {$ENDIF}
+  {$ENDIF}
   maxLogic.Utils,
-  {$IFDEF max_DELPHI} System.Rtti, {$ENDIF}
   {$IFDEF FPC}
   SyncObjs,
   maxLogic_EventNexus_Threading_RawThread
   {$ELSE}
   maxLogic.EventNexus.Threading.RawThread
-  {$IFDEF DEBUG}, System.IOUtils{$ENDIF}
   {$ENDIF}
   ;
+
+function AtomicRead64(var aValue: Int64): Int64; inline;
+begin
+  {$IFDEF max_FPC}
+  Result := InterlockedCompareExchange64(aValue, 0, 0);
+  {$ELSE}
+  Result := TInterlocked.Read(aValue);
+  {$ENDIF}
+end;
+
+procedure AtomicAdd64(var aValue: Int64; const aDelta: Int64); inline;
+{$IFDEF max_FPC}
+var
+  lOld: Int64;
+  lNew: Int64;
+{$ENDIF}
+begin
+  {$IFDEF max_FPC}
+  repeat
+    lOld := AtomicRead64(aValue);
+    lNew := lOld + aDelta;
+  until InterlockedCompareExchange64(aValue, lNew, lOld) = lOld;
+  {$ELSE}
+  TInterlocked.Add(aValue, aDelta);
+  {$ENDIF}
+end;
 
 resourcestring
   SAggregateOccurred = '%d exception(s) occurred';
   SInvalidBusImplementation = 'Invalid bus implementation';
 
+const
+  cGuidNull: TGUID = '{00000000-0000-0000-0000-000000000000}';
+
 
 var
   gMetricSample: TOnMetricSample = nil;
+  gMetricSampleIntervalMs: Cardinal = 1000;
+  gMetricSampleIntervalTicks: UInt64 = 0;
+  gBusLock: TmaxMonitorObject = nil;
   gBus: ImaxBus = nil;
   gAsyncScheduler: IEventNexusScheduler = nil;
   gAsyncFallback: IEventNexusScheduler = nil;
-
-{$IFDEF DEBUG}
-var
-  gDebugLogPath: string = '';
-  gDebugCs: TCriticalSection = nil;
-
-procedure DebugEnsureLog;
-begin
-  {$IFDEF max_DELPHI}
-  if gDebugLogPath = '' then
-  begin
-    gDebugLogPath := TPath.Combine(ExtractFilePath(ParamStr(0)), 'logs\bus.log');
-    if not TDirectory.Exists(TPath.GetDirectoryName(gDebugLogPath)) then
-      TDirectory.CreateDirectory(TPath.GetDirectoryName(gDebugLogPath));
-  end;
-  if gDebugCs = nil then
-    gDebugCs := TCriticalSection.Create;
-  {$ENDIF}
-end;
-
-procedure DebugLog(const aMsg: string);
-{$IFDEF max_DELPHI}
-var
-  f: TextFile;
-{$ENDIF}
-begin
-  {$IFDEF max_DELPHI}
-  DebugEnsureLog;
-  gDebugCs.Enter;
-  try
-    AssignFile(f, gDebugLogPath);
-    {$I-}
-    Append(f);
-    if IOResult <> 0 then Rewrite(f);
-    {$I+}
-    try
-      Writeln(f, FormatDateTime('hh:nn:ss.zzz', Now), ' [T', TThread.CurrentThread.ThreadID, '] ', aMsg);
-    finally
-      CloseFile(f);
-    end;
-  finally
-    gDebugCs.Leave;
-  end;
-  {$ENDIF}
-end;
-{$ENDIF}
 
   {$IFDEF FPC}
 type
@@ -748,6 +862,236 @@ end;
 {$ENDIF}
 
 {$IFDEF max_DELPHI}
+type
+  TDelphiWeakEntry = record
+    Generation: UInt32;
+    Alive: boolean;
+  end;
+
+  TDelphiObjectAccess = class(TObject);
+
+  TDelphiWeakRegistry = class
+  private
+    type
+      TFreeInstanceThunk = procedure(aSelf: TObject);
+    var
+    fEntries: TDictionary<TObject, TDelphiWeakEntry>;
+    fHooks: TDictionary<TClass, Pointer>;
+    fLock: TCriticalSection;
+    function EnsureHook(const aObj: TObject): boolean;
+    function LocateFreeInstanceSlot(const aClass: TClass; const aOrig: Pointer): PPointer;
+    function PrepareFreeInstance(const aObj: TObject): Pointer;
+  public
+    constructor Create;
+    destructor Destroy; override;
+    function Observe(const aObj: TObject): UInt32;
+    function IsAlive(const aObj: TObject; const aGeneration: UInt32): boolean;
+    class function Instance: TDelphiWeakRegistry; static;
+  end;
+
+var
+  gDelphiWeakRegistry: TDelphiWeakRegistry = nil;
+
+procedure DelphiWeakFreeInstanceHook(aSelf: TObject); forward;
+
+{ TDelphiWeakRegistry }
+
+constructor TDelphiWeakRegistry.Create;
+var
+  lObjComparer: IEqualityComparer<TObject>;
+  lClassComparer: IEqualityComparer<TClass>;
+begin
+  inherited Create;
+  lObjComparer := TEqualityComparer<TObject>.Construct(
+    function(const aLeft, aRight: TObject): Boolean
+    begin
+      Result := Pointer(aLeft) = Pointer(aRight);
+    end,
+    function(const aValue: TObject): Integer
+    var
+      lPtr: UIntPtr;
+    begin
+      lPtr := UIntPtr(aValue);
+      Result := Integer(lPtr xor (lPtr shr 32));
+    end);
+  fEntries := TDictionary<TObject, TDelphiWeakEntry>.Create(lObjComparer);
+
+  lClassComparer := TEqualityComparer<TClass>.Construct(
+    function(const aLeft, aRight: TClass): Boolean
+    begin
+      Result := Pointer(aLeft) = Pointer(aRight);
+    end,
+    function(const aValue: TClass): Integer
+    var
+      lPtr: UIntPtr;
+    begin
+      lPtr := UIntPtr(aValue);
+      Result := Integer(lPtr xor (lPtr shr 32));
+    end);
+  fHooks := TDictionary<TClass, Pointer>.Create(lClassComparer);
+  fLock := TCriticalSection.Create;
+end;
+
+destructor TDelphiWeakRegistry.Destroy;
+begin
+  fLock.Free;
+  fEntries.Free;
+  fHooks.Free;
+  inherited Destroy;
+end;
+
+class function TDelphiWeakRegistry.Instance: TDelphiWeakRegistry;
+begin
+  if gDelphiWeakRegistry = nil then
+    gDelphiWeakRegistry := TDelphiWeakRegistry.Create;
+  Result := gDelphiWeakRegistry;
+end;
+
+function TDelphiWeakRegistry.LocateFreeInstanceSlot(const aClass: TClass;
+  const aOrig: Pointer): PPointer;
+begin
+  Result := PPointer(NativeInt(aClass) + vmtFreeInstance);
+  if (Result = nil) or (Result^ <> aOrig) then
+    Result := nil;
+end;
+
+function TDelphiWeakRegistry.EnsureHook(const aObj: TObject): boolean;
+var
+  lClass: TClass;
+  lMethod: procedure of object;
+  lOrig: Pointer;
+  lSlot: PPointer;
+  {$IFDEF MSWINDOWS}
+  lOldProtect: Cardinal;
+  {$ENDIF}
+begin
+  Result := False;
+  if aObj = nil then
+    exit;
+  lClass := aObj.ClassType;
+  fLock.Enter;
+  try
+    if fHooks.ContainsKey(lClass) then
+      exit(True);
+  finally
+    fLock.Leave;
+  end;
+
+  lMethod := TDelphiObjectAccess(aObj).FreeInstance;
+  lOrig := TMethod(lMethod).Code;
+  if lOrig = @DelphiWeakFreeInstanceHook then
+    exit(True);
+
+  lSlot := LocateFreeInstanceSlot(lClass, lOrig);
+  if lSlot = nil then
+    exit(False);
+
+  fLock.Enter;
+  try
+    if fHooks.ContainsKey(lClass) then
+      exit(True);
+    fHooks.Add(lClass, lOrig);
+    {$IFDEF MSWINDOWS}
+    if VirtualProtect(lSlot, SizeOf(Pointer), PAGE_EXECUTE_READWRITE, lOldProtect) then
+    try
+      lSlot^ := @DelphiWeakFreeInstanceHook;
+    finally
+      VirtualProtect(lSlot, SizeOf(Pointer), lOldProtect, lOldProtect);
+    end
+    else
+      exit(False);
+    {$ELSE}
+    lSlot^ := @DelphiWeakFreeInstanceHook;
+    {$ENDIF}
+    Result := True;
+  finally
+    fLock.Leave;
+  end;
+end;
+
+function TDelphiWeakRegistry.PrepareFreeInstance(const aObj: TObject): Pointer;
+var
+  lEntry: TDelphiWeakEntry;
+  lClass: TClass;
+begin
+  Result := nil;
+  if aObj = nil then
+    exit;
+  fLock.Enter;
+  try
+    lClass := aObj.ClassType;
+    if not fHooks.TryGetValue(lClass, Result) then
+      Result := nil;
+    if fEntries.TryGetValue(aObj, lEntry) then
+    begin
+      lEntry.Alive := False;
+      if lEntry.Generation = High(UInt32) then
+        lEntry.Generation := 1
+      else
+        Inc(lEntry.Generation);
+      fEntries.AddOrSetValue(aObj, lEntry);
+    end
+    else
+    begin
+      lEntry.Generation := 1;
+      lEntry.Alive := False;
+      fEntries.Add(aObj, lEntry);
+    end;
+  finally
+    fLock.Leave;
+  end;
+end;
+
+function TDelphiWeakRegistry.Observe(const aObj: TObject): UInt32;
+var
+  lEntry: TDelphiWeakEntry;
+begin
+  if aObj = nil then
+    exit(0);
+  if not EnsureHook(aObj) then
+    exit(0);
+  fLock.Enter;
+  try
+    if fEntries.TryGetValue(aObj, lEntry) then
+    begin
+      lEntry.Alive := True;
+      fEntries.AddOrSetValue(aObj, lEntry);
+      exit(lEntry.Generation);
+    end;
+    lEntry.Generation := 1;
+    lEntry.Alive := True;
+    fEntries.Add(aObj, lEntry);
+    Result := lEntry.Generation;
+  finally
+    fLock.Leave;
+  end;
+end;
+
+function TDelphiWeakRegistry.IsAlive(const aObj: TObject; const aGeneration: UInt32): boolean;
+var
+  lEntry: TDelphiWeakEntry;
+begin
+  if (aObj = nil) or (aGeneration = 0) then
+    exit(True);
+  fLock.Enter;
+  try
+    if fEntries.TryGetValue(aObj, lEntry) then
+      Result := lEntry.Alive and (lEntry.Generation = aGeneration)
+    else
+      Result := False;
+  finally
+    fLock.Leave;
+  end;
+end;
+
+procedure DelphiWeakFreeInstanceHook(aSelf: TObject);
+var
+  lOrig: Pointer;
+begin
+  lOrig := TDelphiWeakRegistry.Instance.PrepareFreeInstance(aSelf);
+  if lOrig <> nil then
+    TDelphiWeakRegistry.TFreeInstanceThunk(lOrig)(aSelf);
+end;
 
 { maxSubscribeAttribute }
 
@@ -800,14 +1144,14 @@ end;
 class function TmaxWeakTarget.Create(const aObj: TObject): TmaxWeakTarget;
 begin
   Result.Raw := aObj;
-  {$IFDEF max_DELPHI}
-  // no-op; use Raw only on Delphi
-  {$ELSE}
   if aObj <> nil then
+    {$IFDEF max_DELPHI}
+    Result.Generation := TDelphiWeakRegistry.Instance.Observe(aObj)
+    {$ELSE}
     Result.Generation := TFpcWeakRegistry.Instance.Observe(aObj)
+    {$ENDIF}
   else
     Result.Generation := 0;
-  {$ENDIF}
 end;
 
 function TmaxWeakTarget.Matches(const aObj: TObject): boolean;
@@ -817,10 +1161,10 @@ end;
 
 function TmaxWeakTarget.IsAlive: boolean;
 begin
-  if Raw = nil then
+  if (Raw = nil) or (Generation = 0) then
     exit(True);
   {$IFDEF max_DELPHI}
-  Result := assigned(Raw);
+  Result := TDelphiWeakRegistry.Instance.IsAlive(Raw, Generation);
   {$ELSE}
   Result := TFpcWeakRegistry.Instance.IsAlive(Raw, Generation);
   {$ENDIF}
@@ -891,9 +1235,16 @@ begin
   fPolicy.MaxDepth := 0;
   fPolicy.Overflow := DropNewest;
   fPolicy.DeadlineUs := 0;
+  fPolicyExplicit := False;
   fMetricName := '';
-  fWarnedHighWater := False;
-  FillChar(fStats, SizeOf(fStats), 0);
+	fLastMetricSample := 0;
+	fWarnedHighWater := False;
+	fPostsTotal := 0;
+	fDeliveredTotal := 0;
+	fDroppedTotal := 0;
+	fExceptionsTotal := 0;
+	fMaxQueueDepth := 0;
+	fCurrentQueueDepth := 0;
 end;
 
 destructor TmaxTopicBase.Destroy;
@@ -910,62 +1261,137 @@ end;
 
 procedure TmaxTopicBase.SetPolicy(const aPolicy: TmaxQueuePolicy);
 begin
-  fPolicy := aPolicy;
-  fWarnedHighWater := False;
+  TMonitor.Enter(Self);
+  try
+    fPolicy := aPolicy;
+    fPolicyExplicit := True;
+    fWarnedHighWater := False;
+  finally
+    TMonitor.Exit(Self);
+  end;
+end;
+
+procedure TmaxTopicBase.SetPolicyImplicit(const aPolicy: TmaxQueuePolicy);
+begin
+  TMonitor.Enter(Self);
+  try
+    fPolicy := aPolicy;
+    fPolicyExplicit := False;
+    fWarnedHighWater := False;
+  finally
+    TMonitor.Exit(Self);
+  end;
 end;
 
 function TmaxTopicBase.GetPolicy: TmaxQueuePolicy;
 begin
-  Result := fPolicy;
+  TMonitor.Enter(Self);
+  try
+    Result := fPolicy;
+  finally
+    TMonitor.Exit(Self);
+  end;
+end;
+
+function TmaxTopicBase.HasExplicitPolicy: boolean;
+begin
+  Result := fPolicyExplicit;
 end;
 
 procedure TmaxTopicBase.TouchMetrics;
+var
+  lNow: UInt64;
 begin
-  if (fMetricName <> '') and Assigned(gMetricSample) then
-    gMetricSample(UnicodeString(fMetricName), fStats);
+  if (fMetricName = '') or (not Assigned(gMetricSample)) then
+    Exit;
+  if gMetricSampleIntervalTicks <> 0 then
+  begin
+    lNow := UInt64(TMaxStopwatch.GetTimeStamp);
+    if (fLastMetricSample <> 0) and ((lNow - fLastMetricSample) < gMetricSampleIntervalTicks) then
+      Exit;
+    fLastMetricSample := lNow;
+	end;
+	gMetricSample(UnicodeString(fMetricName), GetStats);
 end;
 
 procedure TmaxTopicBase.CheckHighWater;
 begin
-  if fPolicy.MaxDepth = 0 then
-  begin
-    if (not fWarnedHighWater) and (fStats.CurrentQueueDepth > 10000) then
-    begin
-      fWarnedHighWater := True;
-      TouchMetrics;
-    end
-    else if fWarnedHighWater and (fStats.CurrentQueueDepth <= 5000) then
-      fWarnedHighWater := False;
-  end;
+	if fPolicy.MaxDepth = 0 then
+	begin
+		if (not fWarnedHighWater) and (fCurrentQueueDepth > 10000) then
+		begin
+			fWarnedHighWater := True;
+			fLastMetricSample := 0;
+			TouchMetrics;
+		end
+		else if fWarnedHighWater and (fCurrentQueueDepth <= 5000) then
+		begin
+			fWarnedHighWater := False;
+			fLastMetricSample := 0;
+			TouchMetrics;
+		end;
+	end;
 end;
 
 procedure TmaxTopicBase.AddPost;
 begin
-  Inc(fStats.PostsTotal);
-  TouchMetrics;
+	AtomicAdd64(fPostsTotal, 1);
+	TouchMetrics;
 end;
 
 procedure TmaxTopicBase.AddDelivered(aCount: integer);
 begin
-  Inc(fStats.DeliveredTotal, aCount);
-  TouchMetrics;
+	if aCount > 0 then
+		AtomicAdd64(fDeliveredTotal, aCount);
+	TouchMetrics;
 end;
 
 procedure TmaxTopicBase.AddDropped;
 begin
-  Inc(fStats.DroppedTotal);
-  TouchMetrics;
+	AtomicAdd64(fDroppedTotal, 1);
+	TouchMetrics;
 end;
 
 procedure TmaxTopicBase.AddException;
 begin
-  Inc(fStats.ExceptionsTotal);
-  TouchMetrics;
+	AtomicAdd64(fExceptionsTotal, 1);
+	TouchMetrics;
 end;
 
 function TmaxTopicBase.GetStats: TmaxTopicStats;
 begin
-  Result := fStats;
+	Result.PostsTotal := UInt64(AtomicRead64(fPostsTotal));
+	Result.DeliveredTotal := UInt64(AtomicRead64(fDeliveredTotal));
+	Result.DroppedTotal := UInt64(AtomicRead64(fDroppedTotal));
+	Result.ExceptionsTotal := UInt64(AtomicRead64(fExceptionsTotal));
+	Result.MaxQueueDepth := fMaxQueueDepth;
+	Result.CurrentQueueDepth := fCurrentQueueDepth;
+end;
+
+procedure TmaxTopicBase.ResetTopic;
+begin
+	TMonitor.Enter(Self);
+	try
+		fQueue.Clear;
+		fProcessing := False;
+		fSticky := False;
+		fPolicy.MaxDepth := 0;
+		fPolicy.Overflow := DropNewest;
+		fPolicy.DeadlineUs := 0;
+		fPolicyExplicit := False;
+		fMetricName := '';
+		fLastMetricSample := 0;
+		fWarnedHighWater := False;
+		fPostsTotal := 0;
+		fDeliveredTotal := 0;
+		fDroppedTotal := 0;
+		fExceptionsTotal := 0;
+		fMaxQueueDepth := 0;
+		fCurrentQueueDepth := 0;
+		TMonitor.PulseAll(Self);
+	finally
+		TMonitor.Exit(Self);
+	end;
 end;
 
 
@@ -975,17 +1401,17 @@ var
   lProc: TmaxProc;
   lTimer: TMaxStopwatch;
   lDeadlineMs: Cardinal;
+  lDeadlineUs: Int64;
+  lDeadlineTicks: Int64;
   lRemaining: integer;
   lElapsedMs: Int64;
   lEnqueueTimer: TMaxStopwatch;
   lWrapped: TmaxProc;
+  lNeedDeadlineGuard: boolean;
 begin
   Result := True;
   TMonitor.Enter(self);
   try
-    {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] pre: policy=%d Q=%d Active=%d Max=%d',
-      [UnicodeString(fMetricName), Ord(fPolicy.Overflow), fQueue.Count, Ord(fProcessing), fPolicy.MaxDepth])); {$ENDIF}
-    
     // Capacity check - ONLY count queued items, not the active one
     if (fPolicy.MaxDepth > 0) then
     begin
@@ -995,8 +1421,6 @@ begin
             if fQueue.Count >= fPolicy.MaxDepth then
             begin
               AddDropped;
-              {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] DropNewest: rejected newest (Q=%d Active=%d)',
-                [UnicodeString(fMetricName), fQueue.Count, Ord(fProcessing)])); {$ENDIF}
               exit(False);
             end;
           end;
@@ -1008,13 +1432,11 @@ begin
               if fQueue.Count > 0 then
               begin
                 fQueue.Dequeue;
-                {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] DropOldest: removed oldest queued (Q now=%d)',
-                  [UnicodeString(fMetricName), fQueue.Count])); {$ENDIF}
-                if fStats.CurrentQueueDepth > 0 then
-                  Dec(fStats.CurrentQueueDepth);
-                AddDropped;
-              end;
-            end;
+					if fCurrentQueueDepth > 0 then
+						Dec(fCurrentQueueDepth);
+					AddDropped;
+				end;
+			end;
           end;
         Block:
           begin
@@ -1026,13 +1448,13 @@ begin
             if fPolicy.DeadlineUs <= 0 then
             begin
               AddDropped;
-              {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] Deadline: DeadlineUs=0 → drop at enqueue (Q=%d Active=%d)',
-                [UnicodeString(fMetricName), fQueue.Count, Ord(fProcessing)])); {$ENDIF}
               exit(False);
             end
             else
             begin
-              lDeadlineMs := Cardinal(fPolicy.DeadlineUs div 1000);
+              lDeadlineMs := Cardinal((fPolicy.DeadlineUs + 999) div 1000);
+              if lDeadlineMs = 0 then
+                lDeadlineMs := 1;
               lTimer := TMaxStopwatch.StartNew;
               while fQueue.Count >= fPolicy.MaxDepth do
               begin
@@ -1041,8 +1463,6 @@ begin
                 if lRemaining <= 0 then
                 begin
                   AddDropped;
-                  {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] Deadline: timeout → drop at enqueue (Q=%d Active=%d)',
-                    [UnicodeString(fMetricName), fQueue.Count, Ord(fProcessing)])); {$ENDIF}
                   exit(False);
                 end;
                 TMonitor.Wait(self, Cardinal(lRemaining));
@@ -1052,30 +1472,39 @@ begin
       end;
     end;
 
-    // Wrap with deadline staleness guard
-    lEnqueueTimer := TMaxStopwatch.StartNew;
-    lWrapped :=
-      procedure
-      begin
-        if (fPolicy.Overflow = Deadline) and (fPolicy.DeadlineUs > 0) then
-        begin
-          if lEnqueueTimer.ElapsedMilliseconds >= Cardinal(fPolicy.DeadlineUs div 1000) then
-          begin
-            AddDropped;
-            Exit;
-          end;
-        end;
-        aProc();
-      end;
+    // Wrap with deadline staleness guard (only if the item can actually sit in the queue)
+    lNeedDeadlineGuard := (fPolicy.Overflow = Deadline) and (fPolicy.DeadlineUs > 0) and (fProcessing or (fQueue.Count > 0));
+    if lNeedDeadlineGuard then
+    begin
+      lDeadlineUs := fPolicy.DeadlineUs;
+      lDeadlineTicks := (lDeadlineUs * TMaxStopwatch.Frequency) div 1000000;
+      if lDeadlineTicks <= 0 then
+        lDeadlineTicks := 1;
 
-    fQueue.Enqueue(lWrapped);
-    Inc(fStats.CurrentQueueDepth);
-    if fStats.CurrentQueueDepth > fStats.MaxQueueDepth then
-      fStats.MaxQueueDepth := fStats.CurrentQueueDepth;
-    {$IFDEF DEBUG} DebugLog(Format('Enqueue[%s] queued; Q=%d Active=%d CurrDepth=%d',
-      [UnicodeString(fMetricName), fQueue.Count, Ord(fProcessing), fStats.CurrentQueueDepth])); {$ENDIF}
-    CheckHighWater;
-    TouchMetrics;
+      lEnqueueTimer := TMaxStopwatch.StartNew;
+      lWrapped :=
+        procedure
+        begin
+          if (fPolicy.Overflow = Deadline) and (fPolicy.DeadlineUs = lDeadlineUs) then
+          begin
+            if lEnqueueTimer.ElapsedTicks >= lDeadlineTicks then
+            begin
+              AddDropped;
+              Exit;
+            end;
+          end;
+          aProc();
+        end;
+    end
+    else
+      lWrapped := aProc;
+
+	fQueue.Enqueue(lWrapped);
+	Inc(fCurrentQueueDepth);
+	if fCurrentQueueDepth > fMaxQueueDepth then
+		fMaxQueueDepth := fCurrentQueueDepth;
+	CheckHighWater;
+	TouchMetrics;
     if fProcessing then
       exit(Result);
     fProcessing := True;
@@ -1095,11 +1524,11 @@ begin
         TouchMetrics;
         exit;
       end;
-      lProc := fQueue.Dequeue();
-      if fStats.CurrentQueueDepth > 0 then
-        Dec(fStats.CurrentQueueDepth);
-      CheckHighWater;
-      TouchMetrics;
+	lProc := fQueue.Dequeue();
+	if fCurrentQueueDepth > 0 then
+		Dec(fCurrentQueueDepth);
+	CheckHighWater;
+	TouchMetrics;
       TMonitor.Pulse(self);
     finally
       TMonitor.exit(self);
@@ -1138,6 +1567,232 @@ begin
   Result := TmaxString(GuidToString(aGuid));
 end;
 
+{ TmaxMetricsIndex }
+
+constructor TmaxMetricsIndex.CreateEmpty;
+begin
+  inherited Create;
+  SetLength(fTyped, 0);
+  SetLength(fNamed, 0);
+  SetLength(fNamedTyped, 0);
+  SetLength(fGuid, 0);
+end;
+
+function TmaxMetricsIndex.AddTyped(const aKey: PTypeInfo; const aTopic: TmaxTopicBase): ImaxMetricsIndex;
+var
+  lIdx: integer;
+  lLen: integer;
+  lNew: TmaxMetricsIndex;
+begin
+  if (aKey = nil) or (aTopic = nil) then
+    Exit(Self);
+  for lIdx := 0 to High(fTyped) do
+    if fTyped[lIdx].Key = aKey then
+      Exit(Self);
+
+  lNew := TmaxMetricsIndex.CreateEmpty;
+  lNew.fNamed := fNamed;
+  lNew.fNamedTyped := fNamedTyped;
+  lNew.fGuid := fGuid;
+
+  lLen := Length(fTyped);
+  SetLength(lNew.fTyped, lLen + 1);
+  for lIdx := 0 to lLen - 1 do
+    lNew.fTyped[lIdx] := fTyped[lIdx];
+  lNew.fTyped[lLen].Key := aKey;
+  lNew.fTyped[lLen].Topic := aTopic;
+  Result := lNew;
+end;
+
+function TmaxMetricsIndex.AddNamed(const aNameKey: TmaxString; const aTopic: TmaxTopicBase): ImaxMetricsIndex;
+var
+  lIdx: integer;
+  lLen: integer;
+  lNew: TmaxMetricsIndex;
+begin
+  if (aNameKey = '') or (aTopic = nil) then
+    Exit(Self);
+  for lIdx := 0 to High(fNamed) do
+    if fNamed[lIdx].NameKey = aNameKey then
+      Exit(Self);
+
+  lNew := TmaxMetricsIndex.CreateEmpty;
+  lNew.fTyped := fTyped;
+  lNew.fNamedTyped := fNamedTyped;
+  lNew.fGuid := fGuid;
+
+  lLen := Length(fNamed);
+  SetLength(lNew.fNamed, lLen + 1);
+  for lIdx := 0 to lLen - 1 do
+    lNew.fNamed[lIdx] := fNamed[lIdx];
+  lNew.fNamed[lLen].NameKey := aNameKey;
+  lNew.fNamed[lLen].Topic := aTopic;
+  Result := lNew;
+end;
+
+function TmaxMetricsIndex.AddNamedTyped(const aNameKey: TmaxString; const aKey: PTypeInfo; const aTopic: TmaxTopicBase): ImaxMetricsIndex;
+var
+  lIdx: integer;
+  lLen: integer;
+  lNew: TmaxMetricsIndex;
+begin
+  if (aNameKey = '') or (aKey = nil) or (aTopic = nil) then
+    Exit(Self);
+  for lIdx := 0 to High(fNamedTyped) do
+    if (fNamedTyped[lIdx].NameKey = aNameKey) and (fNamedTyped[lIdx].Key = aKey) then
+      Exit(Self);
+
+  lNew := TmaxMetricsIndex.CreateEmpty;
+  lNew.fTyped := fTyped;
+  lNew.fNamed := fNamed;
+  lNew.fGuid := fGuid;
+
+  lLen := Length(fNamedTyped);
+  SetLength(lNew.fNamedTyped, lLen + 1);
+  for lIdx := 0 to lLen - 1 do
+    lNew.fNamedTyped[lIdx] := fNamedTyped[lIdx];
+  lNew.fNamedTyped[lLen].NameKey := aNameKey;
+  lNew.fNamedTyped[lLen].Key := aKey;
+  lNew.fNamedTyped[lLen].Topic := aTopic;
+  Result := lNew;
+end;
+
+function TmaxMetricsIndex.AddGuid(const aKey: TGuid; const aTopic: TmaxTopicBase): ImaxMetricsIndex;
+var
+  lIdx: integer;
+  lLen: integer;
+  lNew: TmaxMetricsIndex;
+begin
+  if (aTopic = nil) or IsEqualGUID(aKey, cGuidNull) then
+    Exit(Self);
+  for lIdx := 0 to High(fGuid) do
+    if IsEqualGUID(fGuid[lIdx].Key, aKey) then
+      Exit(Self);
+
+  lNew := TmaxMetricsIndex.CreateEmpty;
+  lNew.fTyped := fTyped;
+  lNew.fNamed := fNamed;
+  lNew.fNamedTyped := fNamedTyped;
+
+  lLen := Length(fGuid);
+  SetLength(lNew.fGuid, lLen + 1);
+  for lIdx := 0 to lLen - 1 do
+    lNew.fGuid[lIdx] := fGuid[lIdx];
+  lNew.fGuid[lLen].Key := aKey;
+  lNew.fGuid[lLen].Topic := aTopic;
+  Result := lNew;
+end;
+
+function TmaxMetricsIndex.GetStatsForType(const aKey: PTypeInfo): TmaxTopicStats;
+var
+  lIdx: integer;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+  if aKey = nil then
+    Exit;
+  for lIdx := 0 to High(fTyped) do
+    if fTyped[lIdx].Key = aKey then
+      Exit(fTyped[lIdx].Topic.GetStats);
+end;
+
+function TmaxMetricsIndex.GetStatsGuid(const aKey: TGuid): TmaxTopicStats;
+var
+  lIdx: integer;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+  if IsEqualGUID(aKey, cGuidNull) then
+    Exit;
+  for lIdx := 0 to High(fGuid) do
+    if IsEqualGUID(fGuid[lIdx].Key, aKey) then
+      Exit(fGuid[lIdx].Topic.GetStats);
+end;
+
+function TmaxMetricsIndex.GetStatsNamed(const aNameKey: TmaxString): TmaxTopicStats;
+var
+  lIdx: integer;
+  lStats: TmaxTopicStats;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+  if aNameKey = '' then
+    Exit;
+
+  for lIdx := 0 to High(fNamed) do
+    if fNamed[lIdx].NameKey = aNameKey then
+    begin
+      Result := fNamed[lIdx].Topic.GetStats;
+      break;
+    end;
+
+  for lIdx := 0 to High(fNamedTyped) do
+    if fNamedTyped[lIdx].NameKey = aNameKey then
+    begin
+      lStats := fNamedTyped[lIdx].Topic.GetStats;
+      Inc(Result.PostsTotal, lStats.PostsTotal);
+      Inc(Result.DeliveredTotal, lStats.DeliveredTotal);
+      Inc(Result.DroppedTotal, lStats.DroppedTotal);
+      Inc(Result.ExceptionsTotal, lStats.ExceptionsTotal);
+      if lStats.MaxQueueDepth > Result.MaxQueueDepth then
+        Result.MaxQueueDepth := lStats.MaxQueueDepth;
+      Inc(Result.CurrentQueueDepth, lStats.CurrentQueueDepth);
+    end;
+end;
+
+function TmaxMetricsIndex.GetTotals: TmaxTopicStats;
+var
+  lIdx: integer;
+  lStats: TmaxTopicStats;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+
+  for lIdx := 0 to High(fTyped) do
+  begin
+    lStats := fTyped[lIdx].Topic.GetStats;
+    Inc(Result.PostsTotal, lStats.PostsTotal);
+    Inc(Result.DeliveredTotal, lStats.DeliveredTotal);
+    Inc(Result.DroppedTotal, lStats.DroppedTotal);
+    Inc(Result.ExceptionsTotal, lStats.ExceptionsTotal);
+    if lStats.MaxQueueDepth > Result.MaxQueueDepth then
+      Result.MaxQueueDepth := lStats.MaxQueueDepth;
+    Inc(Result.CurrentQueueDepth, lStats.CurrentQueueDepth);
+  end;
+
+  for lIdx := 0 to High(fNamed) do
+  begin
+    lStats := fNamed[lIdx].Topic.GetStats;
+    Inc(Result.PostsTotal, lStats.PostsTotal);
+    Inc(Result.DeliveredTotal, lStats.DeliveredTotal);
+    Inc(Result.DroppedTotal, lStats.DroppedTotal);
+    Inc(Result.ExceptionsTotal, lStats.ExceptionsTotal);
+    if lStats.MaxQueueDepth > Result.MaxQueueDepth then
+      Result.MaxQueueDepth := lStats.MaxQueueDepth;
+    Inc(Result.CurrentQueueDepth, lStats.CurrentQueueDepth);
+  end;
+
+  for lIdx := 0 to High(fNamedTyped) do
+  begin
+    lStats := fNamedTyped[lIdx].Topic.GetStats;
+    Inc(Result.PostsTotal, lStats.PostsTotal);
+    Inc(Result.DeliveredTotal, lStats.DeliveredTotal);
+    Inc(Result.DroppedTotal, lStats.DroppedTotal);
+    Inc(Result.ExceptionsTotal, lStats.ExceptionsTotal);
+    if lStats.MaxQueueDepth > Result.MaxQueueDepth then
+      Result.MaxQueueDepth := lStats.MaxQueueDepth;
+    Inc(Result.CurrentQueueDepth, lStats.CurrentQueueDepth);
+  end;
+
+  for lIdx := 0 to High(fGuid) do
+  begin
+    lStats := fGuid[lIdx].Topic.GetStats;
+    Inc(Result.PostsTotal, lStats.PostsTotal);
+    Inc(Result.DeliveredTotal, lStats.DeliveredTotal);
+    Inc(Result.DroppedTotal, lStats.DroppedTotal);
+    Inc(Result.ExceptionsTotal, lStats.ExceptionsTotal);
+    if lStats.MaxQueueDepth > Result.MaxQueueDepth then
+      Result.MaxQueueDepth := lStats.MaxQueueDepth;
+    Inc(Result.CurrentQueueDepth, lStats.CurrentQueueDepth);
+  end;
+end;
+
 { TTypedTopic<T> }
 
 constructor TTypedTopic<t>.Create;
@@ -1148,7 +1803,7 @@ begin
   SetLength(fSubs, 0);
 end;
 
-procedure TTypedTopic<t>.PruneDead;
+procedure TTypedTopic<t>.PruneDeadLocked;
 var
   lNeedsPrune: boolean;
   lIdx, lCount, lOut: integer;
@@ -1192,20 +1847,26 @@ var
   lNew: TArray<TTypedSubscriber<t>>;
   lSub: TTypedSubscriber<t>;
 begin
-  if fNextToken = 0 then
-    fNextToken := 1;
-  lSub.Handler := aHandler;
-  lSub.Mode := aMode;
-  lSub.Token := fNextToken;
-  lSub.Target := TmaxWeakTarget.Create(aTarget); // store weak target when available (object-method overload)
-  lSub.State := TmaxSubscriptionState.Create;
-  aState := lSub.State;
-  Inc(fNextToken);
-  lNew := copy(fSubs);
-  SetLength(lNew, length(lNew) + 1);
-  lNew[High(lNew)] := lSub;
-  fSubs := lNew;
-  Result := lSub.Token;
+  TMonitor.Enter(Self);
+  try
+    PruneDeadLocked;
+    if fNextToken = 0 then
+      fNextToken := 1;
+    lSub.Handler := aHandler;
+    lSub.Mode := aMode;
+    lSub.Token := fNextToken;
+    lSub.Target := TmaxWeakTarget.Create(aTarget); // store weak target when available (object-method overload)
+    lSub.State := TmaxSubscriptionState.Create;
+    aState := lSub.State;
+    Inc(fNextToken);
+    lNew := copy(fSubs);
+    SetLength(lNew, length(lNew) + 1);
+    lNew[High(lNew)] := lSub;
+    fSubs := lNew;
+    Result := lSub.Token;
+  finally
+    TMonitor.Exit(Self);
+  end;
 end;
 
 procedure TTypedTopic<t>.RemoveByToken(aToken: TmaxSubscriptionToken);
@@ -1213,33 +1874,44 @@ var
   lCount, lIdx, lOut: integer;
   lNew: TArray<TTypedSubscriber<t>>;
 begin
-  lCount := length(fSubs);
-  if lCount = 0 then
-    exit;
-  lNew := nil;
-  SetLength(lNew, lCount);
-  lOut := 0;
-  for lIdx := 0 to lCount - 1 do
-    if fSubs[lIdx].Token <> aToken then
+  TMonitor.Enter(Self);
+  try
+    PruneDeadLocked;
+    lCount := length(fSubs);
+    if lCount = 0 then
+      exit;
+    lNew := nil;
+    SetLength(lNew, lCount);
+    lOut := 0;
+    for lIdx := 0 to lCount - 1 do
+      if fSubs[lIdx].Token <> aToken then
+      begin
+        lNew[lOut] := fSubs[lIdx];
+        Inc(lOut);
+      end
+      else if assigned(fSubs[lIdx].State) then
+        fSubs[lIdx].State.Deactivate;
+    if lOut = lCount then
     begin
-      lNew[lOut] := fSubs[lIdx];
-      Inc(lOut);
-    end
-    else if assigned(fSubs[lIdx].State) then
-      fSubs[lIdx].State.Deactivate;
-  if lOut = lCount then
-  begin
-    SetLength(lNew, 0);
-    exit;
+      SetLength(lNew, 0);
+      exit;
+    end;
+    SetLength(lNew, lOut);
+    fSubs := lNew;
+  finally
+    TMonitor.Exit(Self);
   end;
-  SetLength(lNew, lOut);
-  fSubs := lNew;
 end;
 
 function TTypedTopic<t>.Snapshot: TArray<TTypedSubscriber<t>>;
 begin
-  PruneDead;
-  Result := copy(fSubs);
+  TMonitor.Enter(Self);
+  try
+    PruneDeadLocked;
+    Result := copy(fSubs);
+  finally
+    TMonitor.Exit(Self);
+  end;
 end;
 
 procedure TTypedTopic<t>.RemoveByTarget(const aTarget: TObject);
@@ -1249,58 +1921,107 @@ var
 begin
   if aTarget = nil then
     exit;
-  PruneDead;
-  lCount := length(fSubs);
-  if lCount = 0 then
-    exit;
-  lNew := nil;
-  SetLength(lNew, lCount);
-  lOut := 0;
-  for lIdx := 0 to lCount - 1 do
-    if not fSubs[lIdx].Target.Matches(aTarget) then
-    begin
-      lNew[lOut] := fSubs[lIdx];
-      Inc(lOut);
-    end
-    else if assigned(fSubs[lIdx].State) then
-      fSubs[lIdx].State.Deactivate;
-  SetLength(lNew, lOut);
-  fSubs := lNew;
+  TMonitor.Enter(Self);
+  try
+    PruneDeadLocked;
+    lCount := length(fSubs);
+    if lCount = 0 then
+      exit;
+    lNew := nil;
+    SetLength(lNew, lCount);
+    lOut := 0;
+    for lIdx := 0 to lCount - 1 do
+      if not fSubs[lIdx].Target.Matches(aTarget) then
+      begin
+        lNew[lOut] := fSubs[lIdx];
+        Inc(lOut);
+      end
+      else if assigned(fSubs[lIdx].State) then
+        fSubs[lIdx].State.Deactivate;
+    SetLength(lNew, lOut);
+    fSubs := lNew;
+  finally
+    TMonitor.Exit(Self);
+  end;
 end;
 
 procedure TTypedTopic<t>.SetSticky(aEnable: boolean);
 begin
-  inherited SetSticky(aEnable);
-  if not aEnable then
+  TMonitor.Enter(Self);
+  try
+    inherited SetSticky(aEnable);
+    if not aEnable then
+      fHasLast := False;
+  finally
+    TMonitor.Exit(Self);
+  end;
+end;
+
+procedure TTypedTopic<t>.ResetTopic;
+begin
+  inherited ResetTopic;
+
+  TMonitor.Enter(Self);
+  try
+    SetLength(fSubs, 0);
     fHasLast := False;
+    fNextToken := 1;
+  finally
+    TMonitor.Exit(Self);
+  end;
+
+  TMonitor.Enter(fPendingLock);
+  try
+    fCoalesce := False;
+    fKeyFunc := nil;
+    fWindowUs := 0;
+    fFlushScheduled := False;
+    if fPending <> nil then
+    begin
+      fPending.Free;
+      fPending := nil;
+    end;
+  finally
+    TMonitor.Exit(fPendingLock);
+  end;
 end;
 
 procedure TTypedTopic<t>.Cache(const aEvent: t);
 begin
-  if fSticky then
-  begin
-    fLast := aEvent;
-    fHasLast := True;
+  TMonitor.Enter(Self);
+  try
+    if fSticky then
+    begin
+      fLast := aEvent;
+      fHasLast := True;
+    end;
+  finally
+    TMonitor.Exit(Self);
   end;
 end;
 
 function TTypedTopic<t>.TryGetCached(out aEvent: t): boolean;
 begin
-  Result := fSticky and fHasLast;
-  if Result then
-    aEvent := fLast;
+  TMonitor.Enter(Self);
+  try
+    Result := fSticky and fHasLast;
+    if Result then
+      aEvent := fLast;
+  finally
+    TMonitor.Exit(Self);
+  end;
 end;
 
 procedure TTypedTopic<t>.SetCoalesce(const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer);
 begin
-  fCoalesce := assigned(aKeyOf);
-  fKeyFunc := aKeyOf;
-  if aWindowUs < 0 then
-    fWindowUs := 0
-  else
-    fWindowUs := aWindowUs;
   TMonitor.Enter(fPendingLock);
   try
+    fCoalesce := assigned(aKeyOf);
+    fKeyFunc := aKeyOf;
+    if aWindowUs < 0 then
+      fWindowUs := 0
+    else
+      fWindowUs := aWindowUs;
     if fCoalesce then
     begin
       if fPending = nil then
@@ -1312,10 +2033,14 @@ begin
         {$ENDIF}
       end;
     end
-    else if fPending <> nil then
+    else
     begin
-      fPending.Free;
-      fPending := nil;
+      fFlushScheduled := False;
+      if fPending <> nil then
+      begin
+        fPending.Free;
+        fPending := nil;
+      end;
     end;
   finally
     TMonitor.exit(fPendingLock);
@@ -1324,13 +2049,26 @@ end;
 
 function TTypedTopic<t>.HasCoalesce: boolean;
 begin
-  Result := fCoalesce;
+  TMonitor.Enter(fPendingLock);
+  try
+    Result := fCoalesce;
+  finally
+    TMonitor.Exit(fPendingLock);
+  end;
 end;
 
 function TTypedTopic<t>.CoalesceKey(const aEvent: t): TmaxString;
+var
+  lKeyFunc: TmaxKeyFunc<t>;
 begin
-  if assigned(fKeyFunc) then
-    Result := fKeyFunc(aEvent)
+  TMonitor.Enter(fPendingLock);
+  try
+    lKeyFunc := fKeyFunc;
+  finally
+    TMonitor.Exit(fPendingLock);
+  end;
+  if assigned(lKeyFunc) then
+    Result := lKeyFunc(aEvent)
   else
     Result := '';
 end;
@@ -1347,8 +2085,9 @@ begin
       fPending := TDictionary<TmaxString, t>.Create;
       {$ENDIF}
     end;
-    Result := not fPending.ContainsKey(aKey);
     fPending.AddOrSetValue(aKey, aEvent);
+    Result := not fFlushScheduled;
+    fFlushScheduled := True;
   finally
     TMonitor.exit(fPendingLock);
   end;
@@ -1371,9 +2110,59 @@ begin
   end;
 end;
 
+function TTypedTopic<t>.PopAllPending(out aEvents: TArray<t>): boolean;
+{$IFDEF FPC}
+var
+  lPair: specialize TPair<TmaxString, t>;
+{$ELSE}
+var
+  lPair: TPair<TmaxString, t>;
+{$ENDIF}
+var
+  lIdx: Integer;
+begin
+  SetLength(aEvents, 0);
+  TMonitor.Enter(fPendingLock);
+  try
+    fFlushScheduled := False;
+    if (fPending = nil) or (fPending.Count = 0) then
+      exit(False);
+    SetLength(aEvents, fPending.Count);
+    lIdx := 0;
+    for lPair in fPending do
+    begin
+      aEvents[lIdx] := lPair.Value;
+      Inc(lIdx);
+    end;
+    fPending.Clear;
+    if lIdx <> Length(aEvents) then
+      SetLength(aEvents, lIdx);
+    Result := lIdx > 0;
+  finally
+    TMonitor.exit(fPendingLock);
+  end;
+end;
+
+procedure TTypedTopic<t>.ClearPending;
+begin
+  TMonitor.Enter(fPendingLock);
+  try
+    fFlushScheduled := False;
+    if fPending <> nil then
+      fPending.Clear;
+  finally
+    TMonitor.exit(fPendingLock);
+  end;
+end;
+
 function TTypedTopic<t>.CoalesceWindow: integer;
 begin
-  Result := fWindowUs;
+  TMonitor.Enter(fPendingLock);
+  try
+    Result := fWindowUs;
+  finally
+    TMonitor.Exit(fPendingLock);
+  end;
 end;
 
 destructor TTypedTopic<t>.Destroy;
@@ -1397,20 +2186,26 @@ var
   lSub: TNamedSubscriber;
   lNew: TArray<TNamedSubscriber>;
 begin
-  if fNextToken = 0 then
-    fNextToken := 1;
-  lSub.Handler := aHandler;
-  lSub.Mode := aMode;
-  lSub.Token := fNextToken;
-  lSub.Target := TmaxWeakTarget.Create(nil); // cannot derive target from an anonymous method; treat as always-alive
-  lSub.State := TmaxSubscriptionState.Create;
-  aState := lSub.State;
-  Inc(fNextToken);
-  lNew := copy(fSubs);
-  SetLength(lNew, length(lNew) + 1);
-  lNew[High(lNew)] := lSub;
-  fSubs := lNew;
-  Result := lSub.Token;
+  TMonitor.Enter(Self);
+  try
+    PruneDeadLocked;
+    if fNextToken = 0 then
+      fNextToken := 1;
+    lSub.Handler := aHandler;
+    lSub.Mode := aMode;
+    lSub.Token := fNextToken;
+    lSub.Target := TmaxWeakTarget.Create(nil); // cannot derive target from an anonymous method; treat as always-alive
+    lSub.State := TmaxSubscriptionState.Create;
+    aState := lSub.State;
+    Inc(fNextToken);
+    lNew := copy(fSubs);
+    SetLength(lNew, length(lNew) + 1);
+    lNew[High(lNew)] := lSub;
+    fSubs := lNew;
+    Result := lSub.Token;
+  finally
+    TMonitor.Exit(Self);
+  end;
 end;
 
 procedure TNamedTopic.RemoveByToken(aToken: TmaxSubscriptionToken);
@@ -1418,30 +2213,36 @@ var
   lCount, lIdx, lOut: integer;
   lNew: TArray<TNamedSubscriber>;
 begin
-  lCount := length(fSubs);
-  if lCount = 0 then
-    exit;
-  lNew := nil;
-  SetLength(lNew, lCount);
-  lOut := 0;
-  for lIdx := 0 to lCount - 1 do
-    if fSubs[lIdx].Token <> aToken then
+  TMonitor.Enter(Self);
+  try
+    PruneDeadLocked;
+    lCount := length(fSubs);
+    if lCount = 0 then
+      exit;
+    lNew := nil;
+    SetLength(lNew, lCount);
+    lOut := 0;
+    for lIdx := 0 to lCount - 1 do
+      if fSubs[lIdx].Token <> aToken then
+      begin
+        lNew[lOut] := fSubs[lIdx];
+        Inc(lOut);
+      end
+      else if assigned(fSubs[lIdx].State) then
+        fSubs[lIdx].State.Deactivate;
+    if lOut = lCount then
     begin
-      lNew[lOut] := fSubs[lIdx];
-      Inc(lOut);
-    end
-    else if assigned(fSubs[lIdx].State) then
-      fSubs[lIdx].State.Deactivate;
-  if lOut = lCount then
-  begin
-    SetLength(lNew, 0);
-    exit;
+      SetLength(lNew, 0);
+      exit;
+    end;
+    SetLength(lNew, lOut);
+    fSubs := lNew;
+  finally
+    TMonitor.Exit(Self);
   end;
-  SetLength(lNew, lOut);
-  fSubs := lNew;
 end;
 
-procedure TNamedTopic.PruneDead;
+procedure TNamedTopic.PruneDeadLocked;
 var
   lNeedsPrune: boolean;
   lIdx, lCount, lOut: integer;
@@ -1482,8 +2283,13 @@ end;
 
 function TNamedTopic.Snapshot: TArray<TNamedSubscriber>;
 begin
-  PruneDead;
-  Result := copy(fSubs);
+  TMonitor.Enter(Self);
+  try
+    PruneDeadLocked;
+    Result := copy(fSubs);
+  finally
+    TMonitor.Exit(Self);
+  end;
 end;
 
 procedure TNamedTopic.RemoveByTarget(const aTarget: TObject);
@@ -1493,41 +2299,74 @@ var
 begin
   if aTarget = nil then
     exit;
-  PruneDead;
-  lCount := length(fSubs);
-  if lCount = 0 then
-    exit;
-  lNew := nil;
-  SetLength(lNew, lCount);
-  lOut := 0;
-  for lIdx := 0 to lCount - 1 do
-    if not fSubs[lIdx].Target.Matches(aTarget) then
-    begin
-      lNew[lOut] := fSubs[lIdx];
-      Inc(lOut);
-    end
-    else if assigned(fSubs[lIdx].State) then
-      fSubs[lIdx].State.Deactivate;
-  SetLength(lNew, lOut);
-  fSubs := lNew;
+  TMonitor.Enter(Self);
+  try
+    PruneDeadLocked;
+    lCount := length(fSubs);
+    if lCount = 0 then
+      exit;
+    lNew := nil;
+    SetLength(lNew, lCount);
+    lOut := 0;
+    for lIdx := 0 to lCount - 1 do
+      if not fSubs[lIdx].Target.Matches(aTarget) then
+      begin
+        lNew[lOut] := fSubs[lIdx];
+        Inc(lOut);
+      end
+      else if assigned(fSubs[lIdx].State) then
+        fSubs[lIdx].State.Deactivate;
+    SetLength(lNew, lOut);
+    fSubs := lNew;
+  finally
+    TMonitor.Exit(Self);
+  end;
 end;
 
 procedure TNamedTopic.SetSticky(aEnable: boolean);
 begin
-  inherited SetSticky(aEnable);
-  if not aEnable then
+  TMonitor.Enter(Self);
+  try
+    inherited SetSticky(aEnable);
+    if not aEnable then
+      fHasLast := False;
+  finally
+    TMonitor.Exit(Self);
+  end;
+end;
+
+procedure TNamedTopic.ResetTopic;
+begin
+  inherited ResetTopic;
+  TMonitor.Enter(Self);
+  try
+    SetLength(fSubs, 0);
     fHasLast := False;
+    fNextToken := 1;
+  finally
+    TMonitor.Exit(Self);
+  end;
 end;
 
 procedure TNamedTopic.Cache;
 begin
-  if fSticky then
-    fHasLast := True;
+  TMonitor.Enter(Self);
+  try
+    if fSticky then
+      fHasLast := True;
+  finally
+    TMonitor.Exit(Self);
+  end;
 end;
 
 function TNamedTopic.HasCached: boolean;
 begin
-  Result := fSticky and fHasLast;
+  TMonitor.Enter(Self);
+  try
+    Result := fSticky and fHasLast;
+  finally
+    TMonitor.Exit(Self);
+  end;
 end;
 
 { TmaxSubscriptionBase }
@@ -1606,7 +2445,15 @@ end;
 function maxBus: ImaxBus;
 begin
   if gBus = nil then
-    gBus := TmaxBus.Create(DefaultAsync);
+  begin
+    TMonitor.Enter(gBusLock);
+    try
+      if gBus = nil then
+        gBus := TmaxBus.Create(DefaultAsync);
+    finally
+      TMonitor.Exit(gBusLock);
+    end;
+  end;
   Result := gBus;
 end;
 
@@ -1620,9 +2467,72 @@ begin
   gMetricSample := aSampler;
 end;
 
-procedure maxSetAsyncScheduler(const aScheduler: IEventNexusScheduler);
+procedure maxSetMetricSampleInterval(aIntervalMs: Cardinal);
 begin
-  gAsyncScheduler := aScheduler;
+  gMetricSampleIntervalMs := aIntervalMs;
+  if aIntervalMs = 0 then
+    gMetricSampleIntervalTicks := 0
+  else
+  begin
+    gMetricSampleIntervalTicks := (UInt64(aIntervalMs) * UInt64(TMaxStopwatch.Frequency)) div 1000;
+    if gMetricSampleIntervalTicks = 0 then
+      gMetricSampleIntervalTicks := 1;
+  end;
+end;
+
+procedure maxSetQueuePresetNamed(const aName: string; aPreset: TmaxQueuePreset);
+var
+  lBusImpl: ImaxBusImpl;
+  lBus: ImaxBus;
+  lNameKey: TmaxString;
+begin
+  lBus := maxBus;
+  if not Supports(lBus, ImaxBusImpl, lBusImpl) then
+    raise Exception.Create(SInvalidBusImplementation);
+  lNameKey := NormalizeName(aName);
+  TmaxBus(lBusImpl.GetSelf).SetQueuePresetNamed(lNameKey, aPreset);
+end;
+
+procedure maxSetQueuePresetForType(const aType: PTypeInfo; aPreset: TmaxQueuePreset);
+var
+  lBusImpl: ImaxBusImpl;
+  lBus: ImaxBus;
+begin
+  lBus := maxBus;
+  if not Supports(lBus, ImaxBusImpl, lBusImpl) then
+    raise Exception.Create(SInvalidBusImplementation);
+  TmaxBus(lBusImpl.GetSelf).SetQueuePresetForType(aType, aPreset);
+end;
+
+procedure maxSetQueuePresetGuid(const aGuid: TGuid; aPreset: TmaxQueuePreset);
+var
+  lBusImpl: ImaxBusImpl;
+  lBus: ImaxBus;
+begin
+  lBus := maxBus;
+  if not Supports(lBus, ImaxBusImpl, lBusImpl) then
+    raise Exception.Create(SInvalidBusImplementation);
+  TmaxBus(lBusImpl.GetSelf).SetQueuePresetGuid(aGuid, aPreset);
+end;
+
+procedure maxSetAsyncScheduler(const aScheduler: IEventNexusScheduler);
+var
+  lBusImpl: ImaxBusImpl;
+  lAsync: IEventNexusScheduler;
+begin
+  TMonitor.Enter(gBusLock);
+  try
+    gAsyncScheduler := aScheduler;
+    if gBus <> nil then
+    begin
+      if not Supports(gBus, ImaxBusImpl, lBusImpl) then
+        raise Exception.Create(SInvalidBusImplementation);
+      lAsync := DefaultAsync;
+      TmaxBus(lBusImpl.GetSelf).SetAsyncScheduler(lAsync);
+    end;
+  finally
+    TMonitor.Exit(gBusLock);
+  end;
 end;
 
 function maxGetAsyncScheduler: IEventNexusScheduler;
@@ -1631,6 +2541,11 @@ begin
     Result := gAsyncScheduler
   else
     Result := DefaultAsync;
+end;
+
+procedure maxSetMainThreadPolicy(aPolicy: TmaxMainThreadPolicy);
+begin
+  gMainThreadPolicy := aPolicy;
 end;
 
  // Stable-capture invoke helpers (avoid capturing loop locals by reference)
@@ -1659,10 +2574,10 @@ begin
         except
           on e: Exception do
           begin
+            lTopic.AddException;
             if (e is EAccessViolation) or (e is EInvalidPointer) then
             begin
               lTopic.RemoveByToken(tok);
-              lTopic.AddException;
               Exit;
             end;
             raise;
@@ -1709,10 +2624,10 @@ begin
         except
           on e: Exception do
           begin
+            t.AddException;
             if (e is EAccessViolation) or (e is EInvalidPointer) then
             begin
               t.RemoveByToken(tok);
-              t.AddException;
               Exit;
             end;
             raise;
@@ -1757,10 +2672,10 @@ begin
         except
           on e: Exception do
           begin
+            t.AddException;
             if (e is EAccessViolation) or (e is EInvalidPointer) then
             begin
               t.RemoveByToken(tok);
-              t.AddException;
               Exit;
             end;
             raise;
@@ -1774,15 +2689,6 @@ begin
     end;
 end;
 
-function MakeOnExceptionProc(const aTopic: TmaxTopicBase): TmaxProc;
-begin
-  Result :=
-    procedure
-    begin
-      aTopic.AddException;
-    end;
-end;
-
 {$IFDEF max_DELPHI}
 function TmaxBus.InvokeGenericObjectSubscribe(const aMethodName: string; const aGenericType: PTypeInfo;
   const aMethodPtr: TMethod; aDelivery: TmaxDelivery; const aPrefixArgs: array of TValue): ImaxSubscription;
@@ -1790,7 +2696,6 @@ var
   lCtx: TRttiContext;
   lBusType: TRttiType;
   lBaseMethod: TRttiMethod;
-  lGeneric: TRttiMethod;
   lParams: TArray<TRttiParameter>;
   lHandlerType: PTypeInfo;
   lArgs: TArray<TValue>;
@@ -1803,23 +2708,19 @@ begin
     begin
       if not SameText(lBaseMethod.Name, aMethodName) then
         Continue;
-      if not lBaseMethod.IsGenericMethod then
-        Continue;
       lParams := lBaseMethod.GetParameters;
       lPrefixCount := Length(aPrefixArgs);
       if Length(lParams) <> lPrefixCount + 2 then
         Continue;
       if lParams[lPrefixCount].ParamType.Handle.Kind <> tkMethod then
         Continue;
-      lGeneric := lBaseMethod.MakeGenericMethod([aGenericType]);
-      lParams := lGeneric.GetParameters;
       SetLength(lArgs, Length(lParams));
       for i := 0 to lPrefixCount - 1 do
         lArgs[i] := aPrefixArgs[i];
       lHandlerType := lParams[lPrefixCount].ParamType.Handle;
-      lArgs[lPrefixCount] := TValue.Make(@aMethodPtr, lHandlerType);
+      TValue.Make(@aMethodPtr, lHandlerType, lArgs[lPrefixCount]);
       lArgs[lPrefixCount + 1] := TValue.From<TmaxDelivery>(aDelivery);
-      Exit(lGeneric.Invoke(TValue.From<TObject>(Self), lArgs).AsType<ImaxSubscription>);
+      Exit(lBaseMethod.Invoke(TValue.From<TObject>(Self), lArgs).AsType<ImaxSubscription>);
     end;
   finally
     lCtx.Free;
@@ -1833,7 +2734,7 @@ var
 begin
   if (aInstance = nil) or (aSub = nil) then
     Exit;
-  TMonitor.Enter(fLock);
+  TMonitor.Enter(fAutoSubsLock);
   try
     if not fAutoSubs.TryGetValue(aInstance, lList) then
     begin
@@ -1842,7 +2743,7 @@ begin
     end;
     lList.Add(aSub);
   finally
-    TMonitor.Exit(fLock);
+    TMonitor.Exit(fAutoSubsLock);
   end;
 end;
 
@@ -1855,7 +2756,7 @@ begin
   if aInstance = nil then
     Exit;
   lList := nil;
-  TMonitor.Enter(fLock);
+  TMonitor.Enter(fAutoSubsLock);
   try
     if not fAutoSubs.TryGetValue(aInstance, lList) then
       Exit;
@@ -1864,7 +2765,7 @@ begin
     for i := 0 to lList.Count - 1 do
       lSubs[i] := lList[i];
   finally
-    TMonitor.Exit(fLock);
+    TMonitor.Exit(fAutoSubsLock);
   end;
   try
     for i := 0 to High(lSubs) do
@@ -1897,7 +2798,7 @@ var
     begin
       if lMethod.Parent <> aType then
         Continue;
-      if lMethod.Visibility not in [mvPublic, mvProtected, mvPublished] then
+      if not (lMethod.Visibility in [mvPublic, mvProtected, mvPublished]) then
         Continue;
       if lMethod.IsClassMethod or lMethod.IsConstructor or lMethod.IsDestructor then
         Continue;
@@ -1935,7 +2836,7 @@ var
           raise EmaxInvalidSubscription.CreateFmt('Method %s.%s is abstract and cannot be subscribed', [aType.ToString, lMethod.Name]);
         lMethodPtr.Code := lMethod.CodeAddress;
         lMethodPtr.Data := aInstance;
-        if (lParamType is TRttiInterfaceType) and not IsEqualGUID(TRttiInterfaceType(lParamType).GUID, GUID_NULL) then
+        if (lParamType is TRttiInterfaceType) and not IsEqualGUID(TRttiInterfaceType(lParamType).GUID, cGuidNull) then
           lSub := InvokeGenericObjectSubscribe('SubscribeGuidOf', lParamType.Handle, lMethodPtr, lDelivery, [])
         else
           lSub := InvokeGenericObjectSubscribe('Subscribe', lParamType.Handle, lMethodPtr, lDelivery, []);
@@ -1996,90 +2897,115 @@ end;
 
 { TmaxBus }
 
-function TmaxBus.ScheduleTypedCoalesce<t>(const aTopicName: TmaxString;
-  aTopic: TTypedTopic<t>; const aSubs: TArray<TTypedSubscriber<t>>;
-  const aKey: TmaxString): boolean;
+	function TmaxBus.ScheduleTypedCoalesce<t>(const aTopicName: TmaxString;
+	  aTopic: TTypedTopic<t>; const aSubs: TArray<TTypedSubscriber<t>>): boolean;
 var
-  lKeyCopy: TmaxString;
   lSubsCopy: TArray<TTypedSubscriber<t>>;
 begin
-  lKeyCopy := aKey;
   lSubsCopy := Copy(aSubs);
   fAsync.RunDelayed(
     procedure
     var
-      lInner: t;
+      lEvents: TArray<t>;
     begin
-      if not aTopic.PopPending(lKeyCopy, lInner) then
+      if not aTopic.PopAllPending(lEvents) then
         exit;
       
-      aTopic.Enqueue(
-        procedure
-        var
-          i: Integer;
-          lHandler: TmaxProcOf<t>;
-          lMode: TmaxDelivery;
-          lToken: TmaxSubscriptionToken;
-          lState: ImaxSubscriptionState;
-          lErrs: TmaxExceptionList;
-          lBox: {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>;
-        begin
-          lErrs := nil;
+	      aTopic.Enqueue(
+	        procedure
+	        var
+	          i: Integer;
+	          lEvtIdx: Integer;
+	          lEvt: t;
+	          lHandler: TmaxProcOf<t>;
+	          lMode: TmaxDelivery;
+	          lToken: TmaxSubscriptionToken;
+	          lState: ImaxSubscriptionState;
+	          lErrs: TmaxExceptionList;
+	          lEx: EmaxDispatchError;
+	          lBox: {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>;
+	        begin
+	          lErrs := nil;
 
-          for i := 0 to High(lSubsCopy) do
+          for lEvtIdx := 0 to High(lEvents) do
           begin
-            lHandler := lSubsCopy[i].Handler;
-            lMode := lSubsCopy[i].Mode;
-            lToken := lSubsCopy[i].Token;
-            lState := lSubsCopy[i].State;
-
-            if (lState <> nil) and not lState.TryEnter then
-              continue;
-
-            if not lSubsCopy[i].Target.IsAlive then
+            lEvt := lEvents[lEvtIdx];
+            for i := 0 to High(lSubsCopy) do
             begin
-              aTopic.RemoveByToken(lToken);
-              if lState <> nil then
-                lState.Leave;
-              continue;
-            end;
+              lHandler := lSubsCopy[i].Handler;
+              lMode := lSubsCopy[i].Mode;
+              lToken := lSubsCopy[i].Token;
+              lState := lSubsCopy[i].State;
 
-            lBox := {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
-            lBox.Topic := aTopic;
-            lBox.Handler := lHandler;
-            lBox.Value := lInner;
-            lBox.Token := lToken;
-            lBox.State := lState;
-            try
-              {$IFDEF max_DELPHI}
-                Dispatch(aTopicName, lMode, TInvokeBox<t>.MakeProc(lBox), MakeOnExceptionProc(aTopic));
-              {$ELSE}
-                Dispatch(aTopicName, lMode, specialize MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(aTopic));
-              {$ENDIF}
-            except
-              on e: Exception do
-              begin
-                lBox.Free;
-                if lErrs = nil then
-                  lErrs := TmaxExceptionList.Create(True);
-                {$IFDEF max_DELPHI}
-                lErrs.Add(Exception(AcquireExceptionObject));
-                {$ELSE}
-                lErrs.Add(e);
-                {$ENDIF}
-              end;
-            end;
-          end;
+              if (lState <> nil) and not lState.TryEnter then
+                continue;
+
+	              if not lSubsCopy[i].Target.IsAlive then
+	              begin
+	                aTopic.RemoveByToken(lToken);
+	                if lState <> nil then
+	                  lState.Leave;
+	                continue;
+	              end;
+	
+	              try
+	                if lMode = Posting then
+	                begin
+	                  try
+	                    try
+	                      lHandler(lEvt);
+	                      aTopic.AddDelivered(1);
+	                    except
+	                      on e: Exception do
+	                      begin
+	                        aTopic.AddException;
+	                        if (e is EAccessViolation) or (e is EInvalidPointer) then
+	                        begin
+	                          aTopic.RemoveByToken(lToken);
+	                          continue;
+	                        end;
+	                        raise;
+	                      end;
+	                    end;
+	                  finally
+	                    if lState <> nil then
+	                      lState.Leave;
+	                  end;
+	                end
+	                else
+	                begin
+	                  lBox := {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
+	                  lBox.Topic := aTopic;
+	                  lBox.Handler := lHandler;
+	                  lBox.Value := lEvt;
+	                  lBox.Token := lToken;
+	                  lBox.State := lState;
+	                  {$IFDEF max_DELPHI}
+	                    Dispatch(aTopicName, lMode, TInvokeBox<t>.MakeProc(lBox), nil);
+	                  {$ELSE}
+	                    Dispatch(aTopicName, lMode, specialize MakeTypedHandlerProc<t>(lBox), nil);
+	                  {$ENDIF}
+	                end;
+	              except
+	                on e: Exception do
+	                begin
+	                  if lErrs = nil then
+	                    lErrs := TmaxExceptionList.Create(True);
+	                  lErrs.Add(Exception.Create(e.Message));
+	                end;
+	              end;
+	            end;
+	          end;
 
           if lErrs <> nil then
           begin
             if Assigned(gAsyncError) then
             begin
-              ex := EmaxDispatchError.Create(lErrs);
+              lEx := EmaxDispatchError.Create(lErrs);
               try
-                gAsyncError(UnicodeString(aTopicName), ex);
+                gAsyncError(UnicodeString(aTopicName), lEx);
               finally
-                ex.Free;
+                lEx.Free;
               end;
             end
             else
@@ -2088,7 +3014,55 @@ begin
         end);
     end,
     aTopic.CoalesceWindow);
-  Result := True;
+	Result := True;
+end;
+
+procedure TmaxBus.PublishMetricTypedTopic(const aKey: PTypeInfo; const aTopic: TmaxTopicBase);
+begin
+  if (aKey = nil) or (aTopic = nil) then
+    Exit;
+  TMonitor.Enter(fMetricsLock);
+  try
+    fMetricsIndex := fMetricsIndex.AddTyped(aKey, aTopic);
+  finally
+    TMonitor.Exit(fMetricsLock);
+  end;
+end;
+
+procedure TmaxBus.PublishMetricNamedTopic(const aNameKey: TmaxString; const aTopic: TmaxTopicBase);
+begin
+  if (aNameKey = '') or (aTopic = nil) then
+    Exit;
+  TMonitor.Enter(fMetricsLock);
+  try
+    fMetricsIndex := fMetricsIndex.AddNamed(aNameKey, aTopic);
+  finally
+    TMonitor.Exit(fMetricsLock);
+  end;
+end;
+
+procedure TmaxBus.PublishMetricNamedTypedTopic(const aNameKey: TmaxString; const aKey: PTypeInfo; const aTopic: TmaxTopicBase);
+begin
+  if (aNameKey = '') or (aKey = nil) or (aTopic = nil) then
+    Exit;
+  TMonitor.Enter(fMetricsLock);
+  try
+    fMetricsIndex := fMetricsIndex.AddNamedTyped(aNameKey, aKey, aTopic);
+  finally
+    TMonitor.Exit(fMetricsLock);
+  end;
+end;
+
+procedure TmaxBus.PublishMetricGuidTopic(const aKey: TGuid; const aTopic: TmaxTopicBase);
+begin
+  if (aTopic = nil) or IsEqualGUID(aKey, cGuidNull) then
+    Exit;
+  TMonitor.Enter(fMetricsLock);
+  try
+    fMetricsIndex := fMetricsIndex.AddGuid(aKey, aTopic);
+  finally
+    TMonitor.Exit(fMetricsLock);
+  end;
 end;
 
 { TmaxBus }
@@ -2097,42 +3071,188 @@ constructor TmaxBus.Create(const aAsync: IEventNexusScheduler);
 begin
   inherited Create;
   fAsync := aAsync;
-  fLock := TmaxMonitorObject.Create;
+  fTypedLock := TmaxMonitorObject.Create;
+  fNamedLock := TmaxMonitorObject.Create;
+  fNamedTypedLock := TmaxMonitorObject.Create;
+  fGuidLock := TmaxMonitorObject.Create;
+  fConfigLock := TmaxMonitorObject.Create;
+  fMetricsLock := TmaxMonitorObject.Create;
+  fMetricsIndex := TmaxMetricsIndex.CreateEmpty;
   fTyped := TmaxTypeTopicDict.Create([doOwnsValues]);
   fNamed := TmaxNameTopicDict.Create([doOwnsValues]);
   fNamedTyped := TmaxNameTypeTopicDict.Create([doOwnsValues]);
-  fGuid := TmaxGuidTopicDict.Create([doOwnsValues]);
-  fStickyTypes := TmaxBoolDictOfTypeInfo.Create;
-  fStickyNames := TmaxBoolDictOfString.Create;
-  {$IFDEF max_DELPHI}
-  fAutoSubs := TmaxAutoSubDict.Create([doOwnsValues]);
-  {$ENDIF}
-  fMainThreadId := TThread.CurrentThread.ThreadID;
+	fGuid := TmaxGuidTopicDict.Create([doOwnsValues]);
+	fStickyTypes := TmaxBoolDictOfTypeInfo.Create;
+	fStickyNames := TmaxBoolDictOfString.Create;
+	fPresetTypes := TmaxPresetDictOfTypeInfo.Create;
+	fPresetNames := TmaxPresetDictOfString.Create;
+	fPresetGuids := TmaxPresetDictOfGuid.Create;
+	{$IFDEF max_DELPHI}
+	fAutoSubsLock := TmaxMonitorObject.Create;
+	fAutoSubs := TmaxAutoSubDict.Create([doOwnsValues]);
+	{$ENDIF}
+		fMainThreadId := TThread.CurrentThread.ThreadID;
+end;
+
+procedure TmaxBus.SetAsyncScheduler(const aAsync: IEventNexusScheduler);
+begin
+  TMonitor.Enter(fConfigLock);
+  try
+    fAsync := aAsync;
+  finally
+    TMonitor.Exit(fConfigLock);
+  end;
 end;
 
 destructor TmaxBus.Destroy;
 begin
+  fMetricsIndex := nil;
   fTyped.Free;
   fNamedTyped.Free;
   fNamed.Free;
   fGuid.Free;
   fStickyTypes.Free;
   fStickyNames.Free;
+  fPresetTypes.Free;
+  fPresetNames.Free;
+  fPresetGuids.Free;
   {$IFDEF max_DELPHI}
   fAutoSubs.Free;
+  fAutoSubsLock.Free;
   {$ENDIF}
-  fLock.Free;
+  fMetricsLock.Free;
+  fConfigLock.Free;
+  fGuidLock.Free;
+  fNamedTypedLock.Free;
+  fNamedLock.Free;
+  fTypedLock.Free;
   inherited Destroy;
+end;
+
+class function TmaxBus.PolicyForPreset(aPreset: TmaxQueuePreset): TmaxQueuePolicy;
+begin
+  case aPreset of
+    TmaxQueuePreset.State:
+      begin
+        Result.MaxDepth := 256;
+        Result.Overflow := DropOldest;
+        Result.DeadlineUs := 0;
+      end;
+    TmaxQueuePreset.Action:
+      begin
+        Result.MaxDepth := 1024;
+        Result.Overflow := Deadline;
+        Result.DeadlineUs := 2000;
+      end;
+    TmaxQueuePreset.ControlPlane:
+      begin
+        Result.MaxDepth := 1;
+        Result.Overflow := Block;
+        Result.DeadlineUs := 0;
+      end;
+  else
+    Result.MaxDepth := 0;
+    Result.Overflow := DropNewest;
+    Result.DeadlineUs := 0;
+  end;
+end;
+
+procedure TmaxBus.SetQueuePresetForType(const aKey: PTypeInfo; aPreset: TmaxQueuePreset);
+var
+  lObj: TmaxTopicBase;
+  lPolicy: TmaxQueuePolicy;
+begin
+  TMonitor.Enter(fConfigLock);
+  try
+    if aPreset = TmaxQueuePreset.Unspecified then
+      fPresetTypes.Remove(aKey)
+    else
+      fPresetTypes.AddOrSetValue(aKey, aPreset);
+  finally
+    TMonitor.Exit(fConfigLock);
+  end;
+
+  lPolicy := PolicyForPreset(aPreset);
+  TMonitor.Enter(fTypedLock);
+  try
+    if fTyped.TryGetValue(aKey, lObj) and (not lObj.HasExplicitPolicy) then
+      lObj.SetPolicyImplicit(lPolicy);
+  finally
+    TMonitor.Exit(fTypedLock);
+  end;
+end;
+
+procedure TmaxBus.SetQueuePresetNamed(const aNameKey: TmaxString; aPreset: TmaxQueuePreset);
+var
+  lObj: TmaxTopicBase;
+  lTypeDict: TmaxTypeTopicDict;
+  lPolicy: TmaxQueuePolicy;
+  {$IFDEF FPC}
+  lInner: specialize TPair<PTypeInfo, TmaxTopicBase>;
+  {$ELSE}
+  lInner: TPair<PTypeInfo, TmaxTopicBase>;
+  {$ENDIF}
+begin
+  TMonitor.Enter(fConfigLock);
+  try
+    if aPreset = TmaxQueuePreset.Unspecified then
+      fPresetNames.Remove(aNameKey)
+    else
+      fPresetNames.AddOrSetValue(aNameKey, aPreset);
+  finally
+    TMonitor.Exit(fConfigLock);
+  end;
+
+  lPolicy := PolicyForPreset(aPreset);
+  TMonitor.Enter(fNamedLock);
+  try
+    if fNamed.TryGetValue(aNameKey, lObj) and (not lObj.HasExplicitPolicy) then
+      lObj.SetPolicyImplicit(lPolicy);
+  finally
+    TMonitor.Exit(fNamedLock);
+  end;
+
+  TMonitor.Enter(fNamedTypedLock);
+  try
+    if fNamedTyped.TryGetValue(aNameKey, lTypeDict) then
+      for lInner in lTypeDict do
+        if not lInner.Value.HasExplicitPolicy then
+          lInner.Value.SetPolicyImplicit(lPolicy);
+  finally
+    TMonitor.Exit(fNamedTypedLock);
+  end;
+end;
+
+procedure TmaxBus.SetQueuePresetGuid(const aGuid: TGuid; aPreset: TmaxQueuePreset);
+var
+  lObj: TmaxTopicBase;
+  lPolicy: TmaxQueuePolicy;
+begin
+  TMonitor.Enter(fConfigLock);
+  try
+    if aPreset = TmaxQueuePreset.Unspecified then
+      fPresetGuids.Remove(aGuid)
+    else
+      fPresetGuids.AddOrSetValue(aGuid, aPreset);
+  finally
+    TMonitor.Exit(fConfigLock);
+  end;
+
+  lPolicy := PolicyForPreset(aPreset);
+  TMonitor.Enter(fGuidLock);
+  try
+    if fGuid.TryGetValue(aGuid, lObj) and (not lObj.HasExplicitPolicy) then
+      lObj.SetPolicyImplicit(lPolicy);
+  finally
+    TMonitor.Exit(fGuidLock);
+  end;
 end;
 
 procedure TmaxBus.Dispatch(const aTopic: TmaxString; aDelivery: TmaxDelivery; const aHandler: TmaxProc; const aOnException: TmaxProc);
 begin
-  {$IFDEF DEBUG} DebugLog(Format('Dispatch[%s] mode=%d from TID=%d',
-    [UnicodeString(aTopic), Ord(aDelivery), TThread.CurrentThread.ThreadID])); {$ENDIF}
   case aDelivery of
     Posting:
       try
-        {$IFDEF DEBUG} DebugLog(' → Posting inline'); {$ENDIF}
         aHandler();
       except
         on e: Exception do
@@ -2146,7 +3266,6 @@ begin
       if (TThread.CurrentThread.ThreadID = fMainThreadId) or fAsync.IsMainThread() then
       begin
         try
-          {$IFDEF DEBUG} DebugLog(' → Main inline'); {$ENDIF}
           aHandler();
         except
           on e: Exception do
@@ -2160,27 +3279,72 @@ begin
       end
       else
       begin
-        // No reliable message pump in console tests: degrade to Async to guarantee progress
-        {$IFDEF DEBUG} DebugLog(' → Main degraded to Async'); {$ENDIF}
-        fAsync.RunAsync(
-          procedure
-          begin
-            try
-              aHandler();
-            except
-              on e: Exception do
-              begin
-                if Assigned(aOnException) then
-                  aOnException();
-                if Assigned(gAsyncError) then
-                  gAsyncError(UnicodeString(aTopic), e);
+        {$IFDEF max_DELPHI}
+        if not IsConsole then
+        {$ELSE}
+        if False then
+        {$ENDIF}
+        begin
+          fAsync.RunOnMain(
+            procedure
+            begin
+              try
+                aHandler();
+              except
+                on e: Exception do
+                begin
+                  if Assigned(aOnException) then
+                    aOnException();
+                  if Assigned(gAsyncError) then
+                    gAsyncError(UnicodeString(aTopic), e);
+                end;
               end;
-            end;
-          end);
+            end);
+        end
+        else
+        begin
+          case gMainThreadPolicy of
+            TmaxMainThreadPolicy.Strict:
+              raise EmaxMainThreadRequired.CreateFmt(
+                'Main delivery requires a UI main thread (topic=%s, postingTid=%d)',
+                [UnicodeString(aTopic), TThread.CurrentThread.ThreadID]);
+            TmaxMainThreadPolicy.DegradeToAsync:
+              begin
+                fAsync.RunAsync(
+                  procedure
+                  begin
+                    try
+                      aHandler();
+                    except
+                      on e: Exception do
+                      begin
+                        if Assigned(aOnException) then
+                          aOnException();
+                        if Assigned(gAsyncError) then
+                          gAsyncError(UnicodeString(aTopic), e);
+                      end;
+                    end;
+                  end);
+              end;
+            TmaxMainThreadPolicy.DegradeToPosting:
+              begin
+                try
+                  aHandler();
+                except
+                  on e: Exception do
+                  begin
+                    if Assigned(aOnException) then
+                      aOnException();
+                    if Assigned(gAsyncError) then
+                      gAsyncError(UnicodeString(aTopic), e);
+                  end;
+                end;
+              end;
+          end;
+        end;
       end;
     Async:
       begin
-        {$IFDEF DEBUG} DebugLog(' → Async schedule'); {$ENDIF}
         fAsync.RunAsync(
           procedure
           begin
@@ -2200,7 +3364,6 @@ begin
     Background:
       if (TThread.CurrentThread.ThreadID = fMainThreadId) or fAsync.IsMainThread() then
       begin
-        {$IFDEF DEBUG} DebugLog(' → Background schedule'); {$ENDIF}
         fAsync.RunAsync(
           procedure
           begin
@@ -2219,7 +3382,6 @@ begin
       end
       else
       try
-        {$IFDEF DEBUG} DebugLog(' → Background inline (non-main)'); {$ENDIF}
         aHandler();
       except
         on e: Exception do
@@ -2243,27 +3405,47 @@ var
   lLast: t;
   lMetricName: TmaxString;
   lState: ImaxSubscriptionState;
+  lSticky: boolean;
+  lPreset: TmaxQueuePreset;
+  lCreated: boolean;
 begin
   lKey := TypeInfo(t);
   lMetricName := TypeMetricName(lKey);
-  TMonitor.Enter(fLock);
+  TMonitor.Enter(fConfigLock);
+  try
+    lSticky := fStickyTypes.ContainsKey(lKey);
+    lPreset := TmaxQueuePreset.Unspecified;
+    fPresetTypes.TryGetValue(lKey, lPreset);
+  finally
+    TMonitor.Exit(fConfigLock);
+  end;
+
+  lCreated := False;
+  TMonitor.Enter(fTypedLock);
   try
     if not fTyped.TryGetValue(lKey, lObj) then
     begin
       lTopic := TTypedTopic<t>.Create;
       lTopic.SetMetricName(lMetricName);
-      if fStickyTypes.ContainsKey(lKey) then
+      if lPreset <> TmaxQueuePreset.Unspecified then
+        lTopic.SetPolicyImplicit(PolicyForPreset(lPreset));
+      if lSticky then
         lTopic.SetSticky(True);
       fTyped.Add(lKey, lTopic);
+      lCreated := True;
     end
     else
       lTopic := TTypedTopic<t>(lObj);
     lTopic.SetMetricName(lMetricName);
-    lToken := lTopic.Add(aHandler, aMode, lState);
-    lSend := lTopic.TryGetCached(lLast);
   finally
-    TMonitor.exit(fLock);
+    TMonitor.Exit(fTypedLock);
   end;
+
+  if lCreated then
+    PublishMetricTypedTopic(lKey, lTopic);
+
+  lToken := lTopic.Add(aHandler, aMode, lState);
+  lSend := lTopic.TryGetCached(lLast);
   if lSend then
     lTopic.Enqueue(
       procedure
@@ -2321,6 +3503,9 @@ var
   lState: ImaxSubscriptionState;
   lTarget: TObject;
   lWrapper: TmaxProcOf<t>;
+  lSticky: boolean;
+  lPreset: TmaxQueuePreset;
+  lCreated: boolean;
 begin
   lKey := TypeInfo(t);
   lMetricName := TypeMetricName(lKey);
@@ -2331,24 +3516,41 @@ begin
     aHandler(v);
   end;
 
-  TMonitor.Enter(fLock);
+  TMonitor.Enter(fConfigLock);
+  try
+    lSticky := fStickyTypes.ContainsKey(lKey);
+    lPreset := TmaxQueuePreset.Unspecified;
+    fPresetTypes.TryGetValue(lKey, lPreset);
+  finally
+    TMonitor.Exit(fConfigLock);
+  end;
+
+  lCreated := False;
+  TMonitor.Enter(fTypedLock);
   try
     if not fTyped.TryGetValue(lKey, lObj) then
     begin
       lTopic := TTypedTopic<t>.Create;
       lTopic.SetMetricName(lMetricName);
-      if fStickyTypes.ContainsKey(lKey) then
+      if lPreset <> TmaxQueuePreset.Unspecified then
+        lTopic.SetPolicyImplicit(PolicyForPreset(lPreset));
+      if lSticky then
         lTopic.SetSticky(True);
       fTyped.Add(lKey, lTopic);
+      lCreated := True;
     end
     else
       lTopic := TTypedTopic<t>(lObj);
     lTopic.SetMetricName(lMetricName);
-    lToken := lTopic.Add(lWrapper, aMode, lState, lTarget);
-    lSend := lTopic.TryGetCached(lLast);
   finally
-    TMonitor.exit(fLock);
+    TMonitor.Exit(fTypedLock);
   end;
+
+  if lCreated then
+    PublishMetricTypedTopic(lKey, lTopic);
+
+  lToken := lTopic.Add(lWrapper, aMode, lState, lTarget);
+  lSend := lTopic.TryGetCached(lLast);
   if lSend then
     lTopic.Enqueue(
       procedure
@@ -2400,53 +3602,85 @@ var
   lObj: TmaxTopicBase;
   lTopic: TTypedTopic<t>;
   lSubs: TArray<TTypedSubscriber<t>>;
-  lIsNew: boolean;
+  lNeedSchedule: boolean;
   lKeyStr: TmaxString;
-  lDropVal: t;
   lMetric: TmaxString;
+  lSticky: boolean;
+  lPreset: TmaxQueuePreset;
+  lCreated: boolean;
 begin
-  lIsNew := False; // prevent compiler warning: variable might not have been initialized
+  lNeedSchedule := False; // prevent compiler warning: variable might not have been initialized
+  lCreated := False;
 
   lKey := TypeInfo(t);
   lMetric := TypeMetricName(lKey);
-  TMonitor.Enter(fLock);
+  lTopic := nil;
+  TMonitor.Enter(fTypedLock);
   try
-    if not fTyped.TryGetValue(lKey, lObj) then
+    if fTyped.TryGetValue(lKey, lObj) then
     begin
-      if fStickyTypes.ContainsKey(lKey) then
+      lTopic := TTypedTopic<t>(lObj);
+      lTopic.SetMetricName(lMetric);
+    end;
+  finally
+    TMonitor.Exit(fTypedLock);
+  end;
+
+  if lTopic = nil then
+  begin
+    TMonitor.Enter(fConfigLock);
+    try
+      lSticky := fStickyTypes.ContainsKey(lKey);
+      lPreset := TmaxQueuePreset.Unspecified;
+      fPresetTypes.TryGetValue(lKey, lPreset);
+    finally
+      TMonitor.Exit(fConfigLock);
+    end;
+    if not lSticky then
+      exit;
+
+    TMonitor.Enter(fTypedLock);
+    try
+      if not fTyped.TryGetValue(lKey, lObj) then
       begin
         lTopic := TTypedTopic<t>.Create;
         lTopic.SetMetricName(lMetric);
+        if lPreset <> TmaxQueuePreset.Unspecified then
+          lTopic.SetPolicyImplicit(PolicyForPreset(lPreset));
         lTopic.SetSticky(True);
         fTyped.Add(lKey, lTopic);
+        lCreated := True;
       end
       else
-        exit;
-    end
-    else
-      lTopic := TTypedTopic<t>(lObj);
-    lTopic.SetMetricName(lMetric);
-    lSubs := lTopic.Snapshot;
-    lTopic.Cache(aEvent);
-    if lTopic.HasCoalesce then
-    begin
-      lKeyStr := lTopic.CoalesceKey(aEvent);
-      lIsNew := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
+        lTopic := TTypedTopic<t>(lObj);
+      lTopic.SetMetricName(lMetric);
+    finally
+      TMonitor.Exit(fTypedLock);
     end;
-  finally
-    TMonitor.exit(fLock);
+
+    if lCreated then
+      PublishMetricTypedTopic(lKey, lTopic);
+  end;
+
+  lSubs := lTopic.Snapshot;
+  lTopic.Cache(aEvent);
+  if lTopic.HasCoalesce then
+  begin
+    lKeyStr := lTopic.CoalesceKey(aEvent);
+    lNeedSchedule := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
   end;
   lTopic.AddPost;
   if length(lSubs) = 0 then
+  begin
+    if lTopic.HasCoalesce then
+      lTopic.ClearPending;
     exit;
+  end;
   if lTopic.HasCoalesce then
   begin
-    if not lIsNew then
+    if not lNeedSchedule then
       exit;
-    if not ScheduleTypedCoalesce<t>(lMetric, lTopic, lSubs, lKeyStr) then
-    begin
-      lTopic.PopPending(lKeyStr, lDropVal);
-    end;
+    ScheduleTypedCoalesce<t>(lMetric, lTopic, lSubs);
     exit;
   end;
   lTopic.Enqueue(
@@ -2482,30 +3716,53 @@ begin
           continue;
         end;
 
-        lBox := {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
-        lBox.Topic := lTopic;
-        lBox.Handler := lHandler;
-        lBox.Value := lVal;
-        lBox.Token := lToken;
-        lBox.State := lState;
-
         try
-          {$IFDEF max_DELPHI}
-            Dispatch(lMetric, lMode, TInvokeBox<t>.MakeProc(lBox), MakeOnExceptionProc(lTopic));
-          {$ELSE}
-            Dispatch(lMetric, lMode, specialize MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(lTopic));
-          {$ENDIF}
+          if lMode = Posting then
+          begin
+            try
+              try
+                lHandler(lVal);
+                lTopic.AddDelivered(1);
+              except
+                on e: Exception do
+                begin
+                  lTopic.AddException;
+                  if (e is EAccessViolation) or (e is EInvalidPointer) then
+                  begin
+                    lTopic.RemoveByToken(lToken);
+                    continue;
+                  end;
+                  raise;
+                end;
+              end;
+            finally
+              if lState <> nil then
+                lState.Leave;
+            end;
+          end
+          else
+          begin
+            lBox := {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
+            lBox.Topic := lTopic;
+            lBox.Handler := lHandler;
+            lBox.Value := lVal;
+            lBox.Token := lToken;
+            lBox.State := lState;
+
+            {$IFDEF max_DELPHI}
+              Dispatch(lMetric, lMode, TInvokeBox<t>.MakeProc(lBox), nil);
+            {$ELSE}
+              Dispatch(lMetric, lMode, specialize MakeTypedHandlerProc<t>(lBox), nil);
+            {$ENDIF}
+          end;
         except
+          on e: EmaxMainThreadRequired do
+            raise;
           on e: Exception do
           begin
-            lBox.Free;
             if lErrs = nil then
               lErrs := TmaxExceptionList.Create(True);
-            {$IFDEF max_DELPHI}
-            lErrs.Add(Exception(AcquireExceptionObject));
-            {$ELSE}
-            lErrs.Add(e);
-            {$ENDIF}
+            lErrs.Add(Exception.Create(e.Message));
           end;
         end;
       end;
@@ -2520,54 +3777,89 @@ var
   lObj: TmaxTopicBase;
   lTopic: TTypedTopic<t>;
   lSubs: TArray<TTypedSubscriber<t>>;
-  lIsNew: boolean;
+  lNeedSchedule: boolean;
   lKeyStr: TmaxString;
-  lDropVal: t;
   lMetric: TmaxString;
+  lSticky: boolean;
+  lPreset: TmaxQueuePreset;
+  lCreated: boolean;
 begin
-  lIsNew := False; // prevent compiler warning: variable might not have been initialized
+  lNeedSchedule := False; // prevent compiler warning: variable might not have been initialized
+  lCreated := False;
 
   Result := True;
   lKey := TypeInfo(t);
   lMetric := TypeMetricName(lKey);
-  TMonitor.Enter(fLock);
+  lTopic := nil;
+  TMonitor.Enter(fTypedLock);
   try
-    if not fTyped.TryGetValue(lKey, lObj) then
+    if fTyped.TryGetValue(lKey, lObj) then
     begin
-      if fStickyTypes.ContainsKey(lKey) then
+      lTopic := TTypedTopic<t>(lObj);
+      lTopic.SetMetricName(lMetric);
+    end;
+  finally
+    TMonitor.Exit(fTypedLock);
+  end;
+
+  if lTopic = nil then
+  begin
+    TMonitor.Enter(fConfigLock);
+    try
+      lSticky := fStickyTypes.ContainsKey(lKey);
+      lPreset := TmaxQueuePreset.Unspecified;
+      fPresetTypes.TryGetValue(lKey, lPreset);
+    finally
+      TMonitor.Exit(fConfigLock);
+    end;
+    if not lSticky then
+      exit;
+
+    TMonitor.Enter(fTypedLock);
+    try
+      if not fTyped.TryGetValue(lKey, lObj) then
       begin
         lTopic := TTypedTopic<t>.Create;
         lTopic.SetMetricName(lMetric);
+        if lPreset <> TmaxQueuePreset.Unspecified then
+          lTopic.SetPolicyImplicit(PolicyForPreset(lPreset));
         lTopic.SetSticky(True);
         fTyped.Add(lKey, lTopic);
-        lTopic.Cache(aEvent);
-      end;
-      exit;
+        lCreated := True;
+      end
+      else
+        lTopic := TTypedTopic<t>(lObj);
+      lTopic.SetMetricName(lMetric);
+    finally
+      TMonitor.Exit(fTypedLock);
     end;
-    lTopic := TTypedTopic<t>(lObj);
-    lTopic.SetMetricName(lMetric);
-    lSubs := lTopic.Snapshot;
+
+    if lCreated then
+      PublishMetricTypedTopic(lKey, lTopic);
+
     lTopic.Cache(aEvent);
-    if lTopic.HasCoalesce then
-    begin
-      lKeyStr := lTopic.CoalesceKey(aEvent);
-      lIsNew := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
-    end;
-  finally
-    TMonitor.exit(fLock);
+    exit;
+  end;
+
+  lSubs := lTopic.Snapshot;
+  lTopic.Cache(aEvent);
+  if lTopic.HasCoalesce then
+  begin
+    lKeyStr := lTopic.CoalesceKey(aEvent);
+    lNeedSchedule := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
   end;
   lTopic.AddPost;
   if length(lSubs) = 0 then
+  begin
+    if lTopic.HasCoalesce then
+      lTopic.ClearPending;
     exit;
+  end;
   if lTopic.HasCoalesce then
   begin
-    if not lIsNew then
+    if not lNeedSchedule then
       exit;
-    Result := ScheduleTypedCoalesce<t>(lMetric, lTopic, lSubs, lKeyStr);
-    if not Result then
-    begin
-      lTopic.PopPending(lKeyStr, lDropVal);
-    end;
+    ScheduleTypedCoalesce<t>(lMetric, lTopic, lSubs);
     exit;
   end;
   Result := lTopic.Enqueue(
@@ -2603,30 +3895,53 @@ begin
           continue;
         end;
 
-        lBox := {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
-        lBox.Topic := lTopic;
-        lBox.Handler := lHandler;
-        lBox.Value := lVal;
-        lBox.Token := lToken;
-        lBox.State := lState;
-
         try
-          {$IFDEF max_DELPHI}
-            Dispatch(lMetric, lMode, TInvokeBox<t>.MakeProc(lBox), MakeOnExceptionProc(lTopic));
-          {$ELSE}
-            Dispatch(lMetric, lMode, specialize MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(lTopic));
-          {$ENDIF}
+          if lMode = Posting then
+          begin
+            try
+              try
+                lHandler(lVal);
+                lTopic.AddDelivered(1);
+              except
+                on e: Exception do
+                begin
+                  lTopic.AddException;
+                  if (e is EAccessViolation) or (e is EInvalidPointer) then
+                  begin
+                    lTopic.RemoveByToken(lToken);
+                    continue;
+                  end;
+                  raise;
+                end;
+              end;
+            finally
+              if lState <> nil then
+                lState.Leave;
+            end;
+          end
+          else
+          begin
+            lBox := {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
+            lBox.Topic := lTopic;
+            lBox.Handler := lHandler;
+            lBox.Value := lVal;
+            lBox.Token := lToken;
+            lBox.State := lState;
+
+            {$IFDEF max_DELPHI}
+              Dispatch(lMetric, lMode, TInvokeBox<t>.MakeProc(lBox), nil);
+            {$ELSE}
+              Dispatch(lMetric, lMode, specialize MakeTypedHandlerProc<t>(lBox), nil);
+            {$ENDIF}
+          end;
         except
+          on e: EmaxMainThreadRequired do
+            raise;
           on e: Exception do
           begin
-            lBox.Free;
             if lErrs = nil then
               lErrs := TmaxExceptionList.Create(True);
-            {$IFDEF max_DELPHI}
-            lErrs.Add(Exception(AcquireExceptionObject));
-            {$ELSE}
-            lErrs.Add(e);
-            {$ENDIF}
+            lErrs.Add(Exception.Create(e.Message));
           end;
         end;
       end;
@@ -2644,27 +3959,47 @@ var
   lNameKey: TmaxString;
   lMetric: TmaxString;
   lState: ImaxSubscriptionState;
+  lSticky: boolean;
+  lPreset: TmaxQueuePreset;
+  lCreated: boolean;
 begin
   lNameKey := NormalizeName(aName);
   lMetric := NamedMetricName(lNameKey);
-  TMonitor.Enter(fLock);
+  TMonitor.Enter(fConfigLock);
+  try
+    lSticky := fStickyNames.ContainsKey(lNameKey);
+    lPreset := TmaxQueuePreset.Unspecified;
+    fPresetNames.TryGetValue(lNameKey, lPreset);
+  finally
+    TMonitor.Exit(fConfigLock);
+  end;
+
+  lCreated := False;
+  TMonitor.Enter(fNamedLock);
   try
     if not fNamed.TryGetValue(lNameKey, lObj) then
     begin
       lTopic := TNamedTopic.Create;
       lTopic.SetMetricName(lMetric);
-      if fStickyNames.ContainsKey(lNameKey) then
+      if lPreset <> TmaxQueuePreset.Unspecified then
+        lTopic.SetPolicyImplicit(PolicyForPreset(lPreset));
+      if lSticky then
         lTopic.SetSticky(True);
       fNamed.Add(lNameKey, lTopic);
+      lCreated := True;
     end
     else
       lTopic := TNamedTopic(lObj);
     lTopic.SetMetricName(lMetric);
-    lToken := lTopic.Add(aHandler, aMode, lState);
-    lSend := lTopic.HasCached;
   finally
-    TMonitor.exit(fLock);
+    TMonitor.Exit(fNamedLock);
   end;
+
+  if lCreated then
+    PublishMetricNamedTopic(lNameKey, lTopic);
+
+  lToken := lTopic.Add(aHandler, aMode, lState);
+  lSend := lTopic.HasCached;
   if lSend then
     lTopic.Enqueue(
       procedure
@@ -2714,31 +4049,63 @@ var
   lSubs: TArray<TNamedSubscriber>;
   lNameKey: TmaxString;
   lMetric: TmaxString;
+  lSticky: boolean;
+  lPreset: TmaxQueuePreset;
+  lCreated: boolean;
 begin
   lNameKey := NormalizeName(aName);
   lMetric := NamedMetricName(lNameKey);
-  TMonitor.Enter(fLock);
+  lCreated := False;
+  lTopic := nil;
+  TMonitor.Enter(fNamedLock);
   try
-    if not fNamed.TryGetValue(lNameKey, lObj) then
+    if fNamed.TryGetValue(lNameKey, lObj) then
     begin
-      if fStickyNames.ContainsKey(lNameKey) then
-      begin
-        lTopic := TNamedTopic.Create;
-        lTopic.SetMetricName(lMetric);
-        lTopic.SetSticky(True);
-        fNamed.Add(lNameKey, lTopic);
-      end
-      else
-        exit;
-    end
-    else
       lTopic := TNamedTopic(lObj);
-    lTopic.SetMetricName(lMetric);
-    lSubs := lTopic.Snapshot;
-    lTopic.Cache;
+      lTopic.SetMetricName(lMetric);
+    end;
   finally
-    TMonitor.exit(fLock);
+    TMonitor.Exit(fNamedLock);
   end;
+
+  if lTopic = nil then
+  begin
+    TMonitor.Enter(fConfigLock);
+    try
+      lSticky := fStickyNames.ContainsKey(lNameKey);
+      lPreset := TmaxQueuePreset.Unspecified;
+      fPresetNames.TryGetValue(lNameKey, lPreset);
+    finally
+      TMonitor.Exit(fConfigLock);
+    end;
+    if not lSticky then
+      exit;
+
+	    TMonitor.Enter(fNamedLock);
+	    try
+	      if not fNamed.TryGetValue(lNameKey, lObj) then
+	      begin
+	        lTopic := TNamedTopic.Create;
+	        lTopic.SetMetricName(lMetric);
+	        if lPreset <> TmaxQueuePreset.Unspecified then
+	          lTopic.SetPolicyImplicit(PolicyForPreset(lPreset));
+	        lTopic.SetSticky(True);
+	        fNamed.Add(lNameKey, lTopic);
+	        lCreated := True;
+	      end
+	      else
+	        lTopic := TNamedTopic(lObj);
+	      lTopic.SetMetricName(lMetric);
+	    finally
+	      TMonitor.Exit(fNamedLock);
+	    end;
+
+	    if lCreated then
+	      PublishMetricNamedTopic(lNameKey, lTopic);
+	  end;
+
+  lSubs := lTopic.Snapshot;
+  lTopic.Cache;
   lTopic.AddPost;
   if length(lSubs) = 0 then
     exit;
@@ -2772,26 +4139,47 @@ begin
             lState.Leave;
           continue;
         end;
-
-        lBox := TInvokeBoxNamed.Create;
-        lBox.Topic := lTopic;
-        lBox.Handler := lHandler;
-        lBox.Token := lToken;
-        lBox.State := lState;
-
         try
-          Dispatch(lMetric, lMode, MakeNamedHandlerProc(lBox), MakeOnExceptionProc(lTopic));
+          if lMode = Posting then
+          begin
+            try
+              try
+                lHandler();
+                lTopic.AddDelivered(1);
+              except
+                on e: Exception do
+                begin
+                  lTopic.AddException;
+                  if (e is EAccessViolation) or (e is EInvalidPointer) then
+                  begin
+                    lTopic.RemoveByToken(lToken);
+                    continue;
+                  end;
+                  raise;
+                end;
+              end;
+            finally
+              if lState <> nil then
+                lState.Leave;
+            end;
+          end
+          else
+          begin
+            lBox := TInvokeBoxNamed.Create;
+            lBox.Topic := lTopic;
+            lBox.Handler := lHandler;
+            lBox.Token := lToken;
+            lBox.State := lState;
+            Dispatch(lMetric, lMode, MakeNamedHandlerProc(lBox), nil);
+          end;
         except
+          on e: EmaxMainThreadRequired do
+            raise;
           on e: Exception do
           begin
-            lBox.Free;
             if lErrs = nil then
               lErrs := TmaxExceptionList.Create(True);
-            {$IFDEF max_DELPHI}
-            lErrs.Add(Exception(AcquireExceptionObject));
-            {$ELSE}
-            lErrs.Add(e);
-            {$ENDIF}
+            lErrs.Add(Exception.Create(e.Message));
           end;
         end;
       end;
@@ -2807,31 +4195,67 @@ var
   lSubs: TArray<TNamedSubscriber>;
   lNameKey: TmaxString;
   lMetric: TmaxString;
+  lSticky: boolean;
+  lPreset: TmaxQueuePreset;
+  lCreated: boolean;
 begin
   Result := True;
   lNameKey := NormalizeName(aName);
   lMetric := NamedMetricName(lNameKey);
-  TMonitor.Enter(fLock);
+  lCreated := False;
+  lTopic := nil;
+  TMonitor.Enter(fNamedLock);
   try
-    if not fNamed.TryGetValue(lNameKey, lObj) then
+    if fNamed.TryGetValue(lNameKey, lObj) then
     begin
-      if fStickyNames.ContainsKey(lNameKey) then
-      begin
-        lTopic := TNamedTopic.Create;
-        lTopic.SetMetricName(lMetric);
-        lTopic.SetSticky(True);
-        fNamed.Add(lNameKey, lTopic);
-        lTopic.Cache;
-      end;
-      exit;
+      lTopic := TNamedTopic(lObj);
+      lTopic.SetMetricName(lMetric);
     end;
-    lTopic := TNamedTopic(lObj);
-    lTopic.SetMetricName(lMetric);
-    lSubs := lTopic.Snapshot;
-    lTopic.Cache;
   finally
-    TMonitor.exit(fLock);
+    TMonitor.Exit(fNamedLock);
   end;
+
+  if lTopic = nil then
+  begin
+    TMonitor.Enter(fConfigLock);
+    try
+      lSticky := fStickyNames.ContainsKey(lNameKey);
+      lPreset := TmaxQueuePreset.Unspecified;
+      fPresetNames.TryGetValue(lNameKey, lPreset);
+    finally
+      TMonitor.Exit(fConfigLock);
+    end;
+    if not lSticky then
+      exit;
+
+	    TMonitor.Enter(fNamedLock);
+	    try
+	      if not fNamed.TryGetValue(lNameKey, lObj) then
+	      begin
+	        lTopic := TNamedTopic.Create;
+	        lTopic.SetMetricName(lMetric);
+	        if lPreset <> TmaxQueuePreset.Unspecified then
+	          lTopic.SetPolicyImplicit(PolicyForPreset(lPreset));
+	        lTopic.SetSticky(True);
+	        fNamed.Add(lNameKey, lTopic);
+	        lCreated := True;
+	      end
+	      else
+	        lTopic := TNamedTopic(lObj);
+	      lTopic.SetMetricName(lMetric);
+	    finally
+	      TMonitor.Exit(fNamedLock);
+	    end;
+
+	    if lCreated then
+	      PublishMetricNamedTopic(lNameKey, lTopic);
+
+	    lTopic.Cache;
+	    exit;
+	  end;
+
+  lSubs := lTopic.Snapshot;
+  lTopic.Cache;
   lTopic.AddPost;
   if length(lSubs) = 0 then
     exit;
@@ -2865,31 +4289,52 @@ begin
             lState.Leave;
           continue;
         end;
-
-        lBox := TInvokeBoxNamed.Create;
-        lBox.Topic := lTopic;
-        lBox.Handler := lHandler;
-        lBox.Token := lToken;
-        lBox.State := lState;
-
         try
-          Dispatch(lMetric, lMode, MakeNamedHandlerProc(lBox), MakeOnExceptionProc(lTopic));
+          if lMode = Posting then
+          begin
+            try
+              try
+                lHandler();
+                lTopic.AddDelivered(1);
+              except
+                on e: Exception do
+                begin
+                  lTopic.AddException;
+                  if (e is EAccessViolation) or (e is EInvalidPointer) then
+                  begin
+                    lTopic.RemoveByToken(lToken);
+                    continue;
+                  end;
+                  raise;
+                end;
+              end;
+            finally
+              if lState <> nil then
+                lState.Leave;
+            end;
+          end
+          else
+          begin
+            lBox := TInvokeBoxNamed.Create;
+            lBox.Topic := lTopic;
+            lBox.Handler := lHandler;
+            lBox.Token := lToken;
+            lBox.State := lState;
+            Dispatch(lMetric, lMode, MakeNamedHandlerProc(lBox), nil);
+          end;
         except
+          on e: EmaxMainThreadRequired do
+            raise;
           on e: Exception do
           begin
-            lBox.Free;
             if lErrs = nil then
               lErrs := TmaxExceptionList.Create(True);
-            {$IFDEF max_DELPHI}
-            lErrs.Add(Exception(AcquireExceptionObject));
-            {$ELSE}
-            lErrs.Add(e);
-            {$ENDIF}
+            lErrs.Add(Exception.Create(e.Message));
           end;
         end;
-      end;
+    end;
       if lErrs <> nil then
-        raise EmaxAggregateException.Create(lErrs);
+        raise EmaxDispatchError.Create(lErrs);
     end);
 end;
 
@@ -2905,36 +4350,73 @@ var
   lNameKey: TmaxString;
   lMetric: TmaxString;
   lState: ImaxSubscriptionState;
-  lBase: TmaxTopicBase;
-begin
+	  lBase: TmaxTopicBase;
+	  lSticky: boolean;
+		  lPreset: TmaxQueuePreset;
+		  lBasePolicy: TmaxQueuePolicy;
+		  lHasBasePolicy: boolean;
+		  lCreated: boolean;
+		begin
   lKey := TypeInfo(t);
   lNameKey := NormalizeName(aName);
   lMetric := NamedTypeMetricName(lNameKey, lKey);
-  TMonitor.Enter(fLock);
+	  TMonitor.Enter(fConfigLock);
+	  try
+	    lSticky := fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey);
+	    lPreset := TmaxQueuePreset.Unspecified;
+	    fPresetNames.TryGetValue(lNameKey, lPreset);
+	  finally
+	    TMonitor.Exit(fConfigLock);
+	  end;
+
+  lHasBasePolicy := False;
+	  TMonitor.Enter(fNamedLock);
+	  try
+	    if fNamed.TryGetValue(lNameKey, lBase) then
+	    begin
+	      if lBase.HasExplicitPolicy then
+	      begin
+	        lBasePolicy := lBase.GetPolicy;
+	        lHasBasePolicy := True;
+	      end;
+	    end;
+	  finally
+	    TMonitor.Exit(fNamedLock);
+	  end;
+
+  lCreated := False;
+  TMonitor.Enter(fNamedTypedLock);
   try
     if not fNamedTyped.TryGetValue(lNameKey, lTypeDict) then
     begin
       lTypeDict := TmaxTypeTopicDict.Create([doOwnsValues]);
       fNamedTyped.Add(lNameKey, lTypeDict);
     end;
-    if not lTypeDict.TryGetValue(lKey, lObj) then
-    begin
-      lTopic := TTypedTopic<t>.Create;
-      lTopic.SetMetricName(lMetric);
-      if fNamed.TryGetValue(lNameKey, lBase) then
-        lTopic.SetPolicy(lBase.GetPolicy);
-      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey) then
-        lTopic.SetSticky(True);
-      lTypeDict.Add(lKey, lTopic);
-    end
+	    if not lTypeDict.TryGetValue(lKey, lObj) then
+	    begin
+	      lTopic := TTypedTopic<t>.Create;
+	      lTopic.SetMetricName(lMetric);
+	      if lHasBasePolicy then
+	        lTopic.SetPolicy(lBasePolicy)
+	      else if lPreset <> TmaxQueuePreset.Unspecified then
+	        lTopic.SetPolicyImplicit(PolicyForPreset(lPreset));
+	      if lSticky then
+	        lTopic.SetSticky(True);
+	      lTypeDict.Add(lKey, lTopic);
+	      lCreated := True;
+	    end
     else
       lTopic := TTypedTopic<t>(lObj);
     lTopic.SetMetricName(lMetric);
-    lToken := lTopic.Add(aHandler, aMode, lState);
-    lSend := lTopic.TryGetCached(lLast);
   finally
-    TMonitor.exit(fLock);
+    TMonitor.Exit(fNamedTypedLock);
   end;
+
+  if lCreated then
+    PublishMetricNamedTypedTopic(lNameKey, lKey, lTopic);
+
+  lToken := lTopic.Add(aHandler, aMode, lState);
+  lSend := lTopic.TryGetCached(lLast);
   if lSend then
     lTopic.Enqueue(
       procedure
@@ -2998,8 +4480,13 @@ var
   lState: ImaxSubscriptionState;
   lBase: TmaxTopicBase;
   lTarget: TObject;
-  lWrapper: TmaxProcOf<t>;
-begin
+	  lWrapper: TmaxProcOf<t>;
+		  lSticky: boolean;
+		  lPreset: TmaxQueuePreset;
+		  lBasePolicy: TmaxQueuePolicy;
+		  lHasBasePolicy: boolean;
+		  lCreated: boolean;
+		begin
   lKey := TypeInfo(t);
   lNameKey := NormalizeName(aName);
   lMetric := NamedTypeMetricName(lNameKey, lKey);
@@ -3010,31 +4497,63 @@ begin
     aHandler(v);
   end;
 
-  TMonitor.Enter(fLock);
+	  TMonitor.Enter(fConfigLock);
+	  try
+	    lSticky := fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey);
+	    lPreset := TmaxQueuePreset.Unspecified;
+	    fPresetNames.TryGetValue(lNameKey, lPreset);
+	  finally
+	    TMonitor.Exit(fConfigLock);
+	  end;
+
+  lHasBasePolicy := False;
+	  TMonitor.Enter(fNamedLock);
+	  try
+	    if fNamed.TryGetValue(lNameKey, lBase) then
+	    begin
+	      if lBase.HasExplicitPolicy then
+	      begin
+	        lBasePolicy := lBase.GetPolicy;
+	        lHasBasePolicy := True;
+	      end;
+	    end;
+	  finally
+	    TMonitor.Exit(fNamedLock);
+	  end;
+
+  lCreated := False;
+  TMonitor.Enter(fNamedTypedLock);
   try
     if not fNamedTyped.TryGetValue(lNameKey, lTypeDict) then
     begin
       lTypeDict := TmaxTypeTopicDict.Create([doOwnsValues]);
       fNamedTyped.Add(lNameKey, lTypeDict);
     end;
-    if not lTypeDict.TryGetValue(lKey, lObj) then
-    begin
-      lTopic := TTypedTopic<t>.Create;
-      lTopic.SetMetricName(lMetric);
-      if fNamed.TryGetValue(lNameKey, lBase) then
-        lTopic.SetPolicy(lBase.GetPolicy);
-      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey) then
-        lTopic.SetSticky(True);
-      lTypeDict.Add(lKey, lTopic);
-    end
+	    if not lTypeDict.TryGetValue(lKey, lObj) then
+	    begin
+	      lTopic := TTypedTopic<t>.Create;
+	      lTopic.SetMetricName(lMetric);
+	      if lHasBasePolicy then
+	        lTopic.SetPolicy(lBasePolicy)
+	      else if lPreset <> TmaxQueuePreset.Unspecified then
+	        lTopic.SetPolicyImplicit(PolicyForPreset(lPreset));
+	      if lSticky then
+	        lTopic.SetSticky(True);
+	      lTypeDict.Add(lKey, lTopic);
+	      lCreated := True;
+	    end
     else
       lTopic := TTypedTopic<t>(lObj);
     lTopic.SetMetricName(lMetric);
-    lToken := lTopic.Add(lWrapper, aMode, lState, lTarget);
-    lSend := lTopic.TryGetCached(lLast);
   finally
-    TMonitor.exit(fLock);
+    TMonitor.Exit(fNamedTypedLock);
   end;
+
+  if lCreated then
+    PublishMetricNamedTypedTopic(lNameKey, lKey, lTopic);
+
+  lToken := lTopic.Add(lWrapper, aMode, lState, lTarget);
+  lSend := lTopic.TryGetCached(lLast);
   if lSend then
     lTopic.Enqueue(
       procedure
@@ -3086,269 +4605,386 @@ var
   lObj: TmaxTopicBase;
   lTopic: TTypedTopic<t>;
   lSubs: TArray<TTypedSubscriber<t>>;
-  lIsNew: boolean;
+  lNeedSchedule: boolean;
   lKeyStr: TmaxString;
-  lDropVal: t;
   lNameKey: TmaxString;
   lMetric: TmaxString;
   lBase: TmaxTopicBase;
   lKey: PTypeInfo;
+  lSticky: boolean;
+  lPreset: TmaxQueuePreset;
+  lBasePolicy: TmaxQueuePolicy;
+  lHasBasePolicy: boolean;
+  lCreated: boolean;
 begin
-  lIsNew := False; // prevent compiler warning: variable might not have been initialized
+  lNeedSchedule := False; // prevent compiler warning: variable might not have been initialized
+  lCreated := False;
 
   lKey := TypeInfo(t);
   lNameKey := NormalizeName(aName);
   lMetric := NamedTypeMetricName(lNameKey, lKey);
-  TMonitor.Enter(fLock);
+  TMonitor.Enter(fConfigLock);
+  try
+    lSticky := fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey);
+    lPreset := TmaxQueuePreset.Unspecified;
+    fPresetNames.TryGetValue(lNameKey, lPreset);
+  finally
+    TMonitor.Exit(fConfigLock);
+  end;
+
+  lHasBasePolicy := False;
+  TMonitor.Enter(fNamedLock);
+  try
+    if fNamed.TryGetValue(lNameKey, lBase) then
+    begin
+      if lBase.HasExplicitPolicy then
+      begin
+        lBasePolicy := lBase.GetPolicy;
+        lHasBasePolicy := True;
+      end;
+    end;
+  finally
+    TMonitor.Exit(fNamedLock);
+  end;
+
+  lTopic := nil;
+  TMonitor.Enter(fNamedTypedLock);
   try
     if not fNamedTyped.TryGetValue(lNameKey, lTypeDict) then
     begin
-      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey) then
-      begin
-        lTypeDict := TmaxTypeTopicDict.Create([doOwnsValues]);
-        fNamedTyped.Add(lNameKey, lTypeDict);
-      end
-      else
+      if not lSticky then
         exit;
+      lTypeDict := TmaxTypeTopicDict.Create([doOwnsValues]);
+      fNamedTyped.Add(lNameKey, lTypeDict);
     end;
-    if not lTypeDict.TryGetValue(lKey, lObj) then
+    if lTypeDict.TryGetValue(lKey, lObj) then
     begin
-      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey) then
-      begin
-        lTopic := TTypedTopic<t>.Create;
-        lTopic.SetMetricName(lMetric);
-        if fNamed.TryGetValue(lNameKey, lBase) then
-          lTopic.SetPolicy(lBase.GetPolicy);
-        lTopic.SetSticky(True);
-        lTypeDict.Add(lKey, lTopic);
-      end
-      else
-        exit;
+      lTopic := TTypedTopic<t>(lObj);
+      lTopic.SetMetricName(lMetric);
     end
     else
-      lTopic := TTypedTopic<t>(lObj);
-    lTopic.SetMetricName(lMetric);
-    lSubs := lTopic.Snapshot;
-    lTopic.Cache(aEvent);
-    if lTopic.HasCoalesce then
     begin
-      lKeyStr := lTopic.CoalesceKey(aEvent);
-      lIsNew := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
+      if not lSticky then
+        exit;
+      lTopic := TTypedTopic<t>.Create;
+      lTopic.SetMetricName(lMetric);
+      if lHasBasePolicy then
+        lTopic.SetPolicy(lBasePolicy)
+      else if lPreset <> TmaxQueuePreset.Unspecified then
+        lTopic.SetPolicyImplicit(PolicyForPreset(lPreset));
+      lTopic.SetSticky(True);
+      lTypeDict.Add(lKey, lTopic);
+      lCreated := True;
     end;
   finally
-    TMonitor.exit(fLock);
+    TMonitor.Exit(fNamedTypedLock);
+  end;
+
+  if lCreated then
+    PublishMetricNamedTypedTopic(lNameKey, lKey, lTopic);
+
+  lSubs := lTopic.Snapshot;
+  lTopic.Cache(aEvent);
+  if lTopic.HasCoalesce then
+  begin
+    lKeyStr := lTopic.CoalesceKey(aEvent);
+    lNeedSchedule := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
   end;
   lTopic.AddPost;
   if length(lSubs) = 0 then
-    exit;
-  if lTopic.HasCoalesce then
   begin
-    if not lIsNew then
-      exit;
-    if not ScheduleTypedCoalesce<t>(lMetric, lTopic, lSubs, lKeyStr) then
-    begin
-      lTopic.PopPending(lKeyStr, lDropVal);
-    end;
+    if lTopic.HasCoalesce then
+      lTopic.ClearPending;
     exit;
   end;
-  lTopic.Enqueue(
-    procedure
-    var
-      lVal: t;
-      lErrs: TmaxExceptionList;
-      i: Integer;
-      lHandler: TmaxProcOf<t>;
-      lMode: TmaxDelivery;
-      lToken: TmaxSubscriptionToken;
-      lState: ImaxSubscriptionState;
-      lBox: {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>;
-    begin
-      lVal := aEvent;
-      lErrs := nil;
-      for i := 0 to High(lSubs) do
-      begin
-        lHandler := lSubs[i].Handler;
-        lMode := lSubs[i].Mode;
-        lToken := lSubs[i].Token;
-        lState := lSubs[i].State;
+  if lTopic.HasCoalesce then
+  begin
+    if not lNeedSchedule then
+      exit;
+    ScheduleTypedCoalesce<t>(lMetric, lTopic, lSubs);
+    exit;
+  end;
+	  lTopic.Enqueue(
+	    procedure
+	    var
+	      lVal: t;
+	      lErrs: TmaxExceptionList;
+	      i: Integer;
+	      lHandler: TmaxProcOf<t>;
+	      lMode: TmaxDelivery;
+	      lToken: TmaxSubscriptionToken;
+	      lState: ImaxSubscriptionState;
+	      lBox: {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>;
+	    begin
+	      lVal := aEvent;
+	      lErrs := nil;
+	      for i := 0 to High(lSubs) do
+	      begin
+	        lHandler := lSubs[i].Handler;
+	        lMode := lSubs[i].Mode;
+	        lToken := lSubs[i].Token;
+	        lState := lSubs[i].State;
 
         if (lState <> nil) and not lState.TryEnter then
           continue;
 
-        if not lSubs[i].Target.IsAlive then
-        begin
-          lTopic.RemoveByToken(lToken);
-          if lState <> nil then
-            lState.Leave;
-          continue;
-        end;
+	        if not lSubs[i].Target.IsAlive then
+	        begin
+	          lTopic.RemoveByToken(lToken);
+	          if lState <> nil then
+	            lState.Leave;
+	          continue;
+	        end;
+	
+	        try
+	          if lMode = Posting then
+	          begin
+	            try
+	              try
+	                lHandler(lVal);
+	                lTopic.AddDelivered(1);
+	              except
+	                on e: Exception do
+	                begin
+	                  lTopic.AddException;
+	                  if (e is EAccessViolation) or (e is EInvalidPointer) then
+	                  begin
+	                    lTopic.RemoveByToken(lToken);
+	                    continue;
+	                  end;
+	                  raise;
+	                end;
+	              end;
+	            finally
+	              if lState <> nil then
+	                lState.Leave;
+	            end;
+	          end
+	          else
+	          begin
+	            lBox := {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
+	            lBox.Topic := lTopic;
+	            lBox.Handler := lHandler;
+	            lBox.Value := lVal;
+	            lBox.Token := lToken;
+	            lBox.State := lState;
+	            {$IFDEF max_DELPHI}
+	              Dispatch(lMetric, lMode, TInvokeBox<t>.MakeProc(lBox), nil);
+	            {$ELSE}
+	              Dispatch(lMetric, lMode, specialize MakeTypedHandlerProc<t>(lBox), nil);
+	            {$ENDIF}
+	          end;
+	        except
+	          on e: EmaxMainThreadRequired do
+	            raise;
+	          on e: Exception do
+	          begin
+	            if lErrs = nil then
+	              lErrs := TmaxExceptionList.Create(True);
+	            lErrs.Add(Exception.Create(e.Message));
+	          end;
+	        end;
+	    end;
+	      if lErrs <> nil then
+	        raise EmaxDispatchError.Create(lErrs);
+	    end);
+	end;
 
-        lBox := {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
-        lBox.Topic := lTopic;
-        lBox.Handler := lHandler;
-        lBox.Value := lVal;
-        lBox.Token := lToken;
-        lBox.State := lState;
-
-        try
-          {$IFDEF max_DELPHI}
-            Dispatch(lMetric, lMode, TInvokeBox<t>.MakeProc(lBox), MakeOnExceptionProc(lTopic));
-          {$ELSE}
-            Dispatch(lMetric, lMode, specialize MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(lTopic));
-          {$ENDIF}
-        except
-          on e: Exception do
-          begin
-            lBox.Free;
-            if lErrs = nil then
-              lErrs := TmaxExceptionList.Create(True);
-            {$IFDEF max_DELPHI}
-            lErrs.Add(Exception(AcquireExceptionObject));
-            {$ELSE}
-            lErrs.Add(e);
-            {$ENDIF}
-          end;
-        end;
-      end;
-      if lErrs <> nil then
-        raise EmaxAggregateException.Create(lErrs);
-    end);
-end;
-
-function TmaxBus.TryPostNamedOf<t>(const aName: TmaxString; const aEvent: t): boolean;
+	function TmaxBus.TryPostNamedOf<t>(const aName: TmaxString; const aEvent: t): boolean;
 var
   lTypeDict: TmaxTypeTopicDict;
   lObj: TmaxTopicBase;
   lTopic: TTypedTopic<t>;
   lSubs: TArray<TTypedSubscriber<t>>;
-  lIsNew: boolean;
+  lNeedSchedule: boolean;
   lKeyStr: TmaxString;
-  lDropVal: t;
   lNameKey: TmaxString;
   lMetric: TmaxString;
   lBase: TmaxTopicBase;
   lKey: PTypeInfo;
+  lSticky: boolean;
+  lPreset: TmaxQueuePreset;
+  lBasePolicy: TmaxQueuePolicy;
+  lHasBasePolicy: boolean;
+  lCreated: boolean;
 begin
-  lIsNew := False; // prevent compiler warning: variable might not have been initialized
+  lNeedSchedule := False; // prevent compiler warning: variable might not have been initialized
 
   Result := True;
   lKey := TypeInfo(t);
   lNameKey := NormalizeName(aName);
   lMetric := NamedTypeMetricName(lNameKey, lKey);
-  TMonitor.Enter(fLock);
+  TMonitor.Enter(fConfigLock);
+  try
+    lSticky := fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey);
+    lPreset := TmaxQueuePreset.Unspecified;
+    fPresetNames.TryGetValue(lNameKey, lPreset);
+  finally
+    TMonitor.Exit(fConfigLock);
+  end;
+
+  lHasBasePolicy := False;
+  TMonitor.Enter(fNamedLock);
+  try
+    if fNamed.TryGetValue(lNameKey, lBase) then
+    begin
+      if lBase.HasExplicitPolicy then
+      begin
+        lBasePolicy := lBase.GetPolicy;
+        lHasBasePolicy := True;
+      end;
+    end;
+  finally
+    TMonitor.Exit(fNamedLock);
+  end;
+
+  lCreated := False;
+  lTopic := nil;
+  TMonitor.Enter(fNamedTypedLock);
   try
     if not fNamedTyped.TryGetValue(lNameKey, lTypeDict) then
     begin
-      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey) then
-      begin
-        lTypeDict := TmaxTypeTopicDict.Create([doOwnsValues]);
-        fNamedTyped.Add(lNameKey, lTypeDict);
-      end;
-      exit;
+      if not lSticky then
+        exit;
+      lTypeDict := TmaxTypeTopicDict.Create([doOwnsValues]);
+      fNamedTyped.Add(lNameKey, lTypeDict);
     end;
-    if not lTypeDict.TryGetValue(lKey, lObj) then
+    if lTypeDict.TryGetValue(lKey, lObj) then
     begin
-      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey) then
-      begin
-        lTopic := TTypedTopic<t>.Create;
-        lTopic.SetMetricName(lMetric);
-        if fNamed.TryGetValue(lNameKey, lBase) then
-          lTopic.SetPolicy(lBase.GetPolicy);
-        lTopic.SetSticky(True);
-        lTypeDict.Add(lKey, lTopic);
-        lTopic.Cache(aEvent);
-      end;
-      exit;
-    end;
-    lTopic := TTypedTopic<t>(lObj);
-    lTopic.SetMetricName(lMetric);
-    lSubs := lTopic.Snapshot;
-    lTopic.Cache(aEvent);
-    if lTopic.HasCoalesce then
+      lTopic := TTypedTopic<t>(lObj);
+      lTopic.SetMetricName(lMetric);
+    end
+    else
     begin
-      lKeyStr := lTopic.CoalesceKey(aEvent);
-      lIsNew := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
+      if not lSticky then
+        exit;
+      lTopic := TTypedTopic<t>.Create;
+      lTopic.SetMetricName(lMetric);
+      if lHasBasePolicy then
+        lTopic.SetPolicy(lBasePolicy)
+      else if lPreset <> TmaxQueuePreset.Unspecified then
+        lTopic.SetPolicyImplicit(PolicyForPreset(lPreset));
+      lTopic.SetSticky(True);
+      lTypeDict.Add(lKey, lTopic);
+      lCreated := True;
     end;
   finally
-    TMonitor.exit(fLock);
+    TMonitor.Exit(fNamedTypedLock);
+  end;
+
+  if lCreated then
+  begin
+    PublishMetricNamedTypedTopic(lNameKey, lKey, lTopic);
+    lTopic.Cache(aEvent);
+    exit;
+  end;
+
+  lSubs := lTopic.Snapshot;
+  lTopic.Cache(aEvent);
+  if lTopic.HasCoalesce then
+  begin
+    lKeyStr := lTopic.CoalesceKey(aEvent);
+    lNeedSchedule := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
   end;
   lTopic.AddPost;
   if length(lSubs) = 0 then
-    exit;
-  if lTopic.HasCoalesce then
   begin
-    if not lIsNew then
-      exit;
-    Result := ScheduleTypedCoalesce<t>(lMetric, lTopic, lSubs, lKeyStr);
-    if not Result then
-    begin
-      lTopic.PopPending(lKeyStr, lDropVal);
-    end;
+    if lTopic.HasCoalesce then
+      lTopic.ClearPending;
     exit;
   end;
-  Result := lTopic.Enqueue(
-    procedure
-    var
-      lVal: t;
-      lErrs: TmaxExceptionList;
-      i: Integer;
-      lHandler: TmaxProcOf<t>;
-      lMode: TmaxDelivery;
-      lToken: TmaxSubscriptionToken;
-      lState: ImaxSubscriptionState;
-      lBox: {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>;
-    begin
-      lVal := aEvent;
-      lErrs := nil;
-      for i := 0 to High(lSubs) do
-      begin
-        lHandler := lSubs[i].Handler;
-        lMode := lSubs[i].Mode;
-        lToken := lSubs[i].Token;
-        lState := lSubs[i].State;
+  if lTopic.HasCoalesce then
+  begin
+    if not lNeedSchedule then
+      exit;
+    ScheduleTypedCoalesce<t>(lMetric, lTopic, lSubs);
+    exit;
+  end;
+	  Result := lTopic.Enqueue(
+	    procedure
+	    var
+	      lVal: t;
+	      lErrs: TmaxExceptionList;
+	      i: Integer;
+	      lHandler: TmaxProcOf<t>;
+	      lMode: TmaxDelivery;
+	      lToken: TmaxSubscriptionToken;
+	      lState: ImaxSubscriptionState;
+	      lBox: {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>;
+	    begin
+	      lVal := aEvent;
+	      lErrs := nil;
+	      for i := 0 to High(lSubs) do
+	      begin
+	        lHandler := lSubs[i].Handler;
+	        lMode := lSubs[i].Mode;
+	        lToken := lSubs[i].Token;
+	        lState := lSubs[i].State;
 
         if (lState <> nil) and not lState.TryEnter then
           continue;
 
-        if not lSubs[i].Target.IsAlive then
-        begin
-          lTopic.RemoveByToken(lToken);
-          if lState <> nil then
-            lState.Leave;
-          continue;
-        end;
-
-        lBox := {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
-        lBox.Topic := lTopic;
-        lBox.Handler := lHandler;
-        lBox.Value := lVal;
-        lBox.Token := lToken;
-        lBox.State := lState;
-
-        try
-          {$IFDEF max_DELPHI}
-            Dispatch(lMetric, lMode, TInvokeBox<t>.MakeProc(lBox), MakeOnExceptionProc(lTopic));
-          {$ELSE}
-            Dispatch(lMetric, lMode, specialize MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(lTopic));
-          {$ENDIF}
-        except
-          on e: Exception do
-          begin
-            lBox.Free;
-            if lErrs = nil then
-              lErrs := TmaxExceptionList.Create(True);
-            {$IFDEF max_DELPHI}
-            lErrs.Add(Exception(AcquireExceptionObject));
-            {$ELSE}
-            lErrs.Add(e);
-            {$ENDIF}
-          end;
-        end;
-      end;
-      if lErrs <> nil then
-        raise EmaxAggregateException.Create(lErrs);
-    end);
-end;
+	        if not lSubs[i].Target.IsAlive then
+	        begin
+	          lTopic.RemoveByToken(lToken);
+	          if lState <> nil then
+	            lState.Leave;
+	          continue;
+	        end;
+	
+	        try
+	          if lMode = Posting then
+	          begin
+	            try
+	              try
+	                lHandler(lVal);
+	                lTopic.AddDelivered(1);
+	              except
+	                on e: Exception do
+	                begin
+	                  lTopic.AddException;
+	                  if (e is EAccessViolation) or (e is EInvalidPointer) then
+	                  begin
+	                    lTopic.RemoveByToken(lToken);
+	                    continue;
+	                  end;
+	                  raise;
+	                end;
+	              end;
+	            finally
+	              if lState <> nil then
+	                lState.Leave;
+	            end;
+	          end
+	          else
+	          begin
+	            lBox := {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
+	            lBox.Topic := lTopic;
+	            lBox.Handler := lHandler;
+	            lBox.Value := lVal;
+	            lBox.Token := lToken;
+	            lBox.State := lState;
+	            {$IFDEF max_DELPHI}
+	              Dispatch(lMetric, lMode, TInvokeBox<t>.MakeProc(lBox), nil);
+	            {$ELSE}
+	              Dispatch(lMetric, lMode, specialize MakeTypedHandlerProc<t>(lBox), nil);
+	            {$ENDIF}
+	          end;
+	        except
+	          on e: EmaxMainThreadRequired do
+	            raise;
+	          on e: Exception do
+	          begin
+	            if lErrs = nil then
+	              lErrs := TmaxExceptionList.Create(True);
+	            lErrs.Add(Exception.Create(e.Message));
+	          end;
+	        end;
+	    end;
+	      if lErrs <> nil then
+	        raise EmaxDispatchError.Create(lErrs);
+	    end);
+	end;
 
 function TmaxBus.SubscribeGuidOf<t>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
 var
@@ -3360,27 +4996,49 @@ var
   lLast: t;
   lMetric: TmaxString;
   lState: ImaxSubscriptionState;
+  lSticky: boolean;
+  lPreset: TmaxQueuePreset;
+  lTypeKey: PTypeInfo;
+  lCreated: boolean;
 begin
-  lKey := GetTypeData(TypeInfo(t))^.Guid;
+  lTypeKey := TypeInfo(t);
+  lKey := GetTypeData(lTypeKey)^.Guid;
   lMetric := GuidMetricName(lKey);
-  TMonitor.Enter(fLock);
+  TMonitor.Enter(fConfigLock);
+  try
+    lSticky := fStickyTypes.ContainsKey(lTypeKey);
+    lPreset := TmaxQueuePreset.Unspecified;
+    fPresetGuids.TryGetValue(lKey, lPreset);
+  finally
+    TMonitor.Exit(fConfigLock);
+  end;
+
+  lCreated := False;
+  TMonitor.Enter(fGuidLock);
   try
     if not fGuid.TryGetValue(lKey, lObj) then
     begin
       lTopic := TTypedTopic<t>.Create;
       lTopic.SetMetricName(lMetric);
-      if fStickyTypes.ContainsKey(TypeInfo(t)) then
+      if lPreset <> TmaxQueuePreset.Unspecified then
+        lTopic.SetPolicyImplicit(PolicyForPreset(lPreset));
+      if lSticky then
         lTopic.SetSticky(True);
       fGuid.Add(lKey, lTopic);
+      lCreated := True;
     end
     else
       lTopic := TTypedTopic<t>(lObj);
     lTopic.SetMetricName(lMetric);
-    lToken := lTopic.Add(aHandler, aMode, lState);
-    lSend := lTopic.TryGetCached(lLast);
   finally
-    TMonitor.exit(fLock);
+    TMonitor.Exit(fGuidLock);
   end;
+
+  if lCreated then
+    PublishMetricGuidTopic(lKey, lTopic);
+
+  lToken := lTopic.Add(aHandler, aMode, lState);
+  lSend := lTopic.TryGetCached(lLast);
   if lSend then
     lTopic.Enqueue(
       procedure
@@ -3438,8 +5096,13 @@ var
   lState: ImaxSubscriptionState;
   lTarget: TObject;
   lWrapper: TmaxProcOf<t>;
+  lSticky: boolean;
+  lPreset: TmaxQueuePreset;
+  lTypeKey: PTypeInfo;
+  lCreated: boolean;
 begin
-  lKey := GetTypeData(TypeInfo(t))^.Guid;
+  lTypeKey := TypeInfo(t);
+  lKey := GetTypeData(lTypeKey)^.Guid;
   lMetric := GuidMetricName(lKey);
   lTarget := TObject(TMethod(aHandler).Data);
   lWrapper :=
@@ -3448,24 +5111,41 @@ begin
     aHandler(v);
   end;
 
-  TMonitor.Enter(fLock);
+  TMonitor.Enter(fConfigLock);
+  try
+    lSticky := fStickyTypes.ContainsKey(lTypeKey);
+    lPreset := TmaxQueuePreset.Unspecified;
+    fPresetGuids.TryGetValue(lKey, lPreset);
+  finally
+    TMonitor.Exit(fConfigLock);
+  end;
+
+  lCreated := False;
+  TMonitor.Enter(fGuidLock);
   try
     if not fGuid.TryGetValue(lKey, lObj) then
     begin
       lTopic := TTypedTopic<t>.Create;
       lTopic.SetMetricName(lMetric);
-      if fStickyTypes.ContainsKey(TypeInfo(t)) then
+      if lPreset <> TmaxQueuePreset.Unspecified then
+        lTopic.SetPolicyImplicit(PolicyForPreset(lPreset));
+      if lSticky then
         lTopic.SetSticky(True);
       fGuid.Add(lKey, lTopic);
+      lCreated := True;
     end
     else
       lTopic := TTypedTopic<t>(lObj);
     lTopic.SetMetricName(lMetric);
-    lToken := lTopic.Add(lWrapper, aMode, lState, lTarget);
-    lSend := lTopic.TryGetCached(lLast);
   finally
-    TMonitor.exit(fLock);
+    TMonitor.Exit(fGuidLock);
   end;
+
+  if lCreated then
+    PublishMetricGuidTopic(lKey, lTopic);
+
+  lToken := lTopic.Add(lWrapper, aMode, lState, lTarget);
+  lSend := lTopic.TryGetCached(lLast);
   if lSend then
     lTopic.Enqueue(
       procedure
@@ -3517,53 +5197,87 @@ var
   lObj: TmaxTopicBase;
   lTopic: TTypedTopic<t>;
   lSubs: TArray<TTypedSubscriber<t>>;
-  lIsNew: boolean;
+  lNeedSchedule: boolean;
   lKeyStr: TmaxString;
-  lDrop: t;
   lMetric: TmaxString;
+  lSticky: boolean;
+  lPreset: TmaxQueuePreset;
+  lTypeKey: PTypeInfo;
+  lCreated: boolean;
 begin
-  lIsNew := False; // prevent compiler warning: variable might not have been initialized
+  lNeedSchedule := False; // prevent compiler warning: variable might not have been initialized
+  lCreated := False;
 
-  lKey := GetTypeData(TypeInfo(t))^.Guid;
+  lTypeKey := TypeInfo(t);
+  lKey := GetTypeData(lTypeKey)^.Guid;
   lMetric := GuidMetricName(lKey);
-  TMonitor.Enter(fLock);
+  lTopic := nil;
+  TMonitor.Enter(fGuidLock);
   try
-    if not fGuid.TryGetValue(lKey, lObj) then
+    if fGuid.TryGetValue(lKey, lObj) then
     begin
-      if fStickyTypes.ContainsKey(TypeInfo(t)) then
-      begin
-        lTopic := TTypedTopic<t>.Create;
-        lTopic.SetMetricName(lMetric);
-        lTopic.SetSticky(True);
-        fGuid.Add(lKey, lTopic);
-      end
-      else
-        exit;
-    end
-    else
       lTopic := TTypedTopic<t>(lObj);
-    lTopic.SetMetricName(lMetric);
-    lSubs := lTopic.Snapshot;
-    lTopic.Cache(aEvent);
-    if lTopic.HasCoalesce then
-    begin
-      lKeyStr := lTopic.CoalesceKey(aEvent);
-      lIsNew := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
+      lTopic.SetMetricName(lMetric);
     end;
   finally
-    TMonitor.exit(fLock);
+    TMonitor.Exit(fGuidLock);
+  end;
+
+  if lTopic = nil then
+  begin
+    TMonitor.Enter(fConfigLock);
+    try
+      lSticky := fStickyTypes.ContainsKey(lTypeKey);
+      lPreset := TmaxQueuePreset.Unspecified;
+      fPresetGuids.TryGetValue(lKey, lPreset);
+    finally
+      TMonitor.Exit(fConfigLock);
+    end;
+    if not lSticky then
+      exit;
+
+	    TMonitor.Enter(fGuidLock);
+	    try
+	      if not fGuid.TryGetValue(lKey, lObj) then
+	      begin
+	        lTopic := TTypedTopic<t>.Create;
+	        lTopic.SetMetricName(lMetric);
+	        if lPreset <> TmaxQueuePreset.Unspecified then
+	          lTopic.SetPolicyImplicit(PolicyForPreset(lPreset));
+	        lTopic.SetSticky(True);
+	        fGuid.Add(lKey, lTopic);
+	        lCreated := True;
+	      end
+	      else
+	        lTopic := TTypedTopic<t>(lObj);
+	      lTopic.SetMetricName(lMetric);
+	    finally
+	      TMonitor.Exit(fGuidLock);
+	    end;
+
+	    if lCreated then
+	      PublishMetricGuidTopic(lKey, lTopic);
+	  end;
+
+  lSubs := lTopic.Snapshot;
+  lTopic.Cache(aEvent);
+  if lTopic.HasCoalesce then
+  begin
+    lKeyStr := lTopic.CoalesceKey(aEvent);
+    lNeedSchedule := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
   end;
   lTopic.AddPost;
   if length(lSubs) = 0 then
+  begin
+    if lTopic.HasCoalesce then
+      lTopic.ClearPending;
     exit;
+  end;
   if lTopic.HasCoalesce then
   begin
-    if not lIsNew then
+    if not lNeedSchedule then
       exit;
-    if not ScheduleTypedCoalesce<t>(lMetric, lTopic, lSubs, lKeyStr) then
-    begin
-      lTopic.PopPending(lKeyStr, lDrop);
-    end;
+    ScheduleTypedCoalesce<t>(lMetric, lTopic, lSubs);
     exit;
   end;
   lTopic.Enqueue(
@@ -3590,45 +5304,248 @@ begin
         if (lState <> nil) and not lState.TryEnter then
           continue;
 
-        if not lSubs[i].Target.IsAlive then
-        begin
-          lTopic.RemoveByToken(lToken);
-          if lState <> nil then
-            lState.Leave;
+	        if not lSubs[i].Target.IsAlive then
+	        begin
+	          lTopic.RemoveByToken(lToken);
+	          if lState <> nil then
+	            lState.Leave;
+	          continue;
+	        end;
+	
+	        try
+	          if lMode = Posting then
+	          begin
+	            try
+	              try
+	                lHandler(lVal);
+	                lTopic.AddDelivered(1);
+	              except
+	                on e: Exception do
+	                begin
+	                  lTopic.AddException;
+	                  if (e is EAccessViolation) or (e is EInvalidPointer) then
+	                  begin
+	                    lTopic.RemoveByToken(lToken);
+	                    continue;
+	                  end;
+	                  raise;
+	                end;
+	              end;
+	            finally
+	              if lState <> nil then
+	                lState.Leave;
+	            end;
+	          end
+	          else
+	          begin
+	            lBox := {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
+	            lBox.Topic := lTopic;
+	            lBox.Handler := lHandler;
+	            lBox.Value := lVal;
+	            lBox.Token := lToken;
+	            lBox.State := lState;
+	            {$IFDEF max_DELPHI}
+	              Dispatch(lMetric, lMode, TInvokeBox<t>.MakeProc(lBox), nil);
+	            {$ELSE}
+	              Dispatch(lMetric, lMode, specialize MakeTypedHandlerProc<t>(lBox), nil);
+	            {$ENDIF}
+	          end;
+	        except
+	          on e: EmaxMainThreadRequired do
+	            raise;
+	          on e: Exception do
+	          begin
+	            if lErrs = nil then
+	              lErrs := TmaxExceptionList.Create(True);
+	            lErrs.Add(Exception.Create(e.Message));
+	          end;
+	        end;
+	      end;
+	      if lErrs <> nil then
+	        raise EmaxDispatchError.Create(lErrs);
+	    end);
+	end;
+
+function TmaxBus.TryPostGuidOf<t>(const aEvent: t): boolean;
+var
+  lKey: TGuid;
+  lObj: TmaxTopicBase;
+  lTopic: TTypedTopic<t>;
+  lSubs: TArray<TTypedSubscriber<t>>;
+  lNeedSchedule: boolean;
+  lKeyStr: TmaxString;
+  lMetric: TmaxString;
+  lSticky: boolean;
+  lPreset: TmaxQueuePreset;
+  lTypeKey: PTypeInfo;
+  lCreated: boolean;
+begin
+  lNeedSchedule := False; // prevent compiler warning: variable might not have been initialized
+  lCreated := False;
+
+  Result := True;
+  lTypeKey := TypeInfo(t);
+  lKey := GetTypeData(lTypeKey)^.Guid;
+  lMetric := GuidMetricName(lKey);
+
+  lTopic := nil;
+  TMonitor.Enter(fGuidLock);
+  try
+    if fGuid.TryGetValue(lKey, lObj) then
+    begin
+      lTopic := TTypedTopic<t>(lObj);
+      lTopic.SetMetricName(lMetric);
+    end;
+  finally
+    TMonitor.Exit(fGuidLock);
+  end;
+
+  if lTopic = nil then
+  begin
+    TMonitor.Enter(fConfigLock);
+    try
+      lSticky := fStickyTypes.ContainsKey(lTypeKey);
+      lPreset := TmaxQueuePreset.Unspecified;
+      fPresetGuids.TryGetValue(lKey, lPreset);
+    finally
+      TMonitor.Exit(fConfigLock);
+    end;
+    if not lSticky then
+      exit;
+
+	    TMonitor.Enter(fGuidLock);
+	    try
+	      if not fGuid.TryGetValue(lKey, lObj) then
+	      begin
+	        lTopic := TTypedTopic<t>.Create;
+	        lTopic.SetMetricName(lMetric);
+	        if lPreset <> TmaxQueuePreset.Unspecified then
+	          lTopic.SetPolicyImplicit(PolicyForPreset(lPreset));
+	        lTopic.SetSticky(True);
+	        fGuid.Add(lKey, lTopic);
+	        lCreated := True;
+	      end
+	      else
+	        lTopic := TTypedTopic<t>(lObj);
+	      lTopic.SetMetricName(lMetric);
+	    finally
+	      TMonitor.Exit(fGuidLock);
+	    end;
+
+	    if lCreated then
+	      PublishMetricGuidTopic(lKey, lTopic);
+
+	    lTopic.Cache(aEvent);
+	    exit;
+	  end;
+
+  lSubs := lTopic.Snapshot;
+  lTopic.Cache(aEvent);
+  if lTopic.HasCoalesce then
+  begin
+    lKeyStr := lTopic.CoalesceKey(aEvent);
+    lNeedSchedule := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
+  end;
+  lTopic.AddPost;
+  if length(lSubs) = 0 then
+  begin
+    if lTopic.HasCoalesce then
+      lTopic.ClearPending;
+    exit;
+  end;
+  if lTopic.HasCoalesce then
+  begin
+    if not lNeedSchedule then
+      exit;
+    ScheduleTypedCoalesce<t>(lMetric, lTopic, lSubs);
+    exit;
+  end;
+
+	  Result := lTopic.Enqueue(
+	    procedure
+	    var
+	      lVal: t;
+	      lErrs: TmaxExceptionList;
+	      i: Integer;
+	      lHandler: TmaxProcOf<t>;
+	      lMode: TmaxDelivery;
+	      lToken: TmaxSubscriptionToken;
+	      lState: ImaxSubscriptionState;
+	      lBox: {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>;
+	    begin
+	      lVal := aEvent;
+	      lErrs := nil;
+	      for i := 0 to High(lSubs) do
+	      begin
+	        lHandler := lSubs[i].Handler;
+	        lMode := lSubs[i].Mode;
+	        lToken := lSubs[i].Token;
+	        lState := lSubs[i].State;
+
+        if (lState <> nil) and not lState.TryEnter then
           continue;
-        end;
 
-        lBox := {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
-        lBox.Topic := lTopic;
-        lBox.Handler := lHandler;
-        lBox.Value := lVal;
-        lBox.Token := lToken;
-        lBox.State := lState;
-
-        try
-          {$IFDEF max_DELPHI}
-            Dispatch(lMetric, lMode, TInvokeBox<t>.MakeProc(lBox), MakeOnExceptionProc(lTopic));
-          {$ELSE}
-            Dispatch(lMetric, lMode, specialize MakeTypedHandlerProc<t>(lBox), MakeOnExceptionProc(lTopic));
-          {$ENDIF}
-        except
-          on e: Exception do
-          begin
-            lBox.Free;
-            if lErrs = nil then
-              lErrs := TmaxExceptionList.Create(True);
-            {$IFDEF max_DELPHI}
-            lErrs.Add(Exception(AcquireExceptionObject));
-            {$ELSE}
-            lErrs.Add(e);
-            {$ENDIF}
-          end;
-        end;
-      end;
-      if lErrs <> nil then
-        raise EmaxAggregateException.Create(lErrs);
-    end);
-end;
+	        if not lSubs[i].Target.IsAlive then
+	        begin
+	          lTopic.RemoveByToken(lToken);
+	          if lState <> nil then
+	            lState.Leave;
+	          continue;
+	        end;
+	
+	        try
+	          if lMode = Posting then
+	          begin
+	            try
+	              try
+	                lHandler(lVal);
+	                lTopic.AddDelivered(1);
+	              except
+	                on e: Exception do
+	                begin
+	                  lTopic.AddException;
+	                  if (e is EAccessViolation) or (e is EInvalidPointer) then
+	                  begin
+	                    lTopic.RemoveByToken(lToken);
+	                    continue;
+	                  end;
+	                  raise;
+	                end;
+	              end;
+	            finally
+	              if lState <> nil then
+	                lState.Leave;
+	            end;
+	          end
+	          else
+	          begin
+	            lBox := {$IFDEF FPC}specialize {$ENDIF}TInvokeBox<t>.Create;
+	            lBox.Topic := lTopic;
+	            lBox.Handler := lHandler;
+	            lBox.Value := lVal;
+	            lBox.Token := lToken;
+	            lBox.State := lState;
+	            {$IFDEF max_DELPHI}
+	              Dispatch(lMetric, lMode, TInvokeBox<t>.MakeProc(lBox), nil);
+	            {$ELSE}
+	              Dispatch(lMetric, lMode, specialize MakeTypedHandlerProc<t>(lBox), nil);
+	            {$ENDIF}
+	          end;
+	        except
+	          on e: EmaxMainThreadRequired do
+	            raise;
+	          on e: Exception do
+	          begin
+	            if lErrs = nil then
+	              lErrs := TmaxExceptionList.Create(True);
+	            lErrs.Add(Exception.Create(e.Message));
+	          end;
+	        end;
+	      end;
+	      if lErrs <> nil then
+	        raise EmaxDispatchError.Create(lErrs);
+	    end);
+	end;
 
 procedure TmaxBus.EnableSticky<t>(aEnable: boolean);
 var
@@ -3646,31 +5563,49 @@ var
 begin
   lKey := TypeInfo(t);
   lMetric := TypeMetricName(lKey);
-  TMonitor.Enter(fLock);
+  TMonitor.Enter(fConfigLock);
   try
     if aEnable then
       fStickyTypes.AddOrSetValue(lKey, True)
     else
       fStickyTypes.Remove(lKey);
+  finally
+    TMonitor.Exit(fConfigLock);
+  end;
+
+  TMonitor.Enter(fTypedLock);
+  try
     if fTyped.TryGetValue(lKey, lObj) then
     begin
       lObj.SetMetricName(lMetric);
       lObj.SetSticky(aEnable);
     end;
+  finally
+    TMonitor.Exit(fTypedLock);
+  end;
+
+  TMonitor.Enter(fNamedTypedLock);
+  try
     for lKvName in fNamedTyped do
       if lKvName.Value.TryGetValue(lKey, lObj) then
       begin
         lObj.SetMetricName(NamedTypeMetricName(lKvName.Key, lKey));
         lObj.SetSticky(aEnable);
       end;
-    lGuid := GetTypeData(lKey)^.Guid;
+  finally
+    TMonitor.Exit(fNamedTypedLock);
+  end;
+
+  lGuid := GetTypeData(lKey)^.Guid;
+  TMonitor.Enter(fGuidLock);
+  try
     if fGuid.TryGetValue(lGuid, lObj) then
     begin
       lObj.SetMetricName(GuidMetricName(lGuid));
       lObj.SetSticky(aEnable);
     end;
   finally
-    TMonitor.exit(fLock);
+    TMonitor.Exit(fGuidLock);
   end;
 end;
 
@@ -3688,17 +5623,29 @@ var
 begin
   lNameKey := NormalizeName(aName);
   lMetric := NamedMetricName(lNameKey);
-  TMonitor.Enter(fLock);
+  TMonitor.Enter(fConfigLock);
   try
     if aEnable then
       fStickyNames.AddOrSetValue(lNameKey, True)
     else
       fStickyNames.Remove(lNameKey);
+  finally
+    TMonitor.Exit(fConfigLock);
+  end;
+
+  TMonitor.Enter(fNamedLock);
+  try
     if fNamed.TryGetValue(lNameKey, lObj) then
     begin
       lObj.SetMetricName(lMetric);
       lObj.SetSticky(aEnable);
     end;
+  finally
+    TMonitor.Exit(fNamedLock);
+  end;
+
+  TMonitor.Enter(fNamedTypedLock);
+  try
     if fNamedTyped.TryGetValue(lNameKey, lTypeDict) then
       for lKvInner in lTypeDict do
       begin
@@ -3706,7 +5653,7 @@ begin
         lKvInner.Value.SetSticky(aEnable);
       end;
   finally
-    TMonitor.exit(fLock);
+    TMonitor.Exit(fNamedTypedLock);
   end;
 end;
 
@@ -3716,26 +5663,40 @@ var
   lObj: TmaxTopicBase;
   lTopic: TTypedTopic<t>;
   lMetric: TmaxString;
+  lSticky: boolean;
+  lPreset: TmaxQueuePreset;
 begin
   lKey := TypeInfo(t);
   lMetric := TypeMetricName(lKey);
-  TMonitor.Enter(fLock);
+  TMonitor.Enter(fConfigLock);
+  try
+    lSticky := fStickyTypes.ContainsKey(lKey);
+    lPreset := TmaxQueuePreset.Unspecified;
+    fPresetTypes.TryGetValue(lKey, lPreset);
+  finally
+    TMonitor.Exit(fConfigLock);
+  end;
+
+  TMonitor.Enter(fTypedLock);
   try
     if not fTyped.TryGetValue(lKey, lObj) then
     begin
       lTopic := TTypedTopic<t>.Create;
       lTopic.SetMetricName(lMetric);
-      if fStickyTypes.ContainsKey(lKey) then
+      if lPreset <> TmaxQueuePreset.Unspecified then
+        lTopic.SetPolicyImplicit(PolicyForPreset(lPreset));
+      if lSticky then
         lTopic.SetSticky(True);
       fTyped.Add(lKey, lTopic);
     end
     else
       lTopic := TTypedTopic<t>(lObj);
     lTopic.SetMetricName(lMetric);
-    lTopic.SetCoalesce(aKeyOf, aWindowUs);
   finally
-    TMonitor.exit(fLock);
+    TMonitor.Exit(fTypedLock);
   end;
+  PublishMetricTypedTopic(lKey, lTopic);
+  lTopic.SetCoalesce(aKeyOf, aWindowUs);
 end;
 
 procedure TmaxBus.EnableCoalesceNamedOf<t>(const aName: string; const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer);
@@ -3747,11 +5708,39 @@ var
   lMetric: TmaxString;
   lBase: TmaxTopicBase;
   lKey: PTypeInfo;
+  lSticky: boolean;
+  lPreset: TmaxQueuePreset;
+  lBasePolicy: TmaxQueuePolicy;
+  lHasBasePolicy: boolean;
 begin
   lKey := TypeInfo(t);
   lNameKey := NormalizeName(aName);
   lMetric := NamedTypeMetricName(lNameKey, lKey);
-  TMonitor.Enter(fLock);
+  TMonitor.Enter(fConfigLock);
+  try
+    lSticky := fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey);
+    lPreset := TmaxQueuePreset.Unspecified;
+    fPresetNames.TryGetValue(lNameKey, lPreset);
+  finally
+    TMonitor.Exit(fConfigLock);
+  end;
+
+  lHasBasePolicy := False;
+  TMonitor.Enter(fNamedLock);
+  try
+    if fNamed.TryGetValue(lNameKey, lBase) then
+    begin
+      if lBase.HasExplicitPolicy then
+      begin
+        lBasePolicy := lBase.GetPolicy;
+        lHasBasePolicy := True;
+      end;
+    end;
+  finally
+    TMonitor.Exit(fNamedLock);
+  end;
+
+  TMonitor.Enter(fNamedTypedLock);
   try
     if not fNamedTyped.TryGetValue(lNameKey, lTypeDict) then
     begin
@@ -3762,19 +5751,66 @@ begin
     begin
       lTopic := TTypedTopic<t>.Create;
       lTopic.SetMetricName(lMetric);
-      if fNamed.TryGetValue(lNameKey, lBase) then
-        lTopic.SetPolicy(lBase.GetPolicy);
-      if fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey) then
+      if lHasBasePolicy then
+        lTopic.SetPolicy(lBasePolicy)
+      else if lPreset <> TmaxQueuePreset.Unspecified then
+        lTopic.SetPolicyImplicit(PolicyForPreset(lPreset));
+      if lSticky then
         lTopic.SetSticky(True);
       lTypeDict.Add(lKey, lTopic);
     end
     else
       lTopic := TTypedTopic<t>(lObj);
     lTopic.SetMetricName(lMetric);
-    lTopic.SetCoalesce(aKeyOf, aWindowUs);
   finally
-    TMonitor.exit(fLock);
+    TMonitor.Exit(fNamedTypedLock);
   end;
+  PublishMetricNamedTypedTopic(lNameKey, lKey, lTopic);
+  lTopic.SetCoalesce(aKeyOf, aWindowUs);
+end;
+
+procedure TmaxBus.EnableCoalesceGuidOf<t>(const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer);
+var
+  lGuid: TGuid;
+  lObj: TmaxTopicBase;
+  lTopic: TTypedTopic<t>;
+  lMetric: TmaxString;
+  lSticky: boolean;
+  lPreset: TmaxQueuePreset;
+  lTypeKey: PTypeInfo;
+begin
+  lTypeKey := TypeInfo(t);
+  lGuid := GetTypeData(lTypeKey)^.Guid;
+  lMetric := GuidMetricName(lGuid);
+  TMonitor.Enter(fConfigLock);
+  try
+    lSticky := fStickyTypes.ContainsKey(lTypeKey);
+    lPreset := TmaxQueuePreset.Unspecified;
+    fPresetGuids.TryGetValue(lGuid, lPreset);
+  finally
+    TMonitor.Exit(fConfigLock);
+  end;
+
+  TMonitor.Enter(fGuidLock);
+  try
+    if not fGuid.TryGetValue(lGuid, lObj) then
+    begin
+      lTopic := TTypedTopic<t>.Create;
+      lTopic.SetMetricName(lMetric);
+      if lPreset <> TmaxQueuePreset.Unspecified then
+        lTopic.SetPolicyImplicit(PolicyForPreset(lPreset));
+      if lSticky then
+        lTopic.SetSticky(True);
+      fGuid.Add(lGuid, lTopic);
+    end
+    else
+      lTopic := TTypedTopic<t>(lObj);
+    lTopic.SetMetricName(lMetric);
+  finally
+    TMonitor.Exit(fGuidLock);
+  end;
+  PublishMetricGuidTopic(lGuid, lTopic);
+  lTopic.SetCoalesce(aKeyOf, aWindowUs);
 end;
 
 procedure TmaxBus.UnsubscribeAllFor(const aTarget: TObject);
@@ -3792,23 +5828,80 @@ var
   lKvInner: TPair<PTypeInfo, TmaxTopicBase>;
   lKvGuid:  TPair<TGuid, TmaxTopicBase>;
   {$ENDIF}
+  lTypedTopics: TArray<TmaxTopicBase>;
+  lNamedTopics: TArray<TmaxTopicBase>;
+  lNamedTypedTopics: TArray<TmaxTopicBase>;
+  lGuidTopics: TArray<TmaxTopicBase>;
+  lTopic: TmaxTopicBase;
+  lIdx: integer;
+  lCount: integer;
 begin
   if aTarget = nil then
     exit;
-  TMonitor.Enter(fLock);
+
+  TMonitor.Enter(fTypedLock);
   try
+    SetLength(lTypedTopics, fTyped.Count);
+    lIdx := 0;
     for lKvTyped in fTyped do
-      lKvTyped.Value.RemoveByTarget(aTarget);
+    begin
+      lTypedTopics[lIdx] := lKvTyped.Value;
+      Inc(lIdx);
+    end;
+  finally
+    TMonitor.Exit(fTypedLock);
+  end;
+  for lTopic in lTypedTopics do
+    lTopic.RemoveByTarget(aTarget);
+
+  TMonitor.Enter(fNamedLock);
+  try
+    SetLength(lNamedTopics, fNamed.Count);
+    lIdx := 0;
     for lKvNamed in fNamed do
-      lKvNamed.Value.RemoveByTarget(aTarget);
+    begin
+      lNamedTopics[lIdx] := lKvNamed.Value;
+      Inc(lIdx);
+    end;
+  finally
+    TMonitor.Exit(fNamedLock);
+  end;
+  for lTopic in lNamedTopics do
+    lTopic.RemoveByTarget(aTarget);
+
+  TMonitor.Enter(fNamedTypedLock);
+  try
+    lCount := 0;
+    for lKvName in fNamedTyped do
+      Inc(lCount, lKvName.Value.Count);
+    SetLength(lNamedTypedTopics, lCount);
+    lIdx := 0;
     for lKvName in fNamedTyped do
       for lKvInner in lKvName.Value do
-        lKvInner.Value.RemoveByTarget(aTarget);
-    for lKvGuid in fGuid do
-      lKvGuid.Value.RemoveByTarget(aTarget);
+      begin
+        lNamedTypedTopics[lIdx] := lKvInner.Value;
+        Inc(lIdx);
+      end;
   finally
-    TMonitor.exit(fLock);
+    TMonitor.Exit(fNamedTypedLock);
   end;
+  for lTopic in lNamedTypedTopics do
+    lTopic.RemoveByTarget(aTarget);
+
+  TMonitor.Enter(fGuidLock);
+  try
+    SetLength(lGuidTopics, fGuid.Count);
+    lIdx := 0;
+    for lKvGuid in fGuid do
+    begin
+      lGuidTopics[lIdx] := lKvGuid.Value;
+      Inc(lIdx);
+    end;
+  finally
+    TMonitor.Exit(fGuidLock);
+  end;
+  for lTopic in lGuidTopics do
+    lTopic.RemoveByTarget(aTarget);
 end;
 
 procedure TmaxBus.Clear;
@@ -3817,29 +5910,167 @@ var
   lAutoKeys: TArray<TObject>;
   lKey: TObject;
 {$ENDIF}
+var
+  lStickyTypes: TmaxBoolDictOfTypeInfo;
+  lStickyNames: TmaxBoolDictOfString;
+  lPresetTypes: TmaxPresetDictOfTypeInfo;
+  lPresetNames: TmaxPresetDictOfString;
+  lPresetGuids: TmaxPresetDictOfGuid;
+  {$IFDEF FPC}
+  lStickyGuids: specialize TDictionary<TGuid, boolean>;
+  lKvTyped: specialize TPair<PTypeInfo, TmaxTopicBase>;
+  lKvNamed: specialize TPair<TmaxString, TmaxTopicBase>;
+  lKvName: specialize TPair<TmaxString, TmaxTypeTopicDict>;
+  lKvInner: specialize TPair<PTypeInfo, TmaxTopicBase>;
+  lKvGuid: specialize TPair<TGuid, TmaxTopicBase>;
+  lKvStickyType: specialize TPair<PTypeInfo, boolean>;
+  lKvStickyName: specialize TPair<TmaxString, boolean>;
+  lKvPresetType: specialize TPair<PTypeInfo, TmaxQueuePreset>;
+  lKvPresetName: specialize TPair<TmaxString, TmaxQueuePreset>;
+  lKvPresetGuid: specialize TPair<TGuid, TmaxQueuePreset>;
+  {$ELSE}
+  lStickyGuids: TDictionary<TGuid, boolean>;
+  lKvTyped: TPair<PTypeInfo, TmaxTopicBase>;
+  lKvNamed: TPair<TmaxString, TmaxTopicBase>;
+  lKvName: TPair<TmaxString, TmaxTypeTopicDict>;
+  lKvInner: TPair<PTypeInfo, TmaxTopicBase>;
+  lKvGuid: TPair<TGuid, TmaxTopicBase>;
+  lKvStickyType: TPair<PTypeInfo, boolean>;
+  lKvStickyName: TPair<TmaxString, boolean>;
+  lKvPresetType: TPair<PTypeInfo, TmaxQueuePreset>;
+  lKvPresetName: TPair<TmaxString, TmaxQueuePreset>;
+  lKvPresetGuid: TPair<TGuid, TmaxQueuePreset>;
+  {$ENDIF}
+  lPreset: TmaxQueuePreset;
 begin
   {$IFDEF max_DELPHI}
   lAutoKeys := nil;
-  TMonitor.Enter(fLock);
+  TMonitor.Enter(fAutoSubsLock);
   try
     lAutoKeys := fAutoSubs.Keys.ToArray;
   finally
-    TMonitor.exit(fLock);
+    TMonitor.Exit(fAutoSubsLock);
   end;
   for lKey in lAutoKeys do
     AutoUnsubscribeInstance(lKey);
   {$ENDIF}
-  TMonitor.Enter(fLock);
+
+  lStickyTypes := nil;
+  lStickyNames := nil;
+  lPresetTypes := nil;
+  lPresetNames := nil;
+  lPresetGuids := nil;
+  lStickyGuids := nil;
   try
-    fTyped.Clear;
-    fNamed.Clear;
-    fNamedTyped.Clear;
-    fGuid.Clear;
-    // Reset main-thread detection to the caller of Clear (tests call Clear on main thread)
-    fMainThreadId := TThread.CurrentThread.ThreadID;
+    lStickyTypes := TmaxBoolDictOfTypeInfo.Create;
+    lStickyNames := TmaxBoolDictOfString.Create;
+    lPresetTypes := TmaxPresetDictOfTypeInfo.Create;
+    lPresetNames := TmaxPresetDictOfString.Create;
+    lPresetGuids := TmaxPresetDictOfGuid.Create;
+    {$IFDEF FPC}
+    lStickyGuids := specialize TDictionary<TGuid, boolean>.Create;
+    {$ELSE}
+    lStickyGuids := TDictionary<TGuid, boolean>.Create;
+    {$ENDIF}
+
+    // Snapshot config without holding it during bus/topic locks (avoid lock-order deadlocks)
+    TMonitor.Enter(fConfigLock);
+    try
+      for lKvStickyType in fStickyTypes do
+        lStickyTypes.AddOrSetValue(lKvStickyType.Key, True);
+      for lKvStickyName in fStickyNames do
+        lStickyNames.AddOrSetValue(lKvStickyName.Key, True);
+      for lKvPresetType in fPresetTypes do
+        lPresetTypes.AddOrSetValue(lKvPresetType.Key, lKvPresetType.Value);
+      for lKvPresetName in fPresetNames do
+        lPresetNames.AddOrSetValue(lKvPresetName.Key, lKvPresetName.Value);
+      for lKvPresetGuid in fPresetGuids do
+        lPresetGuids.AddOrSetValue(lKvPresetGuid.Key, lKvPresetGuid.Value);
+    finally
+      TMonitor.Exit(fConfigLock);
+    end;
+
+    for lKvStickyType in lStickyTypes do
+      lStickyGuids.AddOrSetValue(GetTypeData(lKvStickyType.Key)^.Guid, True);
+
+    TMonitor.Enter(fTypedLock);
+    try
+      for lKvTyped in fTyped do
+      begin
+        lKvTyped.Value.ResetTopic;
+        lKvTyped.Value.SetMetricName(TypeMetricName(lKvTyped.Key));
+        lPreset := TmaxQueuePreset.Unspecified;
+        if lPresetTypes.TryGetValue(lKvTyped.Key, lPreset) and (lPreset <> TmaxQueuePreset.Unspecified) then
+          lKvTyped.Value.SetPolicyImplicit(PolicyForPreset(lPreset));
+        if lStickyTypes.ContainsKey(lKvTyped.Key) then
+          lKvTyped.Value.SetSticky(True);
+      end;
+    finally
+      TMonitor.Exit(fTypedLock);
+    end;
+
+    TMonitor.Enter(fNamedLock);
+    try
+      for lKvNamed in fNamed do
+      begin
+        lKvNamed.Value.ResetTopic;
+        lKvNamed.Value.SetMetricName(NamedMetricName(lKvNamed.Key));
+        lPreset := TmaxQueuePreset.Unspecified;
+        if lPresetNames.TryGetValue(lKvNamed.Key, lPreset) and (lPreset <> TmaxQueuePreset.Unspecified) then
+          lKvNamed.Value.SetPolicyImplicit(PolicyForPreset(lPreset));
+        if lStickyNames.ContainsKey(lKvNamed.Key) then
+          lKvNamed.Value.SetSticky(True);
+      end;
+    finally
+      TMonitor.Exit(fNamedLock);
+    end;
+
+    TMonitor.Enter(fNamedTypedLock);
+    try
+      for lKvName in fNamedTyped do
+      begin
+        lPreset := TmaxQueuePreset.Unspecified;
+        lPresetNames.TryGetValue(lKvName.Key, lPreset);
+        for lKvInner in lKvName.Value do
+        begin
+          lKvInner.Value.ResetTopic;
+          lKvInner.Value.SetMetricName(NamedTypeMetricName(lKvName.Key, lKvInner.Key));
+          if (lPreset <> TmaxQueuePreset.Unspecified) then
+            lKvInner.Value.SetPolicyImplicit(PolicyForPreset(lPreset));
+          if lStickyNames.ContainsKey(lKvName.Key) or lStickyTypes.ContainsKey(lKvInner.Key) then
+            lKvInner.Value.SetSticky(True);
+        end;
+      end;
+    finally
+      TMonitor.Exit(fNamedTypedLock);
+    end;
+
+    TMonitor.Enter(fGuidLock);
+    try
+      for lKvGuid in fGuid do
+      begin
+        lKvGuid.Value.ResetTopic;
+        lKvGuid.Value.SetMetricName(GuidMetricName(lKvGuid.Key));
+        lPreset := TmaxQueuePreset.Unspecified;
+        if lPresetGuids.TryGetValue(lKvGuid.Key, lPreset) and (lPreset <> TmaxQueuePreset.Unspecified) then
+          lKvGuid.Value.SetPolicyImplicit(PolicyForPreset(lPreset));
+        if lStickyGuids.ContainsKey(lKvGuid.Key) then
+          lKvGuid.Value.SetSticky(True);
+      end;
+    finally
+      TMonitor.Exit(fGuidLock);
+    end;
   finally
-    TMonitor.exit(fLock);
+    lStickyGuids.Free;
+    lPresetGuids.Free;
+    lPresetNames.Free;
+    lPresetTypes.Free;
+    lStickyNames.Free;
+    lStickyTypes.Free;
   end;
+
+  // Reset main-thread detection to the caller of Clear (tests call Clear on main thread)
+  fMainThreadId := TThread.CurrentThread.ThreadID;
 end;
 
 procedure TmaxBus.SetPolicyFor<t>(const aPolicy: TmaxQueuePolicy);
@@ -3848,24 +6079,29 @@ var
   lObj: TmaxTopicBase;
   lTopic: TTypedTopic<t>;
   lMetric: TmaxString;
+  lCreated: boolean;
 begin
   lKey := TypeInfo(t);
   lMetric := TypeMetricName(lKey);
-  TMonitor.Enter(fLock);
+  lCreated := False;
+  TMonitor.Enter(fTypedLock);
   try
     if not fTyped.TryGetValue(lKey, lObj) then
     begin
       lTopic := TTypedTopic<t>.Create;
       lTopic.SetMetricName(lMetric);
       fTyped.Add(lKey, lTopic);
+      lCreated := True;
     end
     else
       lTopic := TTypedTopic<t>(lObj);
     lTopic.SetMetricName(lMetric);
-    lTopic.SetPolicy(aPolicy);
   finally
-    TMonitor.exit(fLock);
+    TMonitor.Exit(fTypedLock);
   end;
+  if lCreated then
+    PublishMetricTypedTopic(lKey, lTopic);
+  lTopic.SetPolicy(aPolicy);
 end;
 
 procedure TmaxBus.SetPolicyNamed(const aName: string; const aPolicy: TmaxQueuePolicy);
@@ -3879,20 +6115,31 @@ var
   {$ELSE}
   lKvInner: TPair<PTypeInfo, TmaxTopicBase>;
   {$ENDIF}
+  lCreated: boolean;
 begin
   lNameKey := NormalizeName(aName);
   lMetric := NamedMetricName(lNameKey);
-  TMonitor.Enter(fLock);
+  lCreated := False;
+  TMonitor.Enter(fNamedLock);
   try
     if not fNamed.TryGetValue(lNameKey, lTopic) then
     begin
       lTopic := TNamedTopic.Create;
       TNamedTopic(lTopic).SetMetricName(lMetric);
       fNamed.Add(lNameKey, lTopic);
+      lCreated := True;
     end
     else if lTopic is TNamedTopic then
       TNamedTopic(lTopic).SetMetricName(lMetric);
-    lTopic.SetPolicy(aPolicy);
+  finally
+    TMonitor.Exit(fNamedLock);
+  end;
+  if lCreated then
+    PublishMetricNamedTopic(lNameKey, lTopic);
+  lTopic.SetPolicy(aPolicy);
+
+  TMonitor.Enter(fNamedTypedLock);
+  try
     if fNamedTyped.TryGetValue(lNameKey, lTypeDict) then
       for lKvInner in lTypeDict do
       begin
@@ -3900,28 +6147,70 @@ begin
         lKvInner.Value.SetPolicy(aPolicy);
       end;
   finally
-    TMonitor.exit(fLock);
+    TMonitor.Exit(fNamedTypedLock);
   end;
+end;
+
+procedure TmaxBus.SetPolicyGuidOf<t>(const aPolicy: TmaxQueuePolicy);
+var
+  lGuid: TGuid;
+  lObj: TmaxTopicBase;
+  lTopic: TTypedTopic<t>;
+  lMetric: TmaxString;
+  lTypeKey: PTypeInfo;
+  lCreated: boolean;
+begin
+  lTypeKey := TypeInfo(t);
+  lGuid := GetTypeData(lTypeKey)^.Guid;
+  lMetric := GuidMetricName(lGuid);
+  lCreated := False;
+  TMonitor.Enter(fGuidLock);
+  try
+    if not fGuid.TryGetValue(lGuid, lObj) then
+    begin
+      lTopic := TTypedTopic<t>.Create;
+      lTopic.SetMetricName(lMetric);
+      fGuid.Add(lGuid, lTopic);
+      lCreated := True;
+    end
+    else
+      lTopic := TTypedTopic<t>(lObj);
+    lTopic.SetMetricName(lMetric);
+  finally
+    TMonitor.Exit(fGuidLock);
+  end;
+  if lCreated then
+    PublishMetricGuidTopic(lGuid, lTopic);
+  lTopic.SetPolicy(aPolicy);
 end;
 
 function TmaxBus.GetPolicyFor<t>: TmaxQueuePolicy;
 var
   lKey: PTypeInfo;
   lObj: TmaxTopicBase;
+  lFound: boolean;
+  lPreset: TmaxQueuePreset;
 begin
   lKey := TypeInfo(t);
-  TMonitor.Enter(fLock);
+  TMonitor.Enter(fTypedLock);
   try
-    if fTyped.TryGetValue(lKey, lObj) then
-      Result := lObj.GetPolicy
-    else
-    begin
-      Result.MaxDepth := 0;
-      Result.Overflow := DropNewest;
-      Result.DeadlineUs := 0;
-    end;
+    lFound := fTyped.TryGetValue(lKey, lObj);
   finally
-    TMonitor.exit(fLock);
+    TMonitor.Exit(fTypedLock);
+  end;
+  if lFound then
+    Result := lObj.GetPolicy
+  else
+  begin
+    Result := PolicyForPreset(TmaxQueuePreset.Unspecified);
+    TMonitor.Enter(fConfigLock);
+    try
+      lPreset := TmaxQueuePreset.Unspecified;
+      if fPresetTypes.TryGetValue(lKey, lPreset) and (lPreset <> TmaxQueuePreset.Unspecified) then
+        Result := PolicyForPreset(lPreset);
+    finally
+      TMonitor.Exit(fConfigLock);
+    end;
   end;
 end;
 
@@ -3929,121 +6218,102 @@ function TmaxBus.GetPolicyNamed(const aName: string): TmaxQueuePolicy;
 var
   lTopic: TmaxTopicBase;
   lNameKey: TmaxString;
+  lFound: boolean;
+  lPreset: TmaxQueuePreset;
 begin
   lNameKey := NormalizeName(aName);
-  TMonitor.Enter(fLock);
+  TMonitor.Enter(fNamedLock);
   try
-    if fNamed.TryGetValue(lNameKey, lTopic) then
-      Result := lTopic.GetPolicy
-    else begin
-      Result.MaxDepth := 0;
-      Result.Overflow := DropNewest;
-      Result.DeadlineUs := 0;
-    end;
+    lFound := fNamed.TryGetValue(lNameKey, lTopic);
   finally
-    TMonitor.exit(fLock);
+    TMonitor.Exit(fNamedLock);
+  end;
+  if lFound then
+    Result := lTopic.GetPolicy
+  else
+  begin
+    Result := PolicyForPreset(TmaxQueuePreset.Unspecified);
+    TMonitor.Enter(fConfigLock);
+    try
+      lPreset := TmaxQueuePreset.Unspecified;
+      if fPresetNames.TryGetValue(lNameKey, lPreset) and (lPreset <> TmaxQueuePreset.Unspecified) then
+        Result := PolicyForPreset(lPreset);
+    finally
+      TMonitor.Exit(fConfigLock);
+    end;
+  end;
+end;
+
+function TmaxBus.GetPolicyGuidOf<t>: TmaxQueuePolicy;
+var
+  lGuid: TGuid;
+  lObj: TmaxTopicBase;
+  lFound: boolean;
+  lTypeKey: PTypeInfo;
+  lPreset: TmaxQueuePreset;
+begin
+  lTypeKey := TypeInfo(t);
+  lGuid := GetTypeData(lTypeKey)^.Guid;
+  TMonitor.Enter(fGuidLock);
+  try
+    lFound := fGuid.TryGetValue(lGuid, lObj);
+  finally
+    TMonitor.Exit(fGuidLock);
+  end;
+  if lFound then
+    Result := lObj.GetPolicy
+  else
+  begin
+    Result := PolicyForPreset(TmaxQueuePreset.Unspecified);
+    TMonitor.Enter(fConfigLock);
+    try
+      lPreset := TmaxQueuePreset.Unspecified;
+      if fPresetGuids.TryGetValue(lGuid, lPreset) and (lPreset <> TmaxQueuePreset.Unspecified) then
+        Result := PolicyForPreset(lPreset);
+    finally
+      TMonitor.Exit(fConfigLock);
+    end;
   end;
 end;
 
 function TmaxBus.GetStatsFor<t>: TmaxTopicStats;
 var
   lKey: PTypeInfo;
-  lObj: TmaxTopicBase;
+  lIndex: ImaxMetricsIndex;
 begin
-  FillChar(Result, SizeOf(Result), 0);
   lKey := TypeInfo(t);
-  TMonitor.Enter(fLock);
-  try
-    if fTyped.TryGetValue(lKey, lObj) then
-      Result := lObj.GetStats;
-  finally
-    TMonitor.exit(fLock);
-  end;
+  lIndex := fMetricsIndex;
+  Result := lIndex.GetStatsForType(lKey);
+end;
+
+function TmaxBus.GetStatsGuidOf<t>: TmaxTopicStats;
+var
+  lGuid: TGuid;
+  lTypeKey: PTypeInfo;
+  lIndex: ImaxMetricsIndex;
+begin
+  lTypeKey := TypeInfo(t);
+  lGuid := GetTypeData(lTypeKey)^.Guid;
+  lIndex := fMetricsIndex;
+  Result := lIndex.GetStatsGuid(lGuid);
 end;
 
 function TmaxBus.GetStatsNamed(const aName: string): TmaxTopicStats;
 var
-  lObj: TmaxTopicBase;
   lNameKey: TmaxString;
-  lTypeDict: TmaxTypeTopicDict;
-  lInner: TmaxTopicBase;
+  lIndex: ImaxMetricsIndex;
 begin
-  FillChar(Result, SizeOf(Result), 0);
   lNameKey := NormalizeName(aName);
-  TMonitor.Enter(fLock);
-  try
-    if fNamed.TryGetValue(lNameKey, lObj) then
-      Result := lObj.GetStats;
-    if fNamedTyped.TryGetValue(lNameKey, lTypeDict) then
-      for lInner in lTypeDict.Values do
-      begin
-        Inc(Result.PostsTotal, lInner.GetStats.PostsTotal);
-        Inc(Result.DeliveredTotal, lInner.GetStats.DeliveredTotal);
-        Inc(Result.DroppedTotal, lInner.GetStats.DroppedTotal);
-        Inc(Result.ExceptionsTotal, lInner.GetStats.ExceptionsTotal);
-        if lInner.GetStats.MaxQueueDepth > Result.MaxQueueDepth then
-          Result.MaxQueueDepth := lInner.GetStats.MaxQueueDepth;
-        Inc(Result.CurrentQueueDepth, lInner.GetStats.CurrentQueueDepth);
-      end;
-  finally
-    TMonitor.exit(fLock);
-  end;
+  lIndex := fMetricsIndex;
+  Result := lIndex.GetStatsNamed(lNameKey);
 end;
 
 function TmaxBus.GetTotals: TmaxTopicStats;
 var
-  lObj: TmaxTopicBase;
-  lTypeDict: TmaxTypeTopicDict;
-  lInner: TmaxTopicBase;
-  lGuidObj: TmaxTopicBase;
+  lIndex: ImaxMetricsIndex;
 begin
-  FillChar(Result, SizeOf(Result), 0);
-  TMonitor.Enter(fLock);
-  try
-    for lObj in fTyped.Values do
-    begin
-      Inc(Result.PostsTotal, lObj.GetStats.PostsTotal);
-      Inc(Result.DeliveredTotal, lObj.GetStats.DeliveredTotal);
-      Inc(Result.DroppedTotal, lObj.GetStats.DroppedTotal);
-      Inc(Result.ExceptionsTotal, lObj.GetStats.ExceptionsTotal);
-      if lObj.GetStats.MaxQueueDepth > Result.MaxQueueDepth then
-        Result.MaxQueueDepth := lObj.GetStats.MaxQueueDepth;
-      Inc(Result.CurrentQueueDepth, lObj.GetStats.CurrentQueueDepth);
-    end;
-    for lObj in fNamed.Values do
-    begin
-      Inc(Result.PostsTotal, lObj.GetStats.PostsTotal);
-      Inc(Result.DeliveredTotal, lObj.GetStats.DeliveredTotal);
-      Inc(Result.DroppedTotal, lObj.GetStats.DroppedTotal);
-      Inc(Result.ExceptionsTotal, lObj.GetStats.ExceptionsTotal);
-      if lObj.GetStats.MaxQueueDepth > Result.MaxQueueDepth then
-        Result.MaxQueueDepth := lObj.GetStats.MaxQueueDepth;
-      Inc(Result.CurrentQueueDepth, lObj.GetStats.CurrentQueueDepth);
-    end;
-    for lTypeDict in fNamedTyped.Values do
-      for lInner in lTypeDict.Values do
-      begin
-        Inc(Result.PostsTotal, lInner.GetStats.PostsTotal);
-        Inc(Result.DeliveredTotal, lInner.GetStats.DeliveredTotal);
-        Inc(Result.DroppedTotal, lInner.GetStats.DroppedTotal);
-        Inc(Result.ExceptionsTotal, lInner.GetStats.ExceptionsTotal);
-        if lInner.GetStats.MaxQueueDepth > Result.MaxQueueDepth then
-          Result.MaxQueueDepth := lInner.GetStats.MaxQueueDepth;
-        Inc(Result.CurrentQueueDepth, lInner.GetStats.CurrentQueueDepth);
-      end;
-    for lGuidObj in fGuid.Values do
-    begin
-      Inc(Result.PostsTotal, lGuidObj.GetStats.PostsTotal);
-      Inc(Result.DeliveredTotal, lGuidObj.GetStats.DeliveredTotal);
-      Inc(Result.DroppedTotal, lGuidObj.GetStats.DroppedTotal);
-      Inc(Result.ExceptionsTotal, lGuidObj.GetStats.ExceptionsTotal);
-      if lGuidObj.GetStats.MaxQueueDepth > Result.MaxQueueDepth then
-        Result.MaxQueueDepth := lGuidObj.GetStats.MaxQueueDepth;
-      Inc(Result.CurrentQueueDepth, lGuidObj.GetStats.CurrentQueueDepth);
-    end;
-  finally
-    TMonitor.exit(fLock);
-  end;
+  lIndex := fMetricsIndex;
+  Result := lIndex.GetTotals;
 end;
 
 function TmaxBus.GetSelf: TObject;
@@ -4116,6 +6386,11 @@ begin
   Impl.PostGuidOf<t>(aEvent);
 end;
 
+function ImaxBusHelper.TryPostGuidOf<t>(const aEvent: t): boolean;
+begin
+  Result := Impl.TryPostGuidOf<t>(aEvent);
+end;
+
 procedure ImaxBusHelper.EnableSticky<t>(aEnable: boolean);
 begin
   Impl.EnableSticky<t>(aEnable);
@@ -4145,6 +6420,11 @@ begin
   Impl.EnableCoalesceNamedOf<t>(aName, aKeyOf, aWindowUs);
 end;
 
+procedure ImaxBusAdvancedHelper.EnableCoalesceGuidOf<t>(const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer);
+begin
+  Impl.EnableCoalesceGuidOf<t>(aKeyOf, aWindowUs);
+end;
+
 function ImaxBusQueuesHelper.Impl: TmaxBus;
 var
   X: ImaxBusImpl;
@@ -4164,6 +6444,16 @@ begin
   Result := Impl.GetPolicyFor<t>;
 end;
 
+procedure ImaxBusQueuesHelper.SetPolicyGuidOf<t>(const aPolicy: TmaxQueuePolicy);
+begin
+  Impl.SetPolicyGuidOf<t>(aPolicy);
+end;
+
+function ImaxBusQueuesHelper.GetPolicyGuidOf<t>: TmaxQueuePolicy;
+begin
+  Result := Impl.GetPolicyGuidOf<t>;
+end;
+
 function ImaxBusMetricsHelper.Impl: TmaxBus;
 var
   X: ImaxBusImpl;
@@ -4176,6 +6466,11 @@ end;
 function ImaxBusMetricsHelper.GetStatsFor<t>: TmaxTopicStats;
 begin
   Result := Impl.GetStatsFor<t>;
+end;
+
+function ImaxBusMetricsHelper.GetStatsGuidOf<t>: TmaxTopicStats;
+begin
+  Result := Impl.GetStatsGuidOf<t>;
 end;
 {$ENDIF}
 
@@ -4191,18 +6486,29 @@ end;
 {$ENDIF}
 
 initialization
+  gBusLock := TmaxMonitorObject.Create;
+  if gMetricSampleIntervalMs = 0 then
+    gMetricSampleIntervalTicks := 0
+  else
+  begin
+    gMetricSampleIntervalTicks := (UInt64(gMetricSampleIntervalMs) * UInt64(TMaxStopwatch.Frequency)) div 1000;
+    if gMetricSampleIntervalTicks = 0 then
+      gMetricSampleIntervalTicks := 1;
+  end;
   {$IFDEF FPC}
   gFpcWeakRegistry := TFpcWeakRegistry.Create;
   {$ENDIF}
+  {$IFDEF max_DELPHI}
+  gDelphiWeakRegistry := TDelphiWeakRegistry.Create;
+  {$ENDIF}
 
 finalization
+  FreeAndNil(gBusLock);
   {$IFDEF FPC}
   FreeAndNil(gFpcWeakRegistry);
   {$ENDIF}
   {$IFDEF max_DELPHI}
-  {$IFDEF DEBUG}
-  FreeAndNil(gDebugCs);
-  {$ENDIF}
+  FreeAndNil(gDelphiWeakRegistry);
   {$ENDIF}
 
 end.

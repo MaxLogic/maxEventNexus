@@ -18,8 +18,7 @@ All topic lookups are stored in dictionaries mapping the topic identifier to sub
 
 ## Weak-Target Liveness (Delphi/FPC)
 * For **object-method** handlers, each entry stores `{CodePtr, WeakTarget}` and reconstructs the `TMethod` on dispatch.
-  * **Delphi 12+**: `WeakTarget = System.WeakReference.TWeakReference<TObject>`. Invoke only if `TryGetTarget` succeeds.
-  * **FPC 3.2.2**: `WeakTarget` is a lightweight registry `(Ptr → Generation)`. On finalization, the generation increments. Invoke only if `{Ptr, GenAtSubscribe} == CurrentGen`.
+  * **Delphi 12+ / FPC 3.2.2**: `WeakTarget` is a lightweight registry `(Ptr → Generation)`. On free/finalization, the generation increments. Invoke only if `{Ptr, GenAtSubscribe} == CurrentGen`.
 * **Rationale**: protects against forgotten unsubscribe, async races, and ABA reuse. **No try/except probes** on the hot path.
 * **Pruning**: when a dead target is detected, the subscription is marked and **pruned lazily** on the next mutation/sweep to keep COW arrays compact.
 
