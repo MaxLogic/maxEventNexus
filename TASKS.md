@@ -2,23 +2,12 @@
 Next task ID: T-1058
 
 ## Summary
-Open tasks: 2 (In Progress: 0, Next Today: 2, Next This Week: 0, Next Later: 0, Blocked: 0)
-Done tasks: 78
+Open tasks: 1 (In Progress: 0, Next Today: 1, Next This Week: 0, Next Later: 0, Blocked: 0)
+Done tasks: 79
 
 ## In Progress
 
 ## Next – Today
-
-### T-1056 [API] Audit and document Delphi 12 API polish candidates
-Outcome: Produce a Delphi 12 API-polish decision record that captures approved/refused API cleanup candidates (including any public-signature impacts) before implementation work starts.
-Proof:
-- Command: rg -n "maxBusObj|ImaxBus|ImaxBusAdvanced|ImaxBusQueues|ImaxBusMetrics|TmaxBus" README.md spec.md maxLogic.EventNexus*.pas
-- Expect: command output is used to justify scope and `docs/decisions/ADR-0004-delphi12-api-polish.md` is added with accepted/rejected candidates.
-- Command: ./build-and-run-tests.sh
-- Expect: exits 0 after any doc/API-alignment edits.
-Touches: docs/decisions/, README.md, spec.md, maxLogic.EventNexus*.pas
-Notes:
-- Keep current guardrail: do not change existing public signatures without explicit approval.
 
 ### T-1057 [PERF] Add benchmark regression threshold gate
 Outcome: Add a deterministic benchmark-threshold checker so SchedulerCompare CSV output can fail CI/local runs when key latency/throughput regressions exceed configured limits.
@@ -47,6 +36,14 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1056 [API] Audit and document Delphi 12 API polish candidates
+Summary: Added ADR-0004 with a Delphi 12 API-polish candidate audit and explicit accept/reject decisions, including public-signature impact assessment.
+
+Details:
+- Added `docs/decisions/ADR-0004-delphi12-api-polish.md` documenting approved no-signature-change polish items and rejected/deferred signature-changing candidates.
+- Captured audit scope from `rg -n "maxBusObj|ImaxBus|ImaxBusAdvanced|ImaxBusQueues|ImaxBusMetrics|TmaxBus" README.md spec.md maxLogic.EventNexus*.pas`.
+- Proof: `./build-and-run-tests.sh` (SUCCESS).
 
 ### T-1055 [BUILD] Add Delphi static-analysis runner and report baseline
 Summary: Added repeatable static-analysis wrappers that run DelphiAIKit/FixInsight with normalized baseline artifacts under `build/analysis/`.
