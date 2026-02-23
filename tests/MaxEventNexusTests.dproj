@@ -181,13 +181,13 @@
         <DelphiCompile Include="$(MainSource)">
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
-        <DCCReference Include="src\mormot.core.test.pas"/>
         <DCCReference Include="..\maxLogic.EventNexus.Threading.Adapter.pas"/>
         <DCCReference Include="..\maxLogic.EventNexus.Threading.RawThread.pas"/>
         <DCCReference Include="..\maxLogic.EventNexus.Threading.MaxAsync.pas"/>
         <DCCReference Include="..\maxLogic.EventNexus.Threading.TTask.pas"/>
         <DCCReference Include="..\maxLogic.EventNexus.pas"/>
         <DCCReference Include="src\MaxEventNexus.Main.Tests.pas"/>
+        <DCCReference Include="src\MaxEventNexus.Testing.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
             <DependentOn>..\..\MaxLogicFoundation\MaxLogicDefault.optset</DependentOn>

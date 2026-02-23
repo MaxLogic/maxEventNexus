@@ -1,0 +1,19 @@
+# Allowed diagnostics patterns (warning/hint lines) for Delphi CLI builds.
+# If a warning/hint line from MSBuild output does not match any rule,
+# build-delphi.bat -enforce-diagnostics-policy fails the build.
+
+^maxLogic\.EventNexus\.Core\.pas\(\d+\): warning W1010: Method 'Dispatch' hides virtual method of base type 'TObject' \[[^\]]+\]$
+^maxLogic\.EventNexus\.Core\.pas\(\d+\): warning W1000: Symbol 'vmtFreeInstance' is deprecated: 'Use VMTOFFSET in asm code' \[[^\]]+\]$
+
+^lib\\maxlogicfoundation\\MaxLogic\.strutils\.pas\(\d+\): warning W1010: Method '(Equals|GetHashCode)' hides virtual method of base type 'TObject' \[[^\]]+\]$
+^lib\\maxlogicfoundation\\MaxLogic\.StrUtils\.pas\(\d+\): warning W1000: Symbol 'TCharacter' is deprecated: 'Use TCharHelper' \[[^\]]+\]$
+^lib\\maxlogicfoundation\\MaxLogic\.StrUtils\.pas\(\d+\): warning W1024: Combining signed and unsigned types - widened both operands \[[^\]]+\]$
+
+^src\\MaxEventNexus\.Main\.Tests\.pas\(\d+\): warning W1055: PUBLISHED caused RTTI \(\$M\+\) to be added to type '.+' \[[^\]]+\]$
+^SchedulerCompare\.dpr\(\d+\): warning W1073: Combining signed type and unsigned 64-bit type - treated as an unsigned type \[[^\]]+\]$
+
+^lib\\maxlogicfoundation\\MaxLogic\.strutils\.pas\(\d+\): Hint warning H2077: Value assigned to '.+' never used \[[^\]]+\]$
+^lib\\maxlogicfoundation\\MaxLogic\.strutils\.pas\(\d+\): Hint warning H2219: Private symbol 'FoldAscii' declared but never used \[[^\]]+\]$
+^maxLogic\.EventNexus\.Core\.pas\(\d+\): Hint warning H2164: Variable 'lKvInner' is declared but never used in 'TmaxBus\.EnableSticky<t>' \[[^\]]+\]$
+^lib\\maxlogicfoundation\\maxAsync\.pas\(\d+\): Hint warning H2077: Value assigned to 'NoItem' never used \[[^\]]+\]$
+^SchedulerCompare\.dpr\(\d+\): Hint warning H2077: Value assigned to '.+' never used \[[^\]]+\]$
