@@ -1,13 +1,31 @@
 # Tasks
-Next task ID: T-1053
+Next task ID: T-1055
 
 ## Summary
-Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
+Open tasks: 2 (In Progress: 0, Next Today: 2, Next This Week: 0, Next Later: 0, Blocked: 0)
 Done tasks: 75
 
 ## In Progress
 
 ## Next – Today
+
+### T-1053 [BENCH] Fix maxAsync failures in SchedulerCompare async profile
+Outcome: `SchedulerCompare` async benchmark runs complete with `status=ok` for `maxAsync` rows (no `EmaxDispatchError` failures) under the documented contract profile.
+Proof:
+- Command: /mnt/c/Windows/System32/cmd.exe /C "cd /d F:\\projects\\MaxLogic\\maxEventNexus && bench\\SchedulerCompare.exe --events=2000 --consumers=2 --runs=3 --delivery=async --metrics-readers=1 --metrics-reads=5000 --csv=bench\\scheduler-summary.csv"
+- Expect: process exits 0 and CSV row for `maxAsync` has `status=ok` and empty `error`.
+Touches: bench/SchedulerCompare.dpr, maxLogic.EventNexus.Core.pas, maxLogic.EventNexus.Threading.MaxAsync.pas
+Notes:
+- Current evidence: `FAILED: EmaxDispatchError: 2 exception(s) occurred` in `maxAsync` row.
+
+### T-1054 [BENCH] Fix TTask scheduler thread-creation failures in SchedulerCompare
+Outcome: `SchedulerCompare` async benchmark runs complete with `status=ok` for `TTask` rows (no thread-creation failures) under the documented contract profile.
+Proof:
+- Command: /mnt/c/Windows/System32/cmd.exe /C "cd /d F:\\projects\\MaxLogic\\maxEventNexus && bench\\SchedulerCompare.exe --events=2000 --consumers=2 --runs=3 --delivery=async --metrics-readers=1 --metrics-reads=5000 --csv=bench\\scheduler-summary.csv"
+- Expect: process exits 0 and CSV row for `TTask` has `status=ok` and empty `error`.
+Touches: bench/SchedulerCompare.dpr, maxLogic.EventNexus.Threading.TTask.pas
+Notes:
+- Current evidence: `FAILED: EThread: Thread creation error:` in `TTask` row.
 
 ## Next – This Week
 
