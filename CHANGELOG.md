@@ -18,12 +18,14 @@
 - Added diagnostics-policy enforcement in `build-delphi.bat` with regex allowlist (`build/diagnostics-policy.regex`); test scripts now fail on untriaged warnings/hints. (T-1052)
 - Replaced legacy `maxAsBus(...)` shim with typed bridge overloads `maxBusObj` / `maxBusObj(aIntf)` and migrated runtime docs/tests/samples accordingly. (T-1048)
 - Scheduler benchmark now has a documented output contract (clock source + nearest-rank percentiles + CSV schema/status columns) and supports contention-focused metrics-reader load profiles. (T-1019)
+- Async benchmark harness now applies bounded queue/in-flight guards, uses `TTask.Future` metrics readers, and caps `maxAsync` to one in-process async run to avoid cumulative memory-pressure failures during scheduler comparisons. (T-1053, T-1054)
 - Topic metric counters now use padded counter slots to reduce cross-counter cache-line contention under concurrent posting. (T-1007)
 - Extension backlog items (priority/bulk/wildcards/tracing/serializer/disruptor) are explicitly deferred for the current delivery via ADR-0003 to remove scope ambiguity. (T-1010..T-1015)
 - Config/metrics lock primitives are now Delphi 12 `TLightweightMREW`-based instead of monitor objects, preserving existing mutation semantics while modernizing lock infrastructure. (T-1051)
 
 ### Fixed
 - Sample and benchmark programs now call generic bus APIs through `maxBusObj(...)` typed bridge helpers so they compile against the current Delphi interface surface. (T-1043, T-1048)
+- `TmaxMaxAsyncScheduler` and `TmaxTTaskScheduler` now degrade to inline execution if async task submission fails, preventing benchmark-profile dispatch failures from transient thread/scheduler allocation errors. (T-1053, T-1054)
 
 ## [1.0.0] - 2025-12-15
 
