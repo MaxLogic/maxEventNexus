@@ -8,6 +8,8 @@ OUT_DIR="${ROOT_DIR}/build/analysis"
 SKILL_DIR="${STATIC_ANALYSIS_SKILL_DIR:-$HOME/.codex/skills/delphi-static-analysis}"
 DOCTOR_LOG="${OUT_DIR}/doctor.txt"
 ANALYZE_LOG="${OUT_DIR}/analyze.log"
+PAL_PATH_UNIX=""
+PAL_PATH_WIN=""
 
 if [[ ! -f "${PROJECT_PATH}" ]]; then
   echo "ERROR: Missing project: ${PROJECT_PATH}" >&2
@@ -26,7 +28,27 @@ if ! bash "${SKILL_DIR}/doctor.sh" "${PROJECT_PATH}" >"${DOCTOR_LOG}" 2>&1; then
   exit 2
 fi
 
-if grep -q "PascalAnalyzer.Path=<empty>" "${DOCTOR_LOG}"; then
+if [[ -n "${PALCMD_PATH:-}" ]] && [[ -f "${PALCMD_PATH}" ]]; then
+  PAL_PATH_UNIX="${PALCMD_PATH}"
+elif [[ -f "/mnt/c/Program Files/Peganza/Pascal Analyzer 9/palcmd.exe" ]]; then
+  PAL_PATH_UNIX="/mnt/c/Program Files/Peganza/Pascal Analyzer 9/palcmd.exe"
+elif [[ -f "/mnt/c/Program Files/Peganza/Pascal Analyzer 9/PAL32/palcmd32.exe" ]]; then
+  PAL_PATH_UNIX="/mnt/c/Program Files/Peganza/Pascal Analyzer 9/PAL32/palcmd32.exe"
+else
+  PAL_WHERE="$(/mnt/c/Windows/System32/cmd.exe /C "where PALCMD.exe" 2>/dev/null | tr -d '\r' | head -n 1 || true)"
+  if [[ -n "${PAL_WHERE}" ]]; then
+    PAL_PATH_WIN="${PAL_WHERE}"
+  fi
+fi
+
+if [[ -n "${PAL_PATH_UNIX}" ]]; then
+  PAL_PATH_WIN="$(wslpath -w "${PAL_PATH_UNIX}")"
+fi
+
+if [[ -n "${PAL_PATH_WIN}" ]]; then
+  export PA_PATH="${PAL_PATH_WIN}"
+  export DAK_PASCAL_ANALYZER=1
+elif grep -q "PascalAnalyzer.Path=<empty>" "${DOCTOR_LOG}"; then
   export DAK_PASCAL_ANALYZER=0
 else
   export DAK_PASCAL_ANALYZER=1

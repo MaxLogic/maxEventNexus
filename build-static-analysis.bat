@@ -5,6 +5,7 @@ set "ROOT_DIR=%~dp0"
 set "PROJECT_PATH=%ROOT_DIR%tests\MaxEventNexusTests.dproj"
 set "OUT_DIR=%ROOT_DIR%build\analysis"
 set "SKILL_DIR=%STATIC_ANALYSIS_SKILL_DIR%"
+set "PAL_EXE="
 
 if not defined SKILL_DIR set "SKILL_DIR=%USERPROFILE%\.codex\skills\delphi-static-analysis"
 if not exist "%SKILL_DIR%\doctor.bat" (
@@ -44,11 +45,29 @@ set "DAK_OUT=%OUT_DIR%"
 set "DAK_CLEAN=1"
 set "DAK_WRITE_SUMMARY=1"
 
-findstr /C:"PascalAnalyzer.Path=<empty>" "%OUT_DIR%\doctor.txt" >nul
-if %ERRORLEVEL%==0 (
-  set "DAK_PASCAL_ANALYZER=0"
-) else (
+if defined PALCMD_PATH if exist "%PALCMD_PATH%" set "PAL_EXE=%PALCMD_PATH%"
+if not defined PAL_EXE if exist "C:\Program Files\Peganza\Pascal Analyzer 9\palcmd.exe" set "PAL_EXE=C:\Program Files\Peganza\Pascal Analyzer 9\palcmd.exe"
+if not defined PAL_EXE if exist "C:\Program Files\Peganza\Pascal Analyzer 9\PAL32\palcmd32.exe" set "PAL_EXE=C:\Program Files\Peganza\Pascal Analyzer 9\PAL32\palcmd32.exe"
+if not defined PAL_EXE (
+  for /f "usebackq delims=" %%I in (`where PALCMD.exe 2^>nul`) do (
+    if not defined PAL_EXE set "PAL_EXE=%%I"
+  )
+)
+
+if defined PAL_EXE (
+  set "PA_PATH=%PAL_EXE%"
   set "DAK_PASCAL_ANALYZER=1"
+) else (
+  findstr /C:"PascalAnalyzer.Path=<empty>" "%OUT_DIR%\doctor.txt" >nul
+  if %ERRORLEVEL%==0 (
+    set "DAK_PASCAL_ANALYZER=0"
+  ) else (
+    set "DAK_PASCAL_ANALYZER=1"
+  )
+)
+
+if not defined PAL_EXE if not defined DAK_PASCAL_ANALYZER (
+  set "DAK_PASCAL_ANALYZER=0"
 )
 
 call "%SKILL_DIR%\analyze.bat" "%PROJECT_PATH%" > "%OUT_DIR%\analyze.log" 2>&1
