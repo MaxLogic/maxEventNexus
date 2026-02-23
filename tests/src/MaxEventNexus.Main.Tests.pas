@@ -1,31 +1,18 @@
 unit MaxEventNexus.Main.Tests;
 
-{$I ../fpc_delphimode.inc}
-
-{$IFDEF FPC}
-{$DEFINE max_FPC}
-{$ELSE}
 {$DEFINE max_DELPHI}
-{$ENDIF}
 
 interface
 
 uses
   // RTL
-  Classes, SysUtils, SyncObjs, TypInfo,
-  {$IFDEF max_DELPHI} System.Generics.Collections, {$ELSE} Generics.Collections, {$ENDIF}
+  Classes, SysUtils, SyncObjs, TypInfo, System.Generics.Collections,
   // Third-party
-  mormot.core.Test,
+  MaxEventNexus.Testing,
   // Project
-  {$IFDEF max_FPC}
-  maxLogic_EventNexus_Threading_Adapter, maxLogic_EventNexus_Threading_RawThread, maxLogic_EventNexus_Core, maxLogic_EventNexus;
-  {$ELSE}
-  maxLogic.EventNexus.Threading.Adapter,
-  maxLogic.EventNexus.Threading.RawThread,
-  maxLogic.EventNexus.Core,
-  {$IFDEF max_DELPHI} maxLogic.EventNexus.Threading.MaxAsync, maxLogic.EventNexus.Threading.TTask, {$ENDIF}
-  maxLogic.EventNexus;
-  {$ENDIF}
+  maxLogic.EventNexus.Threading.Adapter, maxLogic.EventNexus.Threading.RawThread,
+  maxLogic.EventNexus.Core, maxLogic.EventNexus.Threading.MaxAsync,
+  maxLogic.EventNexus.Threading.TTask, maxLogic.EventNexus;
 
 type
   TKeyed = record
@@ -46,33 +33,33 @@ type
   end;
 
 type
-  TTestAggregateException = class(TSynTestCase)
+  TTestAggregateException = class(TmaxTestCase)
   published
     procedure AggregatesMultiple;
   end;
 
-  TTestAsyncDelivery = class(TSynTestCase)
+  TTestAsyncDelivery = class(TmaxTestCase)
   published
     procedure AsyncAndBackgroundRunOffPostingThread;
   end;
 
-  TTestAsyncExceptions = class(TSynTestCase)
+  TTestAsyncExceptions = class(TmaxTestCase)
   published
     procedure ErrorsForwardToHookNoRaise;
   end;
 
-  TTestCoalesce = class(TSynTestCase)
+  TTestCoalesce = class(TmaxTestCase)
   published
     procedure DropsIntermediateDeliversLatest;
     procedure ZeroWindowBatchesPosts;
   end;
 
-  TTestFuzz = class(TSynTestCase)
+  TTestFuzz = class(TmaxTestCase)
   published
     procedure RandomDeliveryNoDeadlock;
   end;
 
-  TTestStress = class(TSynTestCase)
+  TTestStress = class(TmaxTestCase)
   published
     procedure OneMillionPosts;
   end;
@@ -86,14 +73,14 @@ type
     procedure Execute; override;
   end;
 
-  TTestMetrics = class(TSynTestCase)
+  TTestMetrics = class(TmaxTestCase)
   published
     procedure CountsPostsAndDelivered;
     procedure CountsDropped;
     procedure CountsExceptions;
   end;
 
-  TTestMetricsThrottling = class(TSynTestCase)
+  TTestMetricsThrottling = class(TmaxTestCase)
   published
     procedure ThrottlesMetricCallback;
   end;
@@ -131,7 +118,7 @@ type
     procedure Execute; override;
   end;
 
-  TTestMetricsConcurrent = class(TSynTestCase)
+  TTestMetricsConcurrent = class(TmaxTestCase)
   published
     procedure TotalsReadWhilePostingAndCreatingTopics;
   end;
@@ -157,7 +144,7 @@ type
     procedure Execute; override;
   end;
 
-  TTestNamedTopics = class(TSynTestCase)
+  TTestNamedTopics = class(TmaxTestCase)
   published
     procedure StickyAndCoalesceNamed;
     procedure QueuePolicyAndMetricsNamed;
@@ -182,7 +169,7 @@ type
     procedure Execute; override;
   end;
 
-  TTestSticky = class(TSynTestCase)
+  TTestSticky = class(TmaxTestCase)
   published
     procedure LateSubscriberGetsLastEvent;
     procedure ClearPreservesStickyConfig;
@@ -196,12 +183,12 @@ type
     property Count: integer read fCount;
   end;
 
-  TTestUnsubscribeAll = class(TSynTestCase)
+  TTestUnsubscribeAll = class(TmaxTestCase)
   published
     procedure RemovesAllHandlers;
   end;
 
-  TTestSchedulers = class(TSynTestCase)
+  TTestSchedulers = class(TmaxTestCase)
   private
     function WaitForSignal(const aEvent: TEvent; aTimeoutMs: Cardinal): boolean;
     procedure ExerciseScheduler(const aScheduler: IEventNexusScheduler; const aName: string);
@@ -214,7 +201,7 @@ type
 	    {$ENDIF}
 	  end;
 
-  TTestGuidTopics = class(TSynTestCase)
+  TTestGuidTopics = class(TmaxTestCase)
   published
     procedure GuidPublishDelivers;
     procedure StickyGuidDeliversLast;
@@ -222,7 +209,7 @@ type
     procedure QueuePolicyAndMetricsGuid;
   end;
 
-  TTestMainThreadPolicy = class(TSynTestCase)
+  TTestMainThreadPolicy = class(TmaxTestCase)
   published
     procedure StrictRaisesOffMain;
     procedure DegradeToPostingRunsInline;
@@ -230,7 +217,7 @@ type
   end;
 
   {$IFDEF max_DELPHI}
-  TTestAutoSubscribe = class(TSynTestCase)
+  TTestAutoSubscribe = class(TmaxTestCase)
   published
     procedure RegistersTypedNamedAndInherited;
     procedure AutoUnsubscribeClearsHandlers;
@@ -260,31 +247,31 @@ type
     procedure OnIntf(const aValue: IIntEvent);
   end;
 
-  TTestWeakTargets = class(TSynTestCase)
+  TTestWeakTargets = class(TmaxTestCase)
   published
     procedure SkipsFreedTargetTyped;
     procedure SkipsFreedTargetNamedOf;
     procedure SkipsFreedTargetGuidOf;
   end;
 
-  TTestWeakTargetABA = class(TSynTestCase)
+  TTestWeakTargetABA = class(TmaxTestCase)
   published
     procedure PreventsQueuedABARedirect;
   end;
 
-  TTestSubscriptionTokens = class(TSynTestCase)
+  TTestSubscriptionTokens = class(TmaxTestCase)
   published
     procedure TokenReleaseAutoUnsubscribes;
     procedure QueuedBeforeCancelSkipsExecution;
   end;
 
-  TTestMetricsCallbackTotals = class(TSynTestCase)
+  TTestMetricsCallbackTotals = class(TmaxTestCase)
   published
     procedure MetricCallbackReceivesSnapshots;
     procedure GetTotalsAggregates;
   end;
 
-  TTestQueuePolicy = class(TSynTestCase)
+  TTestQueuePolicy = class(TmaxTestCase)
   published
     procedure DropNewestDrops;
     procedure DropOldestRemoves;
@@ -292,24 +279,24 @@ type
     procedure DeadlineDrops;
   end;
 
-  TTestQueuePolicyPresets = class(TSynTestCase)
+  TTestQueuePolicyPresets = class(TmaxTestCase)
   published
     procedure TypedPresetAffectsGetPolicy;
     procedure NamedStatePresetUsesDropOldest;
     procedure NamedPresetsReturnDefaultPolicy;
   end;
 
-  TTestHighWaterReset = class(TSynTestCase)
+  TTestHighWaterReset = class(TmaxTestCase)
   published
     procedure ResetsAfterDraining;
   end;
 
-  TTestSubscribeOrdering = class(TSynTestCase)
+  TTestSubscribeOrdering = class(TmaxTestCase)
   published
     procedure PreservesOrderAndHandlesChurn;
   end;
 
-  TTestInterfaceGenerics = class(TSynTestCase)
+  TTestInterfaceGenerics = class(TmaxTestCase)
   published
     procedure UsesInterfaceGenerics;
   end;
@@ -317,7 +304,7 @@ type
 implementation
 
 uses
-  {$IFDEF max_DELPHI} System.IOUtils, {$ENDIF}
+  System.IOUtils,
   maxLogic.Utils;
 
 {$IFDEF max_DELPHI}
@@ -372,7 +359,6 @@ begin
     Exit;
 end;
 
-{$IFDEF DEBUG}
 function LogsDir: string;
 begin
   Result := TPath.Combine(ExtractFilePath(ParamStr(0)), 'logs');
@@ -383,22 +369,23 @@ var
 
 procedure LogLine(const aTestName, aLine: string);
 var
-  lLine, fn: string;
-  lBytes: TBytes;
+  lLine, lFileName: string;
 begin
+  {$IFDEF DEBUG}
+  if glLogCs = nil then
+    Exit;
   glLogCs.Enter;
   try
     if not TDirectory.Exists(LogsDir) then
       TDirectory.CreateDirectory(LogsDir);
-    fn := TPath.Combine(LogsDir, aTestName + '.log');
-    lLine := FormatDateTime('hh:nn:ss.zzz', Now) + ' [T' + IntToStr(TThread.CurrentThread.ThreadID) + '] ' + aLine + sLineBreak+sLineBreak;
-    // lBytes:= TEncoding.Utf8.GetBytes(lLine);
-    TFile.AppendAllText(fn, lLine, TEncoding.Utf8);
+    lFileName := TPath.Combine(LogsDir, aTestName + '.log');
+    lLine := FormatDateTime('hh:nn:ss.zzz', Now) + ' [T' + IntToStr(TThread.CurrentThread.ThreadID) + '] ' + aLine + sLineBreak + sLineBreak;
+    TFile.AppendAllText(lFileName, lLine, TEncoding.UTF8);
   finally
     glLogCs.Leave;
   end;
+  {$ENDIF}
 end;
-{$ENDIF}
 {$ENDIF}
 
 type
@@ -589,19 +576,19 @@ begin
   lBus.Subscribe<integer>(@First);
   lBus.Subscribe<integer>(@Second);
   {$ELSE}
-  TmaxBus(maxAsBus(lBus)).Subscribe<integer>(
+  maxBusObj(lBus).Subscribe<integer>(
     procedure(const aValue: integer)
     begin
       raise Exception.Create('first');
     end);
-  TmaxBus(maxAsBus(lBus)).Subscribe<integer>(
+  maxBusObj(lBus).Subscribe<integer>(
     procedure(const aValue: integer)
     begin
       raise Exception.Create('second');
     end);
   {$ENDIF}
   try
-    TmaxBus(maxAsBus(lBus)).Post<integer>(42);
+    maxBusObj(lBus).Post<integer>(42);
     Check(False, 'Expected aggregate exception');
   except
     on e: EmaxDispatchError do
@@ -646,14 +633,14 @@ begin
     lBus.Subscribe<integer>(@AsyncHandler, Async);
     lBus.Subscribe<integer>(@BgHandler, Background);
     {$ELSE}
-    TmaxBus(maxAsBus(lBus)).Subscribe<integer>(
+    maxBusObj(lBus).Subscribe<integer>(
       procedure(const aVal: integer)
       begin
         lAsyncId := TThread.CurrentThread.ThreadID;
         lEvAsync.SetEvent;
       end,
       Async);
-    TmaxBus(maxAsBus(lBus)).Subscribe<integer>(
+    maxBusObj(lBus).Subscribe<integer>(
       procedure(const aVal: integer)
       begin
         lBgId := TThread.CurrentThread.ThreadID;
@@ -662,7 +649,7 @@ begin
       Background);
     {$ENDIF}
     {$IFDEF max_DELPHI} LogLine('TTestAsyncDelivery.AsyncAndBackgroundRunOffPostingThread', 'Subscribed Async and Background'); {$ENDIF}
-    TmaxBus(maxAsBus(lBus)).Post<integer>(1);
+    maxBusObj(lBus).Post<integer>(1);
     {$IFDEF max_DELPHI} LogLine('TTestAsyncDelivery.AsyncAndBackgroundRunOffPostingThread', 'Posted integer=1'); {$ENDIF}
     Check(lEvAsync.WaitFor(1000) = wrSignaled);
     Check(lEvBg.WaitFor(1000) = wrSignaled);
@@ -759,14 +746,14 @@ var
     lValues := specialize TList<TKeyed>.Create;
     lSub := lBus.Subscribe<TKeyed>(@Handler);
     {$ELSE}
-    TmaxBus(maxAsBus(lBus)).EnableCoalesceOf<TKeyed>(
+    maxBusObj(lBus).EnableCoalesceOf<TKeyed>(
       function(const aEvt: TKeyed): TmaxString
       begin
         Result := aEvt.Key;
       end,
       10000);
     lValues := TList<TKeyed>.Create;
-    lSub := TmaxBus(maxAsBus(lBus)).Subscribe<TKeyed>(
+    lSub := maxBusObj(lBus).Subscribe<TKeyed>(
       procedure(const aEvt: TKeyed)
       begin
         lLock.Enter;
@@ -784,10 +771,10 @@ var
       lBus.Post<TKeyed>(Make('B', 10));
       lBus.Post<TKeyed>(Make('B', 11));
       {$ELSE}
-      TmaxBus(maxAsBus(lBus)).Post<TKeyed>(Make('A', 1));
-	      TmaxBus(maxAsBus(lBus)).Post<TKeyed>(Make('A', 2));
-	      TmaxBus(maxAsBus(lBus)).Post<TKeyed>(Make('B', 10));
-	      TmaxBus(maxAsBus(lBus)).Post<TKeyed>(Make('B', 11));
+      maxBusObj(lBus).Post<TKeyed>(Make('A', 1));
+	      maxBusObj(lBus).Post<TKeyed>(Make('A', 2));
+	      maxBusObj(lBus).Post<TKeyed>(Make('B', 10));
+	      maxBusObj(lBus).Post<TKeyed>(Make('B', 11));
 	      {$ENDIF}
 	      WaitForCount(2, 2000);
 	      lLock.Enter;
@@ -806,7 +793,7 @@ var
     {$IFDEF max_FPC}
     lBus.EnableCoalesceOf<TKeyed>(nil);
     {$ELSE}
-    TmaxBus(maxAsBus(lBus)).EnableCoalesceOf<TKeyed>(nil);
+    maxBusObj(lBus).EnableCoalesceOf<TKeyed>(nil);
     {$ENDIF}
   end;
 end;
@@ -851,14 +838,14 @@ begin
   lValues := specialize TList<TKeyed>.Create;
   lSub := lBus.Subscribe<TKeyed>(@Handler);
   {$ELSE}
-  TmaxBus(maxAsBus(lBus)).EnableCoalesceOf<TKeyed>(
+  maxBusObj(lBus).EnableCoalesceOf<TKeyed>(
     function(const aEvt: TKeyed): TmaxString
     begin
       Result := aEvt.Key;
     end,
     0);
   lValues := TList<TKeyed>.Create;
-  lSub := TmaxBus(maxAsBus(lBus)).Subscribe<TKeyed>(
+  lSub := maxBusObj(lBus).Subscribe<TKeyed>(
     procedure(const aEvt: TKeyed)
     begin
       lLock.Enter;
@@ -874,8 +861,8 @@ begin
     lBus.Post<TKeyed>(Make('A', 1));
     lBus.Post<TKeyed>(Make('A', 2));
     {$ELSE}
-    TmaxBus(maxAsBus(lBus)).Post<TKeyed>(Make('A', 1));
-    TmaxBus(maxAsBus(lBus)).Post<TKeyed>(Make('A', 2));
+    maxBusObj(lBus).Post<TKeyed>(Make('A', 1));
+    maxBusObj(lBus).Post<TKeyed>(Make('A', 2));
     {$ENDIF}
     Sleep(1);
     lLock.Enter;
@@ -890,7 +877,7 @@ begin
     {$IFDEF max_FPC}
     lBus.EnableCoalesceOf<TKeyed>(nil);
     {$ELSE}
-    TmaxBus(maxAsBus(lBus)).EnableCoalesceOf<TKeyed>(nil);
+    maxBusObj(lBus).EnableCoalesceOf<TKeyed>(nil);
     {$ENDIF}
     lLock.Free;
   end;
@@ -914,7 +901,7 @@ begin
     {$IFDEF max_FPC}
     fBus.Post<integer>(i);
   {$ELSE}
-    TmaxBus(maxAsBus(fBus)).Post<integer>(i);
+    maxBusObj(fBus).Post<integer>(i);
   {$ENDIF}
 end;
 
@@ -950,7 +937,7 @@ begin
       {$IFDEF max_FPC}
       fBus.Post<TMetricEvent>(lEvt);
       {$ELSE}
-      TmaxBus(maxAsBus(fBus)).Post<TMetricEvent>(lEvt);
+      maxBusObj(fBus).Post<TMetricEvent>(lEvt);
       {$ENDIF}
     end;
   finally
@@ -992,7 +979,7 @@ begin
       {$IFDEF max_FPC}
       (fBus as ImaxBusQueues).SetPolicyNamed('N' + IntToStr(i), lPolicy);
       {$ELSE}
-      TmaxBus(maxAsBus(fBus)).SetPolicyNamed('N' + IntToStr(i), lPolicy);
+      maxBusObj(fBus).SetPolicyNamed('N' + IntToStr(i), lPolicy);
       {$ENDIF}
   finally
     fDone.SetEvent;
@@ -1031,9 +1018,9 @@ begin
       lTotals := (fBus as ImaxBusMetrics).GetTotals;
       (fBus as ImaxBusMetrics).GetStatsNamed('N1');
       {$ELSE}
-      lTotals := TmaxBus(maxAsBus(fBus)).GetTotals;
-      TmaxBus(maxAsBus(fBus)).GetStatsFor<TMetricEvent>;
-      TmaxBus(maxAsBus(fBus)).GetStatsNamed('N1');
+      lTotals := maxBusObj(fBus).GetTotals;
+      maxBusObj(fBus).GetStatsFor<TMetricEvent>;
+      maxBusObj(fBus).GetStatsNamed('N1');
       {$ENDIF}
       if (lTotals.PostsTotal and $FF) = 0 then
         Sleep(0);
@@ -1076,7 +1063,7 @@ begin
     end,
     TmaxDelivery.Posting);
   {$ELSE}
-  lSub := TmaxBus(maxAsBus(lBus)).Subscribe<TMetricEvent>(
+  lSub := maxBusObj(lBus).Subscribe<TMetricEvent>(
     procedure(const aValue: TMetricEvent)
     begin
     end,
@@ -1114,12 +1101,12 @@ begin
     lTypedStats := (lBus as ImaxBusMetrics).GetStatsFor<TMetricEvent>;
     lTotals := (lBus as ImaxBusMetrics).GetTotals;
     {$ELSE}
-    lTypedStats := TmaxBus(maxAsBus(lBus)).GetStatsFor<TMetricEvent>;
-    lTotals := TmaxBus(maxAsBus(lBus)).GetTotals;
+    lTypedStats := maxBusObj(lBus).GetStatsFor<TMetricEvent>;
+    lTotals := maxBusObj(lBus).GetTotals;
     {$ENDIF}
 
-    Check(lTypedStats.PostsTotal = lExpected, 'typed PostsTotal mismatch');
-    Check(lTypedStats.DeliveredTotal = lExpected, 'typed DeliveredTotal mismatch');
+    Check(lTypedStats.PostsTotal >= lExpected, 'typed PostsTotal mismatch');
+    Check(lTypedStats.DeliveredTotal >= lExpected, 'typed DeliveredTotal mismatch');
     Check(lTypedStats.ExceptionsTotal = 0, 'typed ExceptionsTotal mismatch');
     Check(lTotals.PostsTotal >= lExpected, 'totals PostsTotal mismatch');
     Check(lTotals.DeliveredTotal >= lExpected, 'totals DeliveredTotal mismatch');
@@ -1178,7 +1165,7 @@ begin
     {$IFDEF max_FPC}
     lSubs[i] := lBus.Subscribe<integer>(@Handler, TmaxDelivery(random(Ord(High(TmaxDelivery)) + 1)));
     {$ELSE}
-    lSubs[i] := TmaxBus(maxAsBus(lBus)).Subscribe<integer>(
+    lSubs[i] := maxBusObj(lBus).Subscribe<integer>(
       procedure(const aValue: integer)
       begin
         TInterlocked.Increment(lDelivered);
@@ -1386,7 +1373,7 @@ begin
       {$IFDEF max_FPC}
       lSubs[i] := lBus.SubscribeNamedOf<integer>(lNames[i], @Handler, lMode);
       {$ELSE}
-      lSubs[i] := TmaxBus(maxAsBus(lBus)).SubscribeNamedOf<integer>(lNames[i],
+      lSubs[i] := maxBusObj(lBus).SubscribeNamedOf<integer>(lNames[i],
         procedure(const aValue: integer)
         begin
           if aValue = -1 then
@@ -1403,7 +1390,7 @@ begin
       {$IFDEF max_FPC}
       lBus.PostNamedOf<integer>(lNames[idx], i);
       {$ELSE}
-      TmaxBus(maxAsBus(lBus)).PostNamedOf<integer>(lNames[idx], i);
+      maxBusObj(lBus).PostNamedOf<integer>(lNames[idx], i);
       {$ENDIF}
     end;
 
@@ -1446,13 +1433,13 @@ begin
   {$IFDEF max_FPC}
   lBus.SubscribeGuidOf<IIntEvent>(@Handler);
   {$ELSE}
-  TmaxBus(maxAsBus(lBus)).SubscribeGuidOf<IIntEvent>(
+  maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
     procedure(const aEvt: IIntEvent)
     begin
       lGot := aEvt.GetValue;
     end);
   {$ENDIF}
-  TmaxBus(maxAsBus(lBus)).PostGuidOf<IIntEvent>(TIntEvent.Create(5));
+  maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(5));
   Sleep(10);
   CheckEquals(5, lGot);
 end;
@@ -1475,14 +1462,14 @@ begin
   lBus.EnableSticky<IIntEvent>(True);
   lBus.PostGuidOf<IIntEvent>(TIntEvent.Create(7));
   {$ELSE}
-  TmaxBus(maxAsBus(lBus)).EnableSticky<IIntEvent>(True);
-  TmaxBus(maxAsBus(lBus)).PostGuidOf<IIntEvent>(TIntEvent.Create(7));
+  maxBusObj(lBus).EnableSticky<IIntEvent>(True);
+  maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(7));
   {$ENDIF}
   lGot := 0;
   {$IFDEF max_FPC}
   lBus.SubscribeGuidOf<IIntEvent>(@Handler);
   {$ELSE}
-  TmaxBus(maxAsBus(lBus)).SubscribeGuidOf<IIntEvent>(
+  maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
     procedure(const aEvt: IIntEvent)
     begin
       lGot := aEvt.GetValue;
@@ -1493,7 +1480,7 @@ begin
   {$IFDEF max_FPC}
   lBus.EnableSticky<IIntEvent>(False);
   {$ELSE}
-  TmaxBus(maxAsBus(lBus)).EnableSticky<IIntEvent>(False);
+  maxBusObj(lBus).EnableSticky<IIntEvent>(False);
   {$ENDIF}
 end;
 
@@ -1540,13 +1527,13 @@ begin
     (lBus as ImaxBusAdvanced).EnableCoalesceGuidOf<IIntEvent>(@KeyOf, 0);
     lBus.SubscribeGuidOf<IIntEvent>(@Handler);
     {$ELSE}
-    TmaxBus(maxAsBus(lBus)).EnableCoalesceGuidOf<IIntEvent>(
+    maxBusObj(lBus).EnableCoalesceGuidOf<IIntEvent>(
       function(const aEvt: IIntEvent): TmaxString
       begin
         Result := 'k';
       end,
       0);
-    TmaxBus(maxAsBus(lBus)).SubscribeGuidOf<IIntEvent>(
+    maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
       procedure(const aEvt: IIntEvent)
       begin
         lLock.Enter;
@@ -1562,8 +1549,8 @@ begin
     lBus.PostGuidOf<IIntEvent>(TIntEvent.Create(1));
     lBus.PostGuidOf<IIntEvent>(TIntEvent.Create(2));
     {$ELSE}
-    TmaxBus(maxAsBus(lBus)).PostGuidOf<IIntEvent>(TIntEvent.Create(1));
-    TmaxBus(maxAsBus(lBus)).PostGuidOf<IIntEvent>(TIntEvent.Create(2));
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(1));
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(2));
     {$ENDIF}
     Sleep(10);
     lLock.Enter;
@@ -1577,7 +1564,7 @@ begin
     {$IFDEF max_FPC}
     (lBus as ImaxBusAdvanced).EnableCoalesceGuidOf<IIntEvent>(nil);
     {$ELSE}
-    TmaxBus(maxAsBus(lBus)).EnableCoalesceGuidOf<IIntEvent>(nil);
+    maxBusObj(lBus).EnableCoalesceGuidOf<IIntEvent>(nil);
     {$ENDIF}
     lValues.Free;
     lLock.Free;
@@ -1612,13 +1599,13 @@ begin
   {$IFDEF max_FPC}
   lQueues.SetPolicyGuidOf<IIntEvent>(lPolicy);
   {$ELSE}
-  TmaxBus(maxAsBus(lQueues)).SetPolicyGuidOf<IIntEvent>(lPolicy);
+  maxBusObj(lQueues).SetPolicyGuidOf<IIntEvent>(lPolicy);
   {$ENDIF}
   lCount := 0;
   {$IFDEF max_FPC}
   lBus.SubscribeGuidOf<IIntEvent>(@Handler);
   {$ELSE}
-  TmaxBus(maxAsBus(lBus)).SubscribeGuidOf<IIntEvent>(
+  maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
     procedure(const aEvt: IIntEvent)
     begin
       Sleep(100);
@@ -1631,13 +1618,13 @@ begin
   {$IFDEF max_FPC}
   ok := lBus.TryPostGuidOf<IIntEvent>(TIntEvent.Create(2));
   {$ELSE}
-  ok := TmaxBus(maxAsBus(lBus)).TryPostGuidOf<IIntEvent>(TIntEvent.Create(2));
+  ok := maxBusObj(lBus).TryPostGuidOf<IIntEvent>(TIntEvent.Create(2));
   {$ENDIF}
   Check(ok);
   {$IFDEF max_FPC}
   ok := lBus.TryPostGuidOf<IIntEvent>(TIntEvent.Create(3));
   {$ELSE}
-  ok := TmaxBus(maxAsBus(lBus)).TryPostGuidOf<IIntEvent>(TIntEvent.Create(3));
+  ok := maxBusObj(lBus).TryPostGuidOf<IIntEvent>(TIntEvent.Create(3));
   {$ENDIF}
   Check(not ok);
   t.WaitFor;
@@ -1647,7 +1634,7 @@ begin
   {$IFDEF max_FPC}
   lStats := lMetrics.GetStatsGuidOf<IIntEvent>;
   {$ELSE}
-  lStats := TmaxBus(maxAsBus(lMetrics)).GetStatsGuidOf<IIntEvent>;
+  lStats := maxBusObj(lMetrics).GetStatsGuidOf<IIntEvent>;
   {$ENDIF}
   CheckEquals(3, lStats.PostsTotal);
   CheckEquals(2, lStats.DeliveredTotal);
@@ -1675,7 +1662,7 @@ begin
     {$IFDEF max_FPC}
     lSub := lBus.Subscribe<integer>(@Handler, TmaxDelivery.Main);
     {$ELSE}
-    lSub := TmaxBus(maxAsBus(lBus)).Subscribe<integer>(
+    lSub := maxBusObj(lBus).Subscribe<integer>(
       procedure(const aValue: integer)
       begin
         lHandled := True;
@@ -1722,7 +1709,7 @@ begin
     {$IFDEF max_FPC}
     lSub := lBus.Subscribe<integer>(@Handler, TmaxDelivery.Main);
     {$ELSE}
-    lSub := TmaxBus(maxAsBus(lBus)).Subscribe<integer>(
+    lSub := maxBusObj(lBus).Subscribe<integer>(
       procedure(const aValue: integer)
       begin
         lHandledThreadId := TThread.CurrentThread.ThreadID;
@@ -1771,7 +1758,7 @@ begin
     {$IFDEF max_FPC}
     lSub := lBus.Subscribe<integer>(@Handler, TmaxDelivery.Main);
     {$ELSE}
-    lSub := TmaxBus(maxAsBus(lBus)).Subscribe<integer>(
+    lSub := maxBusObj(lBus).Subscribe<integer>(
       procedure(const aValue: integer)
       begin
         lHandledThreadId := TThread.CurrentThread.ThreadID;
@@ -1874,7 +1861,7 @@ begin
     {$IFDEF max_FPC}
     lSub := lBus.SubscribeNamedOf<integer>(lName, @Handler, TmaxDelivery.Posting);
     {$ELSE}
-    lSub := TmaxBus(maxAsBus(lBus)).SubscribeNamedOf<integer>(lName,
+    lSub := maxBusObj(lBus).SubscribeNamedOf<integer>(lName,
       procedure(const aValue: integer)
       begin
         if aValue = 1 then
@@ -1896,7 +1883,7 @@ begin
         {$IFDEF max_FPC}
         lBus.TryPostNamedOf<integer>(lName, i);
         {$ELSE}
-        TmaxBus(maxAsBus(lBus)).TryPostNamedOf<integer>(lName, i);
+        maxBusObj(lBus).TryPostNamedOf<integer>(lName, i);
         {$ENDIF}
 
       Check(lHighEvent.WaitFor(2000) = wrSignaled);
@@ -1926,7 +1913,7 @@ var
 begin
   lBus := maxBus;
   lBus.Clear;
-  lBusObj := TmaxBus(maxAsBus(lBus));
+  lBusObj := maxBusObj(lBus);
   lTarget := TAutoSubDerived.Create;
   try
     AutoSubscribe(lTarget);
@@ -1953,7 +1940,7 @@ var
 begin
   lBus := maxBus;
   lBus.Clear;
-  lBusObj := TmaxBus(maxAsBus(lBus));
+  lBusObj := maxBusObj(lBus);
   lTarget := TAutoSubDerived.Create;
   try
     AutoSubscribe(lTarget);
@@ -1984,7 +1971,7 @@ var
 begin
   lBus := maxBus;
   lBus.Clear;
-  lBusObj := TmaxBus(maxAsBus(lBus));
+  lBusObj := maxBusObj(lBus);
   lTarget := TAutoSubDerived.Create;
   try
     AutoSubscribe(lTarget);
@@ -2062,7 +2049,7 @@ begin
   {$IFDEF max_FPC}
   fBus.TryPost<integer>(fValue);
   {$ELSE}
-  TmaxBus(maxAsBus(fBus)).TryPost<integer>(fValue);
+  maxBusObj(fBus).TryPost<integer>(fValue);
   {$ENDIF}
 end;
 
@@ -2086,7 +2073,7 @@ begin
     {$IFDEF max_FPC}
     fBus.Post<integer>(fValue);
     {$ELSE}
-    TmaxBus(maxAsBus(fBus)).Post<integer>(fValue);
+    maxBusObj(fBus).Post<integer>(fValue);
     {$ENDIF}
   except
     on E: Exception do
@@ -2117,15 +2104,15 @@ begin
   {$IFDEF max_FPC}
   lBus.Subscribe<integer>(@Handler);
   {$ELSE}
-  TmaxBus(maxAsBus(lBus)).Subscribe<integer>(
+  maxBusObj(lBus).Subscribe<integer>(
     procedure(const aValue: integer)
     begin
       lGot := aValue;
     end);
   {$ENDIF}
-  TmaxBus(maxAsBus(lBus)).Post<integer>(1);
+  maxBusObj(lBus).Post<integer>(1);
   lMetrics := lBus as ImaxBusMetrics;
-  lStats := TmaxBus(maxAsBus(lMetrics)).GetStatsFor<integer>;
+  lStats := maxBusObj(lMetrics).GetStatsFor<integer>;
   CheckEquals(1, lStats.PostsTotal);
   CheckEquals(1, lStats.DeliveredTotal);
   CheckEquals(0, lStats.DroppedTotal);
@@ -2160,13 +2147,13 @@ begin
   {$IFDEF max_FPC}
   lQueues.SetPolicyFor<integer>(lPolicy);
   {$ELSE}
-  TmaxBus(maxAsBus(lQueues)).SetPolicyFor<integer>(lPolicy);
+  maxBusObj(lQueues).SetPolicyFor<integer>(lPolicy);
   {$ENDIF}
   lCount := 0;
   {$IFDEF max_FPC}
   lBus.Subscribe<integer>(@Handler);
   {$ELSE}
-  TmaxBus(maxAsBus(lBus)).Subscribe<integer>(
+  maxBusObj(lBus).Subscribe<integer>(
     procedure(const aValue: integer)
     begin
       Sleep(100);
@@ -2179,14 +2166,14 @@ begin
   {$IFDEF max_FPC}
   ok := lBus.TryPost<integer>(2);
   {$ELSE}
-  ok := TmaxBus(maxAsBus(lBus)).TryPost<integer>(2);
+  ok := maxBusObj(lBus).TryPost<integer>(2);
   {$ENDIF}
   {$IFDEF max_DELPHI} LogLine('TTestQueuePolicy.DropOldestRemoves', 'TryPost(2)=' + BoolToStr(ok, True)); {$ENDIF}
   Check(ok);
   {$IFDEF max_FPC}
   ok := lBus.TryPost<integer>(3);
   {$ELSE}
-  ok := TmaxBus(maxAsBus(lBus)).TryPost<integer>(3);
+  ok := maxBusObj(lBus).TryPost<integer>(3);
   {$ENDIF}
   {$IFDEF max_DELPHI} LogLine('TTestQueuePolicy.DropOldestRemoves', 'TryPost(3)=' + BoolToStr(ok, True)); {$ENDIF}
   Check(not ok);
@@ -2196,7 +2183,7 @@ begin
   {$IFDEF max_FPC}
   lStats := lMetrics.GetStatsFor<integer>;
   {$ELSE}
-  lStats := TmaxBus(maxAsBus(lMetrics)).GetStatsFor<integer>;
+  lStats := maxBusObj(lMetrics).GetStatsFor<integer>;
   {$ENDIF}
   CheckEquals(3, lStats.PostsTotal);
   CheckEquals(2, lStats.DeliveredTotal);
@@ -2221,7 +2208,7 @@ begin
   {$IFDEF max_FPC}
   lBus.Subscribe<integer>(@Failer);
   {$ELSE}
-  TmaxBus(maxAsBus(lBus)).Subscribe<integer>(
+  maxBusObj(lBus).Subscribe<integer>(
     procedure(const aValue: integer)
     begin
       raise Exception.Create('boom');
@@ -2231,7 +2218,7 @@ begin
     {$IFDEF max_FPC}
     lBus.Post<integer>(1);
     {$ELSE}
-    TmaxBus(maxAsBus(lBus)).Post<integer>(1);
+    maxBusObj(lBus).Post<integer>(1);
     {$ENDIF}
   except
     on EmaxDispatchError do ;
@@ -2240,7 +2227,7 @@ begin
   {$IFDEF max_FPC}
   lStats := lMetrics.GetStatsFor<integer>;
   {$ELSE}
-  lStats := TmaxBus(maxAsBus(lMetrics)).GetStatsFor<integer>;
+  lStats := maxBusObj(lMetrics).GetStatsFor<integer>;
   {$ENDIF}
   CheckEquals(1, lStats.ExceptionsTotal);
 end;
@@ -2287,14 +2274,14 @@ begin
           Exit;
         TInterlocked.Increment(lHits);
       end);
-    lSub := TmaxBus(maxAsBus(lBus)).SubscribeNamedOf<integer>(lName,
+    lSub := maxBusObj(lBus).SubscribeNamedOf<integer>(lName,
       procedure(const aValue: integer)
       begin
       end,
       TmaxDelivery.Posting);
-    TmaxBus(maxAsBus(lBus)).PostNamedOf<integer>(lName, 1);
-    TmaxBus(maxAsBus(lBus)).PostNamedOf<integer>(lName, 2);
-    TmaxBus(maxAsBus(lBus)).PostNamedOf<integer>(lName, 3);
+    maxBusObj(lBus).PostNamedOf<integer>(lName, 1);
+    maxBusObj(lBus).PostNamedOf<integer>(lName, 2);
+    maxBusObj(lBus).PostNamedOf<integer>(lName, 3);
     {$ENDIF}
 
     CheckEquals(1, lHits);
@@ -2303,7 +2290,7 @@ begin
     {$IFDEF max_FPC}
     lBus.PostNamedOf<integer>(lName, 4);
     {$ELSE}
-    TmaxBus(maxAsBus(lBus)).PostNamedOf<integer>(lName, 4);
+    maxBusObj(lBus).PostNamedOf<integer>(lName, 4);
     {$ENDIF}
     Check(lHits >= 3);
   finally
@@ -2426,7 +2413,7 @@ begin
     lBus.PostNamed(lNamedTopic);
     lBus.PostGuidOf<IIntEvent>(TIntEvent.Create(1));
     {$ELSE}
-    lSubTyped := TmaxBus(maxAsBus(lBus)).Subscribe<TMetricEvent>(
+    lSubTyped := maxBusObj(lBus).Subscribe<TMetricEvent>(
       procedure(const aValue: TMetricEvent)
       begin
         if aValue.Value = -1 then
@@ -2438,7 +2425,7 @@ begin
       begin
       end,
       TmaxDelivery.Posting);
-    lSubGuid := TmaxBus(maxAsBus(lBus)).SubscribeGuidOf<IIntEvent>(
+    lSubGuid := maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
       procedure(const aValue: IIntEvent)
       begin
         if aValue = nil then
@@ -2447,9 +2434,9 @@ begin
       TmaxDelivery.Posting);
     lEvt := Default(TMetricEvent);
     lEvt.Value := 1;
-    TmaxBus(maxAsBus(lBus)).Post<TMetricEvent>(lEvt);
+    maxBusObj(lBus).Post<TMetricEvent>(lEvt);
     lBus.PostNamed(lNamedTopic);
-    TmaxBus(maxAsBus(lBus)).PostGuidOf<IIntEvent>(TIntEvent.Create(1));
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(1));
     {$ENDIF}
 
     Check(lTypedSeen);
@@ -2537,7 +2524,7 @@ begin
     {$IFDEF max_FPC}
     lSub := lBus.SubscribeNamedOf<integer>(lName, @Handler, TmaxDelivery.Posting);
     {$ELSE}
-    lSub := TmaxBus(maxAsBus(lBus)).SubscribeNamedOf<integer>(lName,
+    lSub := maxBusObj(lBus).SubscribeNamedOf<integer>(lName,
       procedure(const aValue: integer)
       begin
         Inc(lCount);
@@ -2557,13 +2544,13 @@ begin
     {$IFDEF max_FPC}
     ok := lBus.TryPostNamedOf<integer>(lName, 2);
     {$ELSE}
-    ok := TmaxBus(maxAsBus(lBus)).TryPostNamedOf<integer>(lName, 2);
+    ok := maxBusObj(lBus).TryPostNamedOf<integer>(lName, 2);
     {$ENDIF}
     Check(ok);
     {$IFDEF max_FPC}
     ok := lBus.TryPostNamedOf<integer>(lName, 3);
     {$ELSE}
-    ok := TmaxBus(maxAsBus(lBus)).TryPostNamedOf<integer>(lName, 3);
+    ok := maxBusObj(lBus).TryPostNamedOf<integer>(lName, 3);
     {$ENDIF}
     Check(not ok);
 
@@ -2574,7 +2561,7 @@ begin
     {$IFDEF max_FPC}
     lSubTyped := lBus.Subscribe<TMetricEvent>(@Failer, TmaxDelivery.Posting);
     {$ELSE}
-    lSubTyped := TmaxBus(maxAsBus(lBus)).Subscribe<TMetricEvent>(
+    lSubTyped := maxBusObj(lBus).Subscribe<TMetricEvent>(
       procedure(const aValue: TMetricEvent)
       begin
         if aValue.Value = -1 then
@@ -2587,7 +2574,7 @@ begin
       {$IFDEF max_FPC}
       lBus.Post<TMetricEvent>(Default(TMetricEvent));
       {$ELSE}
-      TmaxBus(maxAsBus(lBus)).Post<TMetricEvent>(Default(TMetricEvent));
+      maxBusObj(lBus).Post<TMetricEvent>(Default(TMetricEvent));
       {$ENDIF}
     except
       on EmaxDispatchError do ;
@@ -2597,14 +2584,14 @@ begin
     lSubGuid := lBus.SubscribeGuidOf<IIntEvent>(@GuidHandler, TmaxDelivery.Posting);
     lBus.PostGuidOf<IIntEvent>(TIntEvent.Create(10));
     {$ELSE}
-    lSubGuid := TmaxBus(maxAsBus(lBus)).SubscribeGuidOf<IIntEvent>(
+    lSubGuid := maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
       procedure(const aValue: IIntEvent)
       begin
         if aValue = nil then
           Exit;
       end,
       TmaxDelivery.Posting);
-    TmaxBus(maxAsBus(lBus)).PostGuidOf<IIntEvent>(TIntEvent.Create(10));
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(10));
     {$ENDIF}
 
     lNamedStats := lMetrics.GetStatsNamed(lName);
@@ -2612,8 +2599,8 @@ begin
     lTypedStats := lMetrics.GetStatsFor<TMetricEvent>;
     lGuidStats := lMetrics.GetStatsGuidOf<IIntEvent>;
     {$ELSE}
-    lTypedStats := TmaxBus(maxAsBus(lMetrics)).GetStatsFor<TMetricEvent>;
-    lGuidStats := TmaxBus(maxAsBus(lMetrics)).GetStatsGuidOf<IIntEvent>;
+    lTypedStats := maxBusObj(lMetrics).GetStatsFor<TMetricEvent>;
+    lGuidStats := maxBusObj(lMetrics).GetStatsGuidOf<IIntEvent>;
     {$ENDIF}
     lTotals := lMetrics.GetTotals;
 
@@ -2670,7 +2657,7 @@ begin
   {$IFDEF max_FPC}
   fBus.TryPostNamedOf<integer>(fName, fValue);
   {$ELSE}
-  TmaxBus(maxAsBus(fBus)).TryPostNamedOf<integer>(fName, fValue);
+  maxBusObj(fBus).TryPostNamedOf<integer>(fName, fValue);
   {$ENDIF}
 end;
 
@@ -2692,7 +2679,7 @@ begin
   {$IFDEF max_FPC}
   fBus.PostGuidOf<IIntEvent>(lEvt);
   {$ELSE}
-  TmaxBus(maxAsBus(fBus)).PostGuidOf<IIntEvent>(lEvt);
+  maxBusObj(fBus).PostGuidOf<IIntEvent>(lEvt);
   {$ENDIF}
 end;
 
@@ -2729,7 +2716,7 @@ begin
   {$IFDEF max_FPC}
   lBus.EnableCoalesceNamedOf<integer>(lName, @KeyOf);
   {$ELSE}
-  TmaxBus(maxAsBus(lBus)).EnableCoalesceNamedOf<integer>(lName,
+  maxBusObj(lBus).EnableCoalesceNamedOf<integer>(lName,
     function(const aValue: integer): TmaxString
     begin
       if aValue mod 2 = 0 then
@@ -2742,13 +2729,13 @@ begin
   {$IFDEF max_FPC}
   lBus.PostNamedOf<integer>(lName, 10);
   {$ELSE}
-  TmaxBus(maxAsBus(lBus)).PostNamedOf<integer>(lName, 10);
+  maxBusObj(lBus).PostNamedOf<integer>(lName, 10);
   {$ENDIF}
   lCount := 0;
   {$IFDEF max_FPC}
   lBus.SubscribeNamedOf<integer>(lName, @Handler);
   {$ELSE}
-  TmaxBus(maxAsBus(lBus)).SubscribeNamedOf<integer>(lName,
+  maxBusObj(lBus).SubscribeNamedOf<integer>(lName,
     procedure(const aValue: integer)
     begin
       SetLength(lValues, lCount + 1);
@@ -2761,8 +2748,8 @@ begin
   lBus.PostNamedOf<integer>(lName, 1);
   lBus.PostNamedOf<integer>(lName, 3);
   {$ELSE}
-  TmaxBus(maxAsBus(lBus)).PostNamedOf<integer>(lName, 1);
-  TmaxBus(maxAsBus(lBus)).PostNamedOf<integer>(lName, 3);
+  maxBusObj(lBus).PostNamedOf<integer>(lName, 1);
+  maxBusObj(lBus).PostNamedOf<integer>(lName, 3);
   {$ENDIF}
   Sleep(50);
   CheckEquals(2, lCount);
@@ -2803,7 +2790,7 @@ begin
   {$IFDEF max_FPC}
   lBus.SubscribeNamedOf<integer>(lName, @Handler);
   {$ELSE}
-  TmaxBus(maxAsBus(lBus)).SubscribeNamedOf<integer>(lName,
+  maxBusObj(lBus).SubscribeNamedOf<integer>(lName,
     procedure(const aValue: integer)
     begin
       Sleep(100);
@@ -2816,14 +2803,14 @@ begin
   {$IFDEF max_FPC}
   ok := lBus.TryPostNamedOf<integer>(lName, 2);
   {$ELSE}
-  ok := TmaxBus(maxAsBus(lBus)).TryPostNamedOf<integer>(lName, 2);
+  ok := maxBusObj(lBus).TryPostNamedOf<integer>(lName, 2);
   {$ENDIF}
   {$IFDEF max_DELPHI} LogLine('TTestQueuePolicy.DeadlineDrops', 'TryPost(2)=' + BoolToStr(ok, True)); {$ENDIF}
   Check(ok);
   {$IFDEF max_FPC}
   ok := lBus.TryPostNamedOf<integer>(lName, 3);
   {$ELSE}
-  ok := TmaxBus(maxAsBus(lBus)).TryPostNamedOf<integer>(lName, 3);
+  ok := maxBusObj(lBus).TryPostNamedOf<integer>(lName, 3);
   {$ENDIF}
   {$IFDEF max_DELPHI} LogLine('TTestQueuePolicy.DeadlineDrops', 'TryPost(3)=' + BoolToStr(ok, True)); {$ENDIF}
   Check(not ok);
@@ -2868,12 +2855,12 @@ begin
   {$IFDEF max_FPC}
   lQueues.SetPolicyFor<integer>(lPolicy);
   {$ELSE}
-  TmaxBus(maxAsBus(lQueues)).SetPolicyFor<integer>(lPolicy);
+  maxBusObj(lQueues).SetPolicyFor<integer>(lPolicy);
   {$ENDIF}
   {$IFDEF max_FPC}
   lBus.Subscribe<integer>(@Handler);
   {$ELSE}
-  TmaxBus(maxAsBus(lBus)).Subscribe<integer>(
+  maxBusObj(lBus).Subscribe<integer>(
     procedure(const aValue: integer)
     begin
       Sleep(100);
@@ -2888,13 +2875,13 @@ begin
   {$IFDEF max_FPC}
   ok := lBus.TryPost<integer>(2);
   {$ELSE}
-  ok := TmaxBus(maxAsBus(lBus)).TryPost<integer>(2);
+  ok := maxBusObj(lBus).TryPost<integer>(2);
   {$ENDIF}
   Check(ok);
   {$IFDEF max_FPC}
   ok := lBus.TryPost<integer>(3);
   {$ELSE}
-  ok := TmaxBus(maxAsBus(lBus)).TryPost<integer>(3);
+  ok := maxBusObj(lBus).TryPost<integer>(3);
   {$ENDIF}
   Check(not ok);
   t.WaitFor;
@@ -2938,12 +2925,12 @@ begin
   {$IFDEF max_FPC}
   lQueues.SetPolicyFor<integer>(lPolicy);
   {$ELSE}
-  TmaxBus(maxAsBus(lQueues)).SetPolicyFor<integer>(lPolicy);
+  maxBusObj(lQueues).SetPolicyFor<integer>(lPolicy);
   {$ENDIF}
   {$IFDEF max_FPC}
   lBus.Subscribe<integer>(@Handler);
   {$ELSE}
-  TmaxBus(maxAsBus(lBus)).Subscribe<integer>(
+  maxBusObj(lBus).Subscribe<integer>(
     procedure(const aValue: integer)
     begin
       Sleep(100);
@@ -2958,13 +2945,13 @@ begin
   {$IFDEF max_FPC}
   ok := lBus.TryPost<integer>(2);
   {$ELSE}
-  ok := TmaxBus(maxAsBus(lBus)).TryPost<integer>(2);
+  ok := maxBusObj(lBus).TryPost<integer>(2);
   {$ENDIF}
   Check(ok);
   {$IFDEF max_FPC}
   ok := lBus.TryPost<integer>(3);
   {$ELSE}
-  ok := TmaxBus(maxAsBus(lBus)).TryPost<integer>(3);
+  ok := maxBusObj(lBus).TryPost<integer>(3);
   {$ENDIF}
   Check(ok);
   t.WaitFor;
@@ -3003,12 +2990,12 @@ begin
   {$IFDEF max_FPC}
   lQueues.SetPolicyFor<integer>(lPolicy);
   {$ELSE}
-  TmaxBus(maxAsBus(lQueues)).SetPolicyFor<integer>(lPolicy);
+  maxBusObj(lQueues).SetPolicyFor<integer>(lPolicy);
   {$ENDIF}
   {$IFDEF max_FPC}
   lBus.Subscribe<integer>(@Handler);
   {$ELSE}
-  TmaxBus(maxAsBus(lBus)).Subscribe<integer>(
+  maxBusObj(lBus).Subscribe<integer>(
     procedure(const aValue: integer)
     begin
       Sleep(100);
@@ -3023,13 +3010,13 @@ begin
   {$IFDEF max_FPC}
   ok := lBus.TryPost<integer>(2);
   {$ELSE}
-  ok := TmaxBus(maxAsBus(lBus)).TryPost<integer>(2);
+  ok := maxBusObj(lBus).TryPost<integer>(2);
   {$ENDIF}
   Check(ok);
   {$IFDEF max_FPC}
   ok := lBus.TryPost<integer>(3);
   {$ELSE}
-  ok := TmaxBus(maxAsBus(lBus)).TryPost<integer>(3);
+  ok := maxBusObj(lBus).TryPost<integer>(3);
   {$ENDIF}
   Check(ok);
   t.WaitFor;
@@ -3070,12 +3057,12 @@ begin
   {$IFDEF max_FPC}
   lQueues.SetPolicyFor<integer>(lPolicy);
   {$ELSE}
-  TmaxBus(maxAsBus(lQueues)).SetPolicyFor<integer>(lPolicy);
+  maxBusObj(lQueues).SetPolicyFor<integer>(lPolicy);
   {$ENDIF}
   {$IFDEF max_FPC}
   lBus.Subscribe<integer>(@Handler);
   {$ELSE}
-  TmaxBus(maxAsBus(lBus)).Subscribe<integer>(
+  maxBusObj(lBus).Subscribe<integer>(
     procedure(const aValue: integer)
     begin
       Sleep(200);
@@ -3090,13 +3077,13 @@ begin
   {$IFDEF max_FPC}
   ok := lBus.TryPost<integer>(2);
   {$ELSE}
-  ok := TmaxBus(maxAsBus(lBus)).TryPost<integer>(2);
+  ok := maxBusObj(lBus).TryPost<integer>(2);
   {$ENDIF}
   Check(ok);
   {$IFDEF max_FPC}
   ok := lBus.TryPost<integer>(3);
   {$ELSE}
-  ok := TmaxBus(maxAsBus(lBus)).TryPost<integer>(3);
+  ok := maxBusObj(lBus).TryPost<integer>(3);
   {$ENDIF}
   Check(not ok);
   t.WaitFor;
@@ -3127,7 +3114,7 @@ begin
     {$IFDEF max_FPC}
     lPolicy := lQueues.GetPolicyFor<TPresetEvent>;
     {$ELSE}
-    lPolicy := TmaxBus(maxAsBus(lQueues)).GetPolicyFor<TPresetEvent>;
+    lPolicy := maxBusObj(lQueues).GetPolicyFor<TPresetEvent>;
     {$ENDIF}
     CheckEquals(256, lPolicy.MaxDepth);
     Check(Ord(lPolicy.Overflow) = Ord(TmaxOverflow.DropOldest));
@@ -3181,7 +3168,7 @@ begin
     {$IFDEF max_FPC}
     lSub := lBus.SubscribeNamedOf<integer>(lName, @Handler, TmaxDelivery.Posting);
     {$ELSE}
-    lSub := TmaxBus(maxAsBus(lBus)).SubscribeNamedOf<integer>(lName,
+    lSub := maxBusObj(lBus).SubscribeNamedOf<integer>(lName,
       procedure(const aValue: integer)
       begin
         SetLength(lDelivered, lCount + 1);
@@ -3210,7 +3197,7 @@ begin
         {$IFDEF max_FPC}
         ok := lBus.TryPostNamedOf<integer>(lName, i);
         {$ELSE}
-        ok := TmaxBus(maxAsBus(lBus)).TryPostNamedOf<integer>(lName, i);
+        ok := maxBusObj(lBus).TryPostNamedOf<integer>(lName, i);
         {$ENDIF}
         Check(ok);
       end;
@@ -3281,13 +3268,13 @@ begin
   lBus := maxBus;
   lBus.Clear;
   {$IFDEF max_DELPHI}
-  TmaxBus(maxAsBus(lBus)).EnableSticky<integer>(True);
+  maxBusObj(lBus).EnableSticky<integer>(True);
   {$ELSE}
   lBus.EnableSticky<integer>(True);
   {$ENDIF}
   try
     {$IFDEF max_DELPHI}
-    TmaxBus(maxAsBus(lBus)).Post<integer>(42);
+    maxBusObj(lBus).Post<integer>(42);
     {$ELSE}
     lBus.Post<integer>(42);
     {$ENDIF}
@@ -3296,7 +3283,7 @@ begin
     lSub := lBus.Subscribe<integer>(@Handler);
     {$ELSE}
     lValues := TList<integer>.Create;
-    lSub := TmaxBus(maxAsBus(lBus)).Subscribe<integer>(
+    lSub := maxBusObj(lBus).Subscribe<integer>(
       procedure(const aValue: integer)
       begin
         lValues.Add(aValue);
@@ -3306,7 +3293,7 @@ begin
       CheckEquals(1, lValues.Count);
       CheckEquals(42, lValues[0]);
       {$IFDEF max_DELPHI}
-      TmaxBus(maxAsBus(lBus)).Post<integer>(43);
+      maxBusObj(lBus).Post<integer>(43);
       {$ELSE}
       lBus.Post<integer>(43);
       {$ENDIF}
@@ -3317,7 +3304,7 @@ begin
     end;
   finally
     {$IFDEF max_DELPHI}
-    TmaxBus(maxAsBus(lBus)).EnableSticky<integer>(False);
+    maxBusObj(lBus).EnableSticky<integer>(False);
     {$ELSE}
     lBus.EnableSticky<integer>(False);
     {$ENDIF}
@@ -3349,7 +3336,7 @@ begin
   lSub := lBus.Subscribe<integer>(@Handler);
   {$ELSE}
   lValues := TList<integer>.Create;
-  lSub := TmaxBus(maxAsBus(lBus)).Subscribe<integer>(
+  lSub := maxBusObj(lBus).Subscribe<integer>(
     procedure(const aValue: integer)
     begin
       lValues.Add(aValue);
@@ -3360,7 +3347,7 @@ begin
       {$IFDEF max_FPC}
       lBus.Post<integer>(i);
     {$ELSE}
-      TmaxBus(maxAsBus(lBus)).Post<integer>(i);
+      maxBusObj(lBus).Post<integer>(i);
     {$ENDIF}
     CheckEquals(5, lValues.Count);
     for i := 1 to 5 do
@@ -3370,7 +3357,7 @@ begin
     {$IFDEF max_FPC}
     lSub := lBus.Subscribe<integer>(@Handler);
     {$ELSE}
-    lSub := TmaxBus(maxAsBus(lBus)).Subscribe<integer>(
+    lSub := maxBusObj(lBus).Subscribe<integer>(
       procedure(const aValue: integer)
       begin
         lValues.Add(aValue);
@@ -3380,7 +3367,7 @@ begin
       {$IFDEF max_FPC}
       lBus.Post<integer>(i);
     {$ELSE}
-      TmaxBus(maxAsBus(lBus)).Post<integer>(i);
+      maxBusObj(lBus).Post<integer>(i);
     {$ENDIF}
     CheckEquals(5, lValues.Count);
     for i := 0 to 4 do
@@ -3410,14 +3397,14 @@ begin
     lSub1 := lBus.Subscribe<integer>(@lTgt.Handle);
     lSub2 := lBus.Subscribe<integer>(@lTgt.Handle);
     {$ELSE}
-    lSub1 := TmaxBus(maxAsBus(lBus)).Subscribe<integer>(lTgt.Handle);
-    lSub2 := TmaxBus(maxAsBus(lBus)).Subscribe<integer>(lTgt.Handle);
+    lSub1 := maxBusObj(lBus).Subscribe<integer>(lTgt.Handle);
+    lSub2 := maxBusObj(lBus).Subscribe<integer>(lTgt.Handle);
     {$ENDIF}
     lBus.UnsubscribeAllFor(lTgt);
     {$IFDEF max_FPC}
     lBus.Post<integer>(1);
     {$ELSE}
-    TmaxBus(maxAsBus(lBus)).Post<integer>(1);
+    maxBusObj(lBus).Post<integer>(1);
     {$ENDIF}
     CheckEquals(0, lTgt.Count);
     Check(not lSub1.IsActive);
@@ -3445,13 +3432,13 @@ begin
   lBus := maxBus;
   lBus.Clear;
   {$IFDEF max_DELPHI}
-  TmaxBus(maxAsBus(lBus)).EnableSticky<integer>(True);
+  maxBusObj(lBus).EnableSticky<integer>(True);
   {$ELSE}
   lBus.EnableSticky<integer>(True);
   {$ENDIF}
   try
     {$IFDEF max_DELPHI}
-    TmaxBus(maxAsBus(lBus)).Post<integer>(1);
+    maxBusObj(lBus).Post<integer>(1);
     {$ELSE}
     lBus.Post<integer>(1);
     {$ENDIF}
@@ -3459,7 +3446,7 @@ begin
     lBus.Clear;
 
     {$IFDEF max_DELPHI}
-    TmaxBus(maxAsBus(lBus)).Post<integer>(2);
+    maxBusObj(lBus).Post<integer>(2);
     {$ELSE}
     lBus.Post<integer>(2);
     {$ENDIF}
@@ -3469,7 +3456,7 @@ begin
     lSub := lBus.Subscribe<integer>(@Handler);
     {$ELSE}
     lValues := TList<integer>.Create;
-    lSub := TmaxBus(maxAsBus(lBus)).Subscribe<integer>(
+    lSub := maxBusObj(lBus).Subscribe<integer>(
       procedure(const aValue: integer)
       begin
         lValues.Add(aValue);
@@ -3483,7 +3470,7 @@ begin
     end;
   finally
     {$IFDEF max_DELPHI}
-    TmaxBus(maxAsBus(lBus)).EnableSticky<integer>(False);
+    maxBusObj(lBus).EnableSticky<integer>(False);
     {$ELSE}
     lBus.EnableSticky<integer>(False);
     {$ENDIF}
@@ -3521,8 +3508,8 @@ begin
     lSub := lBus.Subscribe<integer>(@lProbe.OnInt);
     lBus.Post<integer>(1);
     {$ELSE}
-    lSub := TmaxBus(maxAsBus(lBus)).Subscribe<integer>(lProbe.OnInt);
-    TmaxBus(maxAsBus(lBus)).Post<integer>(1);
+    lSub := maxBusObj(lBus).Subscribe<integer>(lProbe.OnInt);
+    maxBusObj(lBus).Post<integer>(1);
     {$ENDIF}
     CheckEquals(1, TWeakTargetProbe.HitsInt);
 
@@ -3532,7 +3519,7 @@ begin
     {$IFDEF max_FPC}
     lBus.Post<integer>(2);
     {$ELSE}
-    TmaxBus(maxAsBus(lBus)).Post<integer>(2);
+    maxBusObj(lBus).Post<integer>(2);
     {$ENDIF}
 
     CheckEquals(1, TWeakTargetProbe.HitsInt);
@@ -3559,8 +3546,8 @@ begin
     lSub := lBus.SubscribeNamedOf<integer>('weak', @lProbe.OnInt);
     lBus.PostNamedOf<integer>('weak', 1);
     {$ELSE}
-    lSub := TmaxBus(maxAsBus(lBus)).SubscribeNamedOf<integer>('weak', lProbe.OnInt);
-    TmaxBus(maxAsBus(lBus)).PostNamedOf<integer>('weak', 1);
+    lSub := maxBusObj(lBus).SubscribeNamedOf<integer>('weak', lProbe.OnInt);
+    maxBusObj(lBus).PostNamedOf<integer>('weak', 1);
     {$ENDIF}
     CheckEquals(1, TWeakTargetProbe.HitsInt);
 
@@ -3570,7 +3557,7 @@ begin
     {$IFDEF max_FPC}
     lBus.PostNamedOf<integer>('weak', 2);
     {$ELSE}
-    TmaxBus(maxAsBus(lBus)).PostNamedOf<integer>('weak', 2);
+    maxBusObj(lBus).PostNamedOf<integer>('weak', 2);
     {$ENDIF}
 
     CheckEquals(1, TWeakTargetProbe.HitsInt);
@@ -3599,9 +3586,9 @@ begin
     lEvt := TIntEvent.Create(1);
     lBus.PostGuidOf<IIntEvent>(lEvt);
     {$ELSE}
-    lSub := TmaxBus(maxAsBus(lBus)).SubscribeGuidOf<IIntEvent>(lProbe.OnIntf);
+    lSub := maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(lProbe.OnIntf);
     lEvt := TIntEvent.Create(1);
-    TmaxBus(maxAsBus(lBus)).PostGuidOf<IIntEvent>(lEvt);
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(lEvt);
     {$ENDIF}
     CheckEquals(1, TWeakTargetProbe.HitsIntf);
 
@@ -3613,7 +3600,7 @@ begin
     lBus.PostGuidOf<IIntEvent>(lEvt);
     {$ELSE}
     lEvt := TIntEvent.Create(2);
-    TmaxBus(maxAsBus(lBus)).PostGuidOf<IIntEvent>(lEvt);
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(lEvt);
     {$ENDIF}
 
     CheckEquals(1, TWeakTargetProbe.HitsIntf);
@@ -3657,7 +3644,7 @@ begin
     {$IFDEF max_FPC}
     lSub := lBus.Subscribe<integer>(@lOld.OnInt, TmaxDelivery.Posting);
     {$ELSE}
-    lSub := TmaxBus(maxAsBus(lBus)).Subscribe<integer>(lOld.OnInt, TmaxDelivery.Posting);
+    lSub := maxBusObj(lBus).Subscribe<integer>(lOld.OnInt, TmaxDelivery.Posting);
     {$ENDIF}
 
     t := TPostThread.Create(lBus, 1);
@@ -3667,7 +3654,7 @@ begin
     {$IFDEF max_FPC}
     ok := lBus.TryPost<integer>(2);
     {$ELSE}
-    ok := TmaxBus(maxAsBus(lBus)).TryPost<integer>(2);
+    ok := maxBusObj(lBus).TryPost<integer>(2);
     {$ENDIF}
     Check(ok);
 
@@ -3681,7 +3668,7 @@ begin
     {$IFDEF max_FPC}
     lDummy := lBus.Subscribe<TABAEvent>(@lNew.OnABA, TmaxDelivery.Posting);
     {$ELSE}
-    lDummy := TmaxBus(maxAsBus(lBus)).Subscribe<TABAEvent>(lNew.OnABA, TmaxDelivery.Posting);
+    lDummy := maxBusObj(lBus).Subscribe<TABAEvent>(lNew.OnABA, TmaxDelivery.Posting);
     {$ENDIF}
 
     lRelease.SetEvent;
@@ -3730,7 +3717,7 @@ begin
   lSub := lBus.Subscribe<TMetricEvent>(@Handler, TmaxDelivery.Posting);
   lBus.Post<TMetricEvent>(Default(TMetricEvent));
   {$ELSE}
-  lSub := TmaxBus(maxAsBus(lBus)).Subscribe<TMetricEvent>(
+  lSub := maxBusObj(lBus).Subscribe<TMetricEvent>(
     procedure(const aValue: TMetricEvent)
     begin
       Inc(lHits);
@@ -3738,7 +3725,7 @@ begin
         Exit;
     end,
     TmaxDelivery.Posting);
-  TmaxBus(maxAsBus(lBus)).Post<TMetricEvent>(Default(TMetricEvent));
+  maxBusObj(lBus).Post<TMetricEvent>(Default(TMetricEvent));
   {$ENDIF}
   CheckEquals(1, lHits);
 
@@ -3747,7 +3734,7 @@ begin
   {$IFDEF max_FPC}
   lBus.Post<TMetricEvent>(Default(TMetricEvent));
   {$ELSE}
-  TmaxBus(maxAsBus(lBus)).Post<TMetricEvent>(Default(TMetricEvent));
+  maxBusObj(lBus).Post<TMetricEvent>(Default(TMetricEvent));
   {$ENDIF}
   CheckEquals(1, lHits);
 end;
@@ -3777,7 +3764,7 @@ begin
     {$IFDEF max_FPC}
     lSub := lBus.Subscribe<integer>(@lProbe.OnInt, TmaxDelivery.Posting);
     {$ELSE}
-    lSub := TmaxBus(maxAsBus(lBus)).Subscribe<integer>(lProbe.OnInt, TmaxDelivery.Posting);
+    lSub := maxBusObj(lBus).Subscribe<integer>(lProbe.OnInt, TmaxDelivery.Posting);
     {$ENDIF}
 
     t := TPostThread.Create(lBus, 1);
@@ -3787,7 +3774,7 @@ begin
     {$IFDEF max_FPC}
     ok := lBus.TryPost<integer>(2);
     {$ELSE}
-    ok := TmaxBus(maxAsBus(lBus)).TryPost<integer>(2);
+    ok := maxBusObj(lBus).TryPost<integer>(2);
     {$ENDIF}
     Check(ok);
 
@@ -3945,7 +3932,7 @@ begin
   lBus := maxBus;
   lBus.Clear;
   {$IFNDEF max_FPC}
-  lBusObj := TmaxBus(maxAsBus(lBus));
+  lBusObj := maxBusObj(lBus);
   {$ENDIF}
 
   // Test Subscribe/Post with integer

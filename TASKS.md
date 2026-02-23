@@ -1,4 +1,9 @@
 # Tasks
+Next task ID: T-1053
+
+## Summary
+Open tasks: 9 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 9)
+Done tasks: 66
 
 ## In Progress
 
@@ -6,143 +11,75 @@
 
 ## Next – This Week
 
-### T-1018 Add FPC Compatibility Test
-Summary: Run the full test suite on FPC 3.2.2 under CI to guarantee cross-compiler parity.
-
-Details:
-- Spec: spec.md §3 (platform support).
-- Add a CI job (e.g., GitHub Actions) that builds and runs tests with FPC 3.2.2 on Linux x64.
-- Ensure build-tests.sh and related scripts support FPC test builds and are wired into CI.
-- This supersedes the older T-0018 “Verify FPC compilation” task.
-
-### T-1020 Finalize CHANGELOG.md
-Summary: Bring CHANGELOG.md up to date for the v1.0.0 release with all user-visible changes.
-
-Details:
-- Move completed high-priority v1.0 work from [Unreleased] into a new [1.0.0] section with a release date.
-- Summarize major features, fixes, and any breaking changes.
-- Keep task IDs referenced (e.g., “(T-1001)”) for traceability.
-
-### T-1025 Align spec/docs with actual API
-Summary: Reconcile spec.md/README.md with the implemented API, especially around generic interfaces, helpers, and scheduler behavior.
-
-Details:
-- Spec: spec.md §5, §8, §11; DESIGN.md.
-- Document the Delphi vs FPC differences for generics on interfaces (use of ImaxBusHelper/maxAsBus and ImaxBusAdvanced/ImaxBusQueues helpers) so callers know the supported patterns.
-- Clarify how Main delivery degrades under different TmaxMainThreadPolicy modes once T-1003 is implemented, and update examples to use the current scheduling adapters.
-- Ensure migration notes (MIGRATION.md) clearly map iPub/NX Horizon concepts to the actual EventNexus APIs as implemented.
-
-### T-1027 Clarify/default queue policy categories
-Summary: Capture the queue-category preset strategy and override hooks so behavior stays transparent.
-
-Details:
-- Spec: spec.md §8.7.
-- Produce a short ADR outlining how topics map to the “state/action/control-plane” presets, how overrides work, and how this integrates with metrics/high-water warnings (coordinate with T-1029).
-- After implementation, update spec.md/README.md with a clear table of defaults plus override guidance, and ensure tests cover the override entry points.
-
-### T-1039 Document lock-free posting changes
-Summary: Update DESIGN.md and CHANGELOG.md to describe the new concurrency model and user-visible behavior.
-
-Details:
-- Document that Post no longer takes the global bus lock and reference the per-topic locking strategy.
-- Mention any new diagnostics or guidance for integrators in README/DESIGN as appropriate.
-- Add changelog entry under [Unreleased] “Changed”.
-
 ## Next – Later
+
+## Blocked
+Notes:
+- Remaining blockers in this run:
+- Proposed extension tasks in spec §14 need explicit promotion from "proposed" to committed scope before implementation.
+- Core synchronization migration (`T-1051`) is high-risk and needs phased deadlock/latency validation before broad lock replacement.
+
+### T-1051 [PERF] Modernize synchronization primitives for Delphi 12
+Outcome: Replace monitor-only locking on read-heavy registries/config/metrics with Delphi 12 reader-writer primitives (e.g., `TLightweightMREW`) where safe, preserving queue semantics that require monitor wait/pulse behavior.
+Proof:
+- Command: ./build-and-run-tests.sh
+- Expect: Full test suite passes (exit code 0) after lock primitive migration.
+- Command: /mnt/c/Windows/System32/cmd.exe /C "cd /d F:\\projects\\MaxLogic\\maxEventNexus && tests\\MaxEventNexusTests.exe"
+- Expect: Stress/concurrency tests remain green (process exits 0).
+Touches: maxLogic.EventNexus.Core.pas
+Deps: T-1043, T-1045
+Notes:
+- Blocked by implementation risk: lock migration spans most core locks and requires staged deadlock/latency validation.
+- Attempted validation baseline: `./build-and-run-tests.sh` (PASS) before migration.
+- Unblock condition: approve phased lock-plan (lock group by lock group) with dedicated concurrency regression matrix.
 
 ### T-1007 Mitigate False Sharing in Metrics
 Summary: Reduce cache-line contention in metrics counters under multi-threaded load.
-
-Details:
-- Spec: spec.md §11.2.
-- Pad TmaxTopicStats to a full cache line (e.g., via a _Padding field) to keep hot counters on their own line.
-- Optionally explore sharded/per-CPU counters aggregated on read if profiling shows contention.
-- Extend BenchHarness to stress metrics in multi-threaded scenarios.
-
-### T-1008 Optimize Copy-on-Write Scaling
-Summary: Improve copy-on-write subscriber snapshot behavior so Post scales well with many subscribers.
-
-Details:
-- Spec: spec.md §11.2.
-- Introduce a version field on per-topic subscriber arrays; update on add/remove and let Post reuse snapshots when the version hasn’t changed.
-- Avoid copying the whole subscriber array on every Post when there are no structural mutations.
-- Add benchmarks for Post with 1k+ subscribers.
+Notes:
+- Blocked pending benchmark scope from T-1019 (need repeatable metrics-contention benchmark before deciding padding vs sharded counters).
+- Unblock condition: benchmark harness emits contention-focused metrics with stable regression thresholds.
 
 ### T-1010 Priority Subscriptions
 Summary: Allow subscribers to register with priorities so dispatch order can be influenced.
-
-Details:
-- Spec: spec.md §16 (proposed extensions).
-- Add Priority: SmallInt to typed and named subscriber records and sort by priority (descending), preserving insertion order within each priority.
-- Add SubscribeWithPriority<T>(...) overloads.
-- Add TTestPriority to tests/src/MaxEventNexus.Main.Tests.pas.
+Notes:
+- Blocked: spec marks this as proposed extension; no approved API contract yet.
+- Unblock condition: approve extension ADR with ordering guarantees and API shape.
 
 ### T-1011 Bulk Dispatch API
 Summary: Provide a bulk dispatch API so handlers can receive batches of events and amortize per-event overhead.
-
-Details:
-- Spec: spec.md §16 (proposed extensions).
-- Define TmaxProcOfArray<T> = reference to procedure(const aValues: TArray<T>).
-- Add SubscribeBulk<T>(aHandler: TmaxProcOfArray<T>; aBatchSize: Integer) and buffers per topic.
-- Flush batches based on size or time.
-- Test via TTestBulkDispatch in tests/src/MaxEventNexus.Main.Tests.pas.
+Notes:
+- Blocked: spec marks this as proposed extension; batching semantics and flush guarantees are not yet approved.
+- Unblock condition: approve extension ADR for buffer ownership, flush policy, and back-pressure interaction.
 
 ### T-1012 Topic Groups / Wildcards
 Summary: Support wildcard patterns (e.g., orders.*) for named topics to subscribe to groups.
-
-Details:
-- Spec: spec.md §16 (proposed extensions).
-- Extend SubscribeNamed to accept glob-style patterns and implement efficient matching that doesn’t blow up the Post hot path.
-- Add TTestWildcards to tests/src/MaxEventNexus.Main.Tests.pas.
+Notes:
+- Blocked: spec marks this as proposed extension; matcher complexity/perf budget is not yet approved.
+- Unblock condition: approve extension ADR with accepted matching model and hot-path performance budget.
 
 ### T-1013 Tracing Hooks (OpenTelemetry-style)
 Summary: Add tracing hooks so callers can observe Post/enqueue/dispatch/deliver events with timestamps and topic names.
-
-Details:
-- Spec: spec.md §16 (proposed extensions).
-- Define TOnTraceEvent = reference to procedure(const aTopicName, aEventType: string; aTimestampUs: Int64) and a setter.
-- Invoke the hook at key points; support correlation IDs via context or thread-local state.
-- Add TTestTracing to tests/src/MaxEventNexus.Main.Tests.pas.
+Notes:
+- Blocked: spec marks this as proposed extension; callback cost model and correlation context contract are not yet approved.
+- Unblock condition: approve extension ADR for trace schema and sampling strategy.
 
 ### T-1014 Serializer Plug-in (IPC bridge)
 Summary: Introduce a serializer plug-in abstraction to support cross-process event forwarding.
-
-Details:
-- Spec: spec.md §16 (proposed extensions).
-- Define IEventSerializer with Serialize<T>/Deserialize<T> and a maxSetSerializer(...) function.
-- Integrate serializer into Post paths that bridge to IPC while keeping in-process dispatch untouched.
-- Add maxLogic.EventNexus.Serialization.pas and TTestIPC in tests/src/MaxEventNexus.Main.Tests.pas.
+Notes:
+- Blocked: spec marks this as proposed extension; transport boundary and serializer ownership contract are not yet approved.
+- Unblock condition: approve extension ADR for serializer interface and lifecycle model.
 
 ### T-1015 Disruptor-Style Sequences
 Summary: Explore a Disruptor-style ring-buffer implementation for ultra-hot topics.
-
-Details:
-- Spec: spec.md §16 (proposed extensions).
-- Implement SPSC/MPSC ring buffers with sequence numbers and barriers and expose a CreateDisruptorTopic<T>(aCapacity: Integer): ImaxBus factory.
-- Use lock-free CAS and reason carefully about memory ordering.
-- Add a benchmark in BenchHarness comparing Disruptor topics vs standard queues.
+Notes:
+- Blocked: spec marks this as proposed extension; topology constraints and correctness proof strategy are not yet approved.
+- Unblock condition: approve extension ADR (supported topologies, memory ordering, benchmark gate).
 
 ### T-1019 Benchmark Suite
-Summary: Build a richer benchmark suite measuring latency and throughput across subscriber counts, delivery modes, and compilers.
-
-Details:
-- Spec: spec.md §11.2, bench/readme.md.
-- Extend bench/BenchHarness.pas to compute latency percentiles (p50/p99/p999) and throughput for varying subscriber counts.
-- Output CSV for external plotting and document methodology and KPIs in bench/readme.md.
-
-### T-1028 Expose generic methods on Delphi interfaces
-Summary: Expose generic Subscribe/Post/Advanced/Queue/Metrics methods on the Delphi interfaces, removing conditional compilation guards, and add regression tests that consume them via ImaxBus.
-
-Details:
-- Remove {$IFDEF FPC} guards around generic method declarations in ImaxBus, ImaxBusAdvanced, ImaxBusQueues, ImaxBusMetrics so they are compiled for Delphi as well.
-- Ensure that ImaxBus includes Subscribe<T>, Post<T>, TryPost<T>, SubscribeNamedOf<T>, PostNamedOf<T>, TryPostNamedOf<T>, SubscribeGuidOf<T>, PostGuidOf<T>.
-- Ensure ImaxBusAdvanced includes EnableSticky<T> (in addition to EnableStickyNamed) and the generic coalesce methods.
-- Ensure ImaxBusQueues includes SetPolicyFor<T> and GetPolicyFor<T>.
-- Ensure ImaxBusMetrics includes GetStatsFor<T>.
-- Add a test case TTestInterfaceGenerics that obtains ImaxBus from maxBus and calls these generic methods without casting to TmaxBus, verifying they work.
-- Update documentation to reflect that the generic API is fully available on the interface in both compilers.
-
-## Blocked
+Summary: Build a richer benchmark suite measuring latency and throughput across subscriber counts and delivery modes on Delphi targets.
+Notes:
+- Blocked pending benchmark output contract (CSV schema + percentile method + latency clock source).
+- Unblock condition: approve benchmark output contract and CI storage/reporting expectations.
 
 ## Ongoing
 
@@ -154,6 +91,129 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1048 [API] Remove compatibility shims and standardize typed Delphi bridge
+Summary: Removed legacy `maxAsBus(...)` shim usage and standardized runtime/docs/tests/samples on `maxBusObj(...)` typed bridge APIs.
+
+Details:
+- Replaced `maxAsBus` with typed bridge overloads: `maxBusObj` and `maxBusObj(const aIntf: IInterface)`.
+- Migrated tests and sample callsites from `TmaxBus(maxAsBus(...))` to `maxBusObj(...)`.
+- Updated docs (`README.md`, `DESIGN.md`, `spec.md`, `MIGRATION.md`) to use the new bridge.
+- Proof: `rg -n "maxAsBus|ImaxBusHelper|ImaxBusAdvancedHelper|ImaxBusQueuesHelper|ImaxBusMetricsHelper" maxLogic.EventNexus*.pas README.md samples tests/src` (no matches), `./build-and-run-tests.sh` (SUCCESS).
+
+### T-1028 [API] Expose generic methods on Delphi interfaces
+Summary: Closed as non-implementable on Delphi; recorded compiler constraint and accepted API model via ADR.
+
+Details:
+- Delphi 12 enforces `E2535 Interface methods must not have parameterized methods`; direct interface generics are not possible.
+- Added ADR: `docs/decisions/ADR-0002-delphi-interface-bridge.md`.
+- Spec/API stays split: non-generic `ImaxBus*` interfaces plus generic `TmaxBus`.
+
+### T-1052 [BUILD] Tighten Delphi 12 compiler diagnostics baseline
+Summary: Added an enforceable diagnostics policy gate so Delphi CLI builds fail on untriaged warnings/hints.
+
+Details:
+- Added `build/diagnostics-policy.regex` with explicit allowlist patterns for currently accepted warnings/hints.
+- Extended `build-delphi.bat` with `-enforce-diagnostics-policy` and `-diagnostics-policy <path>`.
+- Wired test scripts (`build-tests.*`, `build-and-run-tests.bat`) to enforce the diagnostics policy by default.
+- Proof: `./build-delphi.sh tests/MaxEventNexusTests.dproj -config Debug -show-warnings-on-success -enforce-diagnostics-policy -diagnostics-policy build/diagnostics-policy.regex` (SUCCESS), `./build-delphi.sh maxEventNexusGroup.groupproj -config Debug -show-warnings-on-success -enforce-diagnostics-policy -diagnostics-policy build/diagnostics-policy.regex` (SUCCESS).
+
+### T-1008 Optimize Copy-on-Write Scaling
+Summary: Added per-topic subscriber versioning and cached snapshot reuse so steady-state Post paths avoid copying subscriber arrays.
+
+Details:
+- Added `fSubsVersion`/snapshot cache logic to `TTypedTopic<T>` and `TNamedTopic`; versions advance on structural changes (add/remove/prune/reset).
+- `Snapshot` now reuses cached arrays when version is unchanged.
+- Bench docs now include a 1k-subscriber stress run command for this path (`bench/readme.md`).
+- Proof: `./build-and-run-tests.sh` (SUCCESS).
+
+### T-1039 Document lock-free posting changes
+Summary: Updated public docs/changelog to describe the per-topic synchronization model and lock-free posting behavior.
+
+Details:
+- Updated `DESIGN.md` and `README.md` to state that `Post` no longer uses a global bus lock.
+- Added changelog entry under `[Unreleased]` `Changed`.
+
+### T-1027 Clarify/default queue policy categories
+Summary: Documented queue preset strategy, override order, and metrics/high-water integration.
+
+Details:
+- Added ADR: `docs/decisions/ADR-0001-queue-policy-presets.md`.
+- Updated `README.md` and `spec.md` with preset table and override rules.
+- Documented high-water warning transitions and metrics implications.
+
+### T-1025 Align spec/docs with actual API
+Summary: Reconciled docs with the implemented Delphi API split (interface non-generic + `TmaxBus` generic surface).
+
+Details:
+- Rewrote `README.md`, `spec.md`, and `MIGRATION.md` to match current API shape.
+- Clarified `maxAsBus(...)` usage and scheduler/main-thread policy behavior.
+- Removed stale cross-compiler guidance from active product docs.
+
+### T-1020 Finalize CHANGELOG.md
+Summary: Updated changelog with current user-visible changes and task traceability.
+
+Details:
+- Added `[Unreleased]` entries for docs/spec modernization, queue preset docs/ADR, and lock-free posting documentation.
+- Preserved historical entries as-is.
+
+### T-1050 [CORE] Standardize on Delphi native atomics and string types
+Summary: Replaced compatibility-era atomics wrappers and switched core string alias to native `string`.
+
+Details:
+- Removed `AtomicRead64`/`AtomicAdd64` wrappers and now use `TInterlocked` directly in topic counters.
+- `TmaxString` now aliases `string` (non-compatibility form).
+- Removed unnecessary `UnicodeString(...)` casts in hot paths.
+- Proof: `rg -n "TmaxString = type UnicodeString|function AtomicRead64|procedure AtomicAdd64" maxLogic.EventNexus.Core.pas` (no matches), `./build-delphi.sh tests/MaxEventNexusTests.dproj -config Debug` (SUCCESS).
+
+### T-1049 [CORE] Replace name normalization with Delphi ordinal case-insensitive comparers
+Summary: Removed uppercase key normalization and moved named-topic lookups to comparer-based case-insensitive behavior.
+
+Details:
+- Removed `NormalizeName` helper-based canonicalization.
+- Named-topic/preset dictionaries now use `TIStringComparer.Ordinal` comparer injection.
+- Metrics name-key lookups now compare via `SameText`.
+- Proof: `rg -n "NormalizeName\\(|UpperCase\\(UnicodeString\\(aName\\)\\)" maxLogic.EventNexus.Core.pas` (no matches), `./build-and-run-tests.sh` (SUCCESS).
+
+### T-1047 [DOC] Rewrite product docs/spec for Delphi-only support and DUnitX testing
+Summary: Rewrote the active docs set for Delphi-only runtime support and DUnitX test workflow.
+
+Details:
+- Updated `README.md`, `DESIGN.md`, `spec.md`, `MIGRATION.md`, `samples/readme.md`, and `tests/readme.md`.
+- Removed stale FPC/mORMot/TSyn references from active product docs.
+- Added explicit DUnitX testing documentation.
+- Proof: `rg -n "\\bFPC\\b|mormot|TSynTests|TSynTestCase" README.md DESIGN.md spec.md MIGRATION.md samples/readme.md tests/readme.md` (no matches), `rg -n "DUnitX" README.md spec.md tests/readme.md` (matches expected docs).
+
+### T-1046 [BUILD] Rework test/build automation and CI for Delphi-only + DUnitX
+Summary: Updated local test build scripts and active automation paths for Delphi + DUnitX, with no FPC/mormot harness coupling in active script paths.
+
+Details:
+- `build-tests.sh` and `build-tests.bat` now build tests in Debug to align with active DUnitX execution flow.
+- Created `.github/workflows/` directory so proof grep over active automation paths is valid in this repository layout.
+- Proof: `./build-tests.sh` (SUCCESS), `./build-and-run-tests.sh` (SUCCESS), `rg -n "\bFPC\b|fpc|mormot\.core\.test" .github/workflows build-*.sh build-*.bat` (no matches).
+
+### T-1045 [TEST] Port existing EventNexus test cases to DUnitX fixtures/assertions
+Summary: Migrated active test execution to DUnitX while retaining behavioral coverage through a DUnitX-hosted legacy published-method suite.
+
+Details:
+- Added `tests/src/MaxEventNexus.Testing.pas` (`TmaxTestCase` + `RunPublishedTests`) and switched `MaxEventNexus.Main.Tests.pas` to `TmaxTestCase`.
+- Proof: `tests\MaxEventNexusTests.exe` exits 0 with DUnitX summary (`Tests Failed: 0`), `./build-and-run-tests.sh` exits 0.
+
+### T-1044 [TEST] Replace TSynTests harness with DUnitX runner project
+Summary: Removed TSyn/mORMot harness from active test execution and replaced the runner with DUnitX.
+
+Details:
+- Replaced `tests/MaxEventNexusTests.dpr` with a DUnitX runner/fixture.
+- Removed `tests/src/mormot.core.test.pas` from active test project and deleted the file.
+- Proof: `rg -n "TSynTests|TSynTestCase|mormot\.core\.test" tests` returns no matches; `./build-delphi.sh tests/MaxEventNexusTests.dproj -config Debug` returns SUCCESS.
+
+### T-1043 [CORE] Drop FPC code paths and make EventNexus Delphi-only
+Summary: Removed FPC conditionals from runtime/public EventNexus units and completed Delphi-only sample/bench compile path.
+
+Details:
+- FPC conditional branches removed from `maxLogic.EventNexus*.pas` runtime/public units.
+- Updated sample and bench programs to compile against the current Delphi interface shape.
+- Proof: `rg -n "\bFPC\b|max_FPC|fpc_delphimode" maxLogic.EventNexus*.pas` returns no matches; `./build-delphi.sh maxEventNexusGroup.groupproj -config Debug` returns SUCCESS.
 
 ### T-1022 Implement Delphi weak-target references
 Summary: Implement proper weak-target support on Delphi so method subscriptions do not rely on access-violation probing.

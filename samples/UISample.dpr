@@ -3,11 +3,13 @@ program UISample;
 {$APPTYPE GUI}
 
 uses
-  Vcl.Forms,
-  Vcl.StdCtrls,
   System.Classes,
   System.SysUtils,
-  maxLogic.EventNexus in '..\maxLogic.EventNexus.pas';
+  Vcl.Controls,
+  Vcl.Forms,
+  Vcl.StdCtrls,
+  maxLogic.EventNexus in '..\maxLogic.EventNexus.pas',
+  maxLogic.EventNexus.Core in '..\maxLogic.EventNexus.Core.pas';
 
 type
   TMainForm = class(TForm)
@@ -57,19 +59,19 @@ end;
 
 procedure TMainForm.StartClicked(Sender: TObject);
 var
-  lAdv: ImaxBusAdvanced;
+  lBusObj: TmaxBus;
 begin
   if Assigned(fWorker) then
     Exit;
   fButton.Enabled := False;
-  lAdv := maxBus as ImaxBusAdvanced;
-  lAdv.EnableCoalesceOf<Integer>(
+  lBusObj := maxBusObj(maxBus);
+  lBusObj.EnableCoalesceOf<Integer>(
     function(const aValue: Integer): TmaxString
     begin
       Result := '';
     end,
     100000);
-  fSub := maxBus.Subscribe<Integer>(OnValue, TmaxDelivery.Main);
+  fSub := lBusObj.Subscribe<Integer>(OnValue, TmaxDelivery.Main);
   fWorker := TProducer.Create(False);
 end;
 
@@ -84,7 +86,7 @@ var
 begin
   for i := 1 to 1000 do
   begin
-    maxBus.Post<Integer>(i);
+    maxBusObj(maxBus).Post<Integer>(i);
     Sleep(1);
   end;
 end;
@@ -93,7 +95,6 @@ var
   lForm: TMainForm;
 begin
   Application.Initialize;
-  AApplication.CreateForm(TlForm, lForm);
-  pplication.Run;
+  Application.CreateForm(TMainForm, lForm);
+  Application.Run;
 end.
-
