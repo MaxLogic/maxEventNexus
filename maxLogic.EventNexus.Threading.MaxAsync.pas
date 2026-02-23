@@ -1,29 +1,15 @@
 unit maxLogic.EventNexus.Threading.MaxAsync;
 
-{$I fpc_delphimode.inc}
-
-{$IFDEF FPC}
-  {$DEFINE max_FPC}
-{$ELSE}
-  {$DEFINE max_DELPHI}
-{$ENDIF}
-
 interface
 
 uses
-  Classes, SysUtils, SyncObjs,
-  {$IFDEF max_FPC} maxLogic_EventNexus_Threading_Adapter {$ELSE} maxLogic.EventNexus.Threading.Adapter {$ENDIF},
-  maxAsync;
+  Classes, SysUtils,
+  maxAsync,
+  maxLogic.EventNexus.Threading.Adapter;
 
 type
   TmaxAsyncScheduler = class(TInterfacedObject, IEventNexusScheduler)
   private
-    class var fLock: TCriticalSection;
-    class var fActive: TInterfaceList;
-    class constructor Create;
-    class destructor Destroy;
-    class procedure Track(const aAsync: iAsync); static;
-    class procedure Untrack(const aAsync: iAsync); static;
     procedure ScheduleAsync(const aProc: TmaxProc; aDelayUs: Integer);
   public
     procedure RunAsync(const aProc: TmaxProc);
@@ -57,47 +43,6 @@ type
     procedure Invoke;
   end;
 
-class constructor TmaxAsyncScheduler.Create;
-begin
-  inherited;
-  fLock := TCriticalSection.Create;
-  fActive := TInterfaceList.Create;
-end;
-
-class destructor TmaxAsyncScheduler.Destroy;
-begin
-  FreeAndNil(fActive);
-  FreeAndNil(fLock);
-end;
-
-class procedure TmaxAsyncScheduler.Track(const aAsync: iAsync);
-begin
-  if aAsync = nil then
-    Exit;
-  fLock.Enter;
-  try
-    fActive.Add(aAsync);
-  finally
-    fLock.Leave;
-  end;
-end;
-
-class procedure TmaxAsyncScheduler.Untrack(const aAsync: iAsync);
-var
-  lIndex: Integer;
-begin
-  if aAsync = nil then
-    Exit;
-  fLock.Enter;
-  try
-    lIndex := fActive.IndexOf(aAsync);
-    if lIndex >= 0 then
-      fActive.Delete(lIndex);
-  finally
-    fLock.Leave;
-  end;
-end;
-
 constructor TMaxAsyncTask.Create(const aProc: TmaxProc; aDelayUs: Integer);
 begin
   inherited Create;
@@ -130,7 +75,6 @@ end;
 procedure TMaxAsyncTask.AfterDone;
 begin
   try
-    TmaxAsyncScheduler.Untrack(FHandle);
     FHandle := nil;
   finally
     Free;
@@ -158,20 +102,21 @@ end;
 
 procedure TmaxAsyncScheduler.ScheduleAsync(const aProc: TmaxProc; aDelayUs: Integer);
 var
-  task: TMaxAsyncTask;
-  handle: iAsync;
+  lTask: TMaxAsyncTask;
+  lHandle: iAsync;
 begin
   if not ProcAssigned(aProc) then
     Exit;
-  task := TMaxAsyncTask.Create(aProc, aDelayUs);
+  lTask := TMaxAsyncTask.Create(aProc, aDelayUs);
   try
-    handle := SimpleAsyncCall(task.Execute, '', task.AfterDone);
+    lHandle := SimpleAsyncCall(lTask.Execute, '', lTask.AfterDone);
   except
-    task.Free;
-    raise;
+    // If async backend submission fails, degrade to inline execution so callers keep progressing.
+    lTask.Execute;
+    lTask.AfterDone;
+    Exit;
   end;
-  task.AttachHandle(handle);
-  Track(handle);
+  lTask.AttachHandle(lHandle);
 end;
 
 procedure TmaxAsyncScheduler.RunAsync(const aProc: TmaxProc);
@@ -186,7 +131,7 @@ end;
 
 procedure TmaxAsyncScheduler.RunOnMain(const aProc: TmaxProc);
 var
-  adapter: TMainQueueAdapter;
+  lAdapter: TMainQueueAdapter;
 begin
   if not ProcAssigned(aProc) then
     Exit;
@@ -194,11 +139,11 @@ begin
     aProc()
   else
   begin
-    adapter := TMainQueueAdapter.Create(aProc);
+    lAdapter := TMainQueueAdapter.Create(aProc);
     try
-      TThread.Queue(nil, adapter.Invoke);
+      TThread.Queue(nil, lAdapter.Invoke);
     except
-      adapter.Free;
+      lAdapter.Free;
       raise;
     end;
   end;

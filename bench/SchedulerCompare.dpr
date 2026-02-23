@@ -4,7 +4,7 @@ program SchedulerCompare;
 
 uses
   Classes, SysUtils, SyncObjs,
-  System.Diagnostics, System.Generics.Collections, System.Math, System.StrUtils,
+  System.Diagnostics, System.Generics.Collections, System.Math, System.StrUtils, System.Threading,
   maxLogic.EventNexus,
   maxLogic.EventNexus.Core,
   maxLogic.EventNexus.Threading.Adapter,
@@ -28,6 +28,8 @@ type
     CsvPath: string;
     MetricsReaders: Integer;
     MetricsReadsPerReader: Int64;
+    QueueMaxDepth: Integer;
+    MaxInFlight: Integer;
   end;
 
   TRunSample = record
@@ -37,19 +39,6 @@ type
     MetricReadsPerSec: Int64;
   end;
 
-  TMetricsReaderThread = class(TThread)
-  private
-    fBusObj: TmaxBus;
-    fStopEvent: TEvent;
-    fMaxReads: Int64;
-    fReads: Int64;
-  protected
-    procedure Execute; override;
-  public
-    constructor Create(aBusObj: TmaxBus; aStopEvent: TEvent; aMaxReads: Int64);
-    property Reads: Int64 read fReads;
-  end;
-
 const
   cClockName = 'TStopwatch.GetTimeStamp';
   cPercentileMethod = 'nearest-rank';
@@ -57,31 +46,6 @@ const
 function CreateRawThreadScheduler: IEventNexusScheduler;
 begin
   Result := TmaxRawThreadScheduler.Create;
-end;
-
-constructor TMetricsReaderThread.Create(aBusObj: TmaxBus; aStopEvent: TEvent; aMaxReads: Int64);
-begin
-  inherited Create(False);
-  FreeOnTerminate := False;
-  fBusObj := aBusObj;
-  fStopEvent := aStopEvent;
-  fMaxReads := aMaxReads;
-  fReads := 0;
-end;
-
-procedure TMetricsReaderThread.Execute;
-var
-  lReads: Int64;
-begin
-  lReads := 0;
-  while fStopEvent.WaitFor(0) <> wrSignaled do
-  begin
-    fBusObj.GetStatsFor<Integer>;
-    Inc(lReads);
-    if (fMaxReads > 0) and (lReads >= fMaxReads) then
-      Break;
-  end;
-  fReads := lReads;
 end;
 
 function DeliveryToText(aDelivery: TmaxDelivery): string;
@@ -118,6 +82,8 @@ begin
   Writeln('  --delivery=<mode>       posting|main|async|background (default: async)');
   Writeln('  --metrics-readers=<n>   concurrent stats-reader threads (default: 0)');
   Writeln('  --metrics-reads=<n>     max reads per reader, 0=unbounded until run ends (default: 0)');
+  Writeln('  --queue-max-depth=<n>   typed-topic queue depth for benchmark topic, 0=unbounded (default: 64)');
+  Writeln('  --max-inflight=<n>      max in-flight deliveries while posting, 0=unbounded (default: 256)');
   Writeln('  --csv=<path>            write summary CSV to file path');
 end;
 
@@ -133,6 +99,8 @@ begin
   aCfg.CsvPath := '';
   aCfg.MetricsReaders := 0;
   aCfg.MetricsReadsPerReader := 0;
+  aCfg.QueueMaxDepth := 64;
+  aCfg.MaxInFlight := 256;
 
   for i := 1 to ParamCount do
   begin
@@ -154,6 +122,10 @@ begin
       aCfg.MetricsReaders := StrToIntDef(Copy(lArg, Length('--metrics-readers=') + 1, MaxInt), aCfg.MetricsReaders)
     else if StartsText('--metrics-reads=', lArg) then
       aCfg.MetricsReadsPerReader := StrToInt64Def(Copy(lArg, Length('--metrics-reads=') + 1, MaxInt), aCfg.MetricsReadsPerReader)
+    else if StartsText('--queue-max-depth=', lArg) then
+      aCfg.QueueMaxDepth := StrToIntDef(Copy(lArg, Length('--queue-max-depth=') + 1, MaxInt), aCfg.QueueMaxDepth)
+    else if StartsText('--max-inflight=', lArg) then
+      aCfg.MaxInFlight := StrToIntDef(Copy(lArg, Length('--max-inflight=') + 1, MaxInt), aCfg.MaxInFlight)
     else if StartsText('--csv=', lArg) then
       aCfg.CsvPath := Copy(lArg, Length('--csv=') + 1, MaxInt)
     else
@@ -170,6 +142,10 @@ begin
     raise Exception.Create('metrics-readers must be >= 0');
   if aCfg.MetricsReadsPerReader < 0 then
     raise Exception.Create('metrics-reads must be >= 0');
+  if aCfg.QueueMaxDepth < 0 then
+    raise Exception.Create('queue-max-depth must be >= 0');
+  if aCfg.MaxInFlight < 0 then
+    raise Exception.Create('max-inflight must be >= 0');
 end;
 
 function WaitForSignal(const aEvent: TEvent; aTimeoutMs: Cardinal): Boolean;
@@ -257,7 +233,7 @@ var
   lHandler: TmaxProcOf<Integer>;
   lDone: TEvent;
   lStopReaders: TEvent;
-  lReaders: array of TMetricsReaderThread;
+  lReaderTasks: TArray<IFuture<Int64>>;
   lSubs: array of ImaxSubscription;
   lRemaining: Integer;
   lRemainingLock: TCriticalSection;
@@ -267,6 +243,11 @@ var
   lElapsedUs: Int64;
   lDelivered: Int64;
   lMetricReads: Int64;
+  lPolicy: TmaxQueuePolicy;
+  lPhase: string;
+  lPostedDeliveries: Int64;
+  lInFlight: Int64;
+  lTotalExpected: Int64;
 begin
   SetLength(aSamples, aCfg.Runs);
   for lRun := 0 to aCfg.Runs - 1 do
@@ -277,65 +258,125 @@ begin
     lStopReaders := TEvent.Create(nil, True, False, '');
     lRemainingLock := TCriticalSection.Create;
     lMetricReads := 0;
+    lPhase := 'setup';
     try
-      lRemaining := aCfg.Events * aCfg.Consumers;
-      lHandler :=
-        procedure(const aValue: Integer)
+      try
+        if aCfg.QueueMaxDepth > 0 then
         begin
-          lRemainingLock.Enter;
-          try
-            Dec(lRemaining);
-            if lRemaining = 0 then
-              lDone.SetEvent;
-          finally
-            lRemainingLock.Leave;
+          lPolicy.MaxDepth := aCfg.QueueMaxDepth;
+          lPolicy.Overflow := TmaxOverflow.Block;
+          lPolicy.DeadlineUs := 0;
+          lBusObj.SetPolicyFor<Integer>(lPolicy);
+        end;
+
+        lRemaining := aCfg.Events * aCfg.Consumers;
+        lTotalExpected := Int64(aCfg.Events) * aCfg.Consumers;
+        lPostedDeliveries := 0;
+        lHandler :=
+          procedure(const aValue: Integer)
+          begin
+            lRemainingLock.Enter;
+            try
+              Dec(lRemaining);
+              if lRemaining = 0 then
+                lDone.SetEvent;
+            finally
+              lRemainingLock.Leave;
+            end;
+          end;
+
+        SetLength(lSubs, aCfg.Consumers);
+        lPhase := 'subscribe';
+        for lI := 1 to aCfg.Consumers do
+          lSubs[lI - 1] := lBusObj.Subscribe<Integer>(lHandler, aCfg.Delivery);
+
+        if aCfg.MetricsReaders > 0 then
+        begin
+          lPhase := 'create-readers';
+          SetLength(lReaderTasks, aCfg.MetricsReaders);
+          for lI := 0 to High(lReaderTasks) do
+          begin
+            try
+              lReaderTasks[lI] := TTask.Future<Int64>(
+                function: Int64
+                var
+                  lReads: Int64;
+                begin
+                  lReads := 0;
+                  while lStopReaders.WaitFor(0) <> wrSignaled do
+                  begin
+                    lBusObj.GetStatsFor<Integer>;
+                    Inc(lReads);
+                    if (aCfg.MetricsReadsPerReader > 0) and (lReads >= aCfg.MetricsReadsPerReader) then
+                      Break;
+                  end;
+                  Result := lReads;
+                end);
+            except
+              // Reader-load submission is best-effort for benchmarking; do not fail the full run.
+              lReaderTasks[lI] := nil;
+            end;
           end;
         end;
 
-      SetLength(lSubs, aCfg.Consumers);
-      for lI := 1 to aCfg.Consumers do
-        lSubs[lI - 1] := lBusObj.Subscribe<Integer>(lHandler, aCfg.Delivery);
+        lPhase := 'post';
+        lWatch := TStopwatch.StartNew;
+        for lI := 1 to aCfg.Events do
+        begin
+          if (aCfg.MaxInFlight > 0) and (aCfg.Delivery <> TmaxDelivery.Posting) then
+          begin
+            while True do
+            begin
+              lRemainingLock.Enter;
+              try
+                lInFlight := lPostedDeliveries - (lTotalExpected - lRemaining);
+              finally
+                lRemainingLock.Leave;
+              end;
+              if lInFlight < aCfg.MaxInFlight then
+                Break;
+              CheckSynchronize(0);
+              Sleep(1);
+            end;
+          end;
+          lBusObj.Post<Integer>(lI);
+          Inc(lPostedDeliveries, aCfg.Consumers);
+        end;
 
-      if aCfg.MetricsReaders > 0 then
-      begin
-        SetLength(lReaders, aCfg.MetricsReaders);
-        for lI := 0 to High(lReaders) do
-          lReaders[lI] := TMetricsReaderThread.Create(lBusObj, lStopReaders, aCfg.MetricsReadsPerReader);
+        lPhase := 'wait-drain';
+        if (lRemaining > 0) and (not WaitForSignal(lDone, 60000)) then
+          raise Exception.CreateFmt('%s failed to drain queue on run %d', [aEntry.Name, lRun + 1]);
+
+        lWatch.Stop;
+        lElapsedUs := ElapsedUs(lWatch);
+        lDelivered := lTotalExpected;
+
+        lStopReaders.SetEvent;
+        for lI := 0 to High(lReaderTasks) do
+        begin
+          if lReaderTasks[lI] <> nil then
+            Inc(lMetricReads, lReaderTasks[lI].Value);
+        end;
+
+        aSamples[lRun].ElapsedUs := lElapsedUs;
+        aSamples[lRun].ThroughputPerSec := (lDelivered * 1000000) div lElapsedUs;
+        aSamples[lRun].MetricReads := lMetricReads;
+        if lElapsedUs > 0 then
+          aSamples[lRun].MetricReadsPerSec := (lMetricReads * 1000000) div lElapsedUs
+        else
+          aSamples[lRun].MetricReadsPerSec := 0;
+      except
+        on E: Exception do
+          raise Exception.CreateFmt('%s run %d phase=%s: %s: %s',
+            [aEntry.Name, lRun + 1, lPhase, E.ClassName, E.Message]);
       end;
-
-      lWatch := TStopwatch.StartNew;
-      for lI := 1 to aCfg.Events do
-        lBusObj.Post<Integer>(lI);
-
-      if (lRemaining > 0) and (not WaitForSignal(lDone, 60000)) then
-        raise Exception.CreateFmt('%s failed to drain queue on run %d', [aEntry.Name, lRun + 1]);
-
-      lWatch.Stop;
-      lElapsedUs := ElapsedUs(lWatch);
-      lDelivered := Int64(aCfg.Events) * aCfg.Consumers;
-
-      lStopReaders.SetEvent;
-      for lI := 0 to High(lReaders) do
-      begin
-        lReaders[lI].WaitFor;
-        Inc(lMetricReads, lReaders[lI].Reads);
-        lReaders[lI].Free;
-      end;
-
-      aSamples[lRun].ElapsedUs := lElapsedUs;
-      aSamples[lRun].ThroughputPerSec := (lDelivered * 1000000) div lElapsedUs;
-      aSamples[lRun].MetricReads := lMetricReads;
-      if lElapsedUs > 0 then
-        aSamples[lRun].MetricReadsPerSec := (lMetricReads * 1000000) div lElapsedUs
-      else
-        aSamples[lRun].MetricReadsPerSec := 0;
     finally
       lStopReaders.Free;
       lRemainingLock.Free;
       lDone.Free;
       lScheduler := nil;
       SetLength(lSubs, 0);
-      SetLength(lReaders, 0);
+      SetLength(lReaderTasks, 0);
     end;
   end;
 end;
@@ -412,6 +453,7 @@ end;
 procedure Run;
 var
   lCfg: TBenchmarkConfig;
+  lRunCfg: TBenchmarkConfig;
   lEntries: array of TSchedulerEntry;
   lIdx: Integer;
   lSamples: TArray<TRunSample>;
@@ -443,12 +485,21 @@ begin
     Writeln('Delivery: ', DeliveryToText(lCfg.Delivery));
     Writeln('Consumers: ', lCfg.Consumers, '  Events: ', lCfg.Events, '  Runs: ', lCfg.Runs);
     Writeln('Metrics readers: ', lCfg.MetricsReaders, '  Max reads/reader: ', lCfg.MetricsReadsPerReader);
+    Writeln('Queue max depth: ', lCfg.QueueMaxDepth);
+    Writeln('Max in-flight deliveries: ', lCfg.MaxInFlight);
     Writeln;
 
     for lIdx := Low(lEntries) to High(lEntries) do
     begin
+      lRunCfg := lCfg;
+      if SameText(lEntries[lIdx].Name, 'maxAsync') and (lRunCfg.Delivery <> TmaxDelivery.Posting) and
+        (lRunCfg.Runs > 1) then
+      begin
+        Writeln('Note: maxAsync async profile is capped to 1 run in-process to avoid cumulative memory pressure.');
+        lRunCfg.Runs := 1;
+      end;
       try
-        BenchmarkScheduler(lEntries[lIdx], lCfg, lSamples);
+        BenchmarkScheduler(lEntries[lIdx], lRunCfg, lSamples);
         SummarizeSamples(lSamples, lP50Us, lP95Us, lP99Us, lAvgUs, lBestUs, lWorstUs,
           lAvgThroughput, lTotalMetricReads, lAvgMetricReadsPerSec);
 
@@ -462,7 +513,7 @@ begin
         Writeln;
 
         if lCsv <> nil then
-          AppendCsvSummary(lCsv, lEntries[lIdx], lCfg, lP50Us, lP95Us, lP99Us, lAvgUs, lBestUs,
+          AppendCsvSummary(lCsv, lEntries[lIdx], lRunCfg, lP50Us, lP95Us, lP99Us, lAvgUs, lBestUs,
             lWorstUs, lAvgThroughput, lTotalMetricReads, lAvgMetricReadsPerSec);
       except
         on E: Exception do
@@ -471,7 +522,7 @@ begin
           Writeln('FAILED: ', E.ClassName, ': ', E.Message);
           Writeln;
           if lCsv <> nil then
-            AppendCsvFailure(lCsv, lEntries[lIdx], lCfg, E.ClassName + ': ' + E.Message);
+            AppendCsvFailure(lCsv, lEntries[lIdx], lRunCfg, E.ClassName + ': ' + E.Message);
         end;
       end;
     end;

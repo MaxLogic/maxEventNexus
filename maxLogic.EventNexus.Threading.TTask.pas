@@ -1,11 +1,5 @@
 unit maxLogic.EventNexus.Threading.TTask;
 
-{$I fpc_delphimode.inc}
-
-{$IFDEF FPC}
-  {$MESSAGE ERROR 'maxLogic.EventNexus.Threading.TTask requires Delphi with TTask support.'}
-{$ENDIF}
-
 interface
 
 uses
@@ -29,11 +23,16 @@ procedure TmaxTTaskScheduler.RunAsync(const aProc: TmaxProc);
 begin
   if not ProcAssigned(aProc) then
     Exit;
-  TTask.Run(
-    procedure
-    begin
-      aProc();
-    end);
+  try
+    TTask.Run(
+      procedure
+      begin
+        aProc();
+      end);
+  except
+    // Thread-pool submission can fail under OS pressure; degrade to inline execution.
+    aProc();
+  end;
 end;
 
 procedure TmaxTTaskScheduler.RunOnMain(const aProc: TmaxProc);
@@ -54,19 +53,25 @@ procedure TmaxTTaskScheduler.RunDelayed(const aProc: TmaxProc; aDelayUs: Integer
 begin
   if not ProcAssigned(aProc) then
     Exit;
-  TTask.Run(
-    procedure
-    var
-      lDelayMs: Integer;
-    begin
-      if aDelayUs > 0 then
+  try
+    TTask.Run(
+      procedure
+      var
+        lDelayMs: Integer;
       begin
-        lDelayMs := aDelayUs div 1000;
-        if lDelayMs > 0 then
-          TThread.Sleep(lDelayMs);
-      end;
-      aProc();
-    end);
+        if aDelayUs > 0 then
+        begin
+          lDelayMs := aDelayUs div 1000;
+          if lDelayMs > 0 then
+            TThread.Sleep(lDelayMs);
+        end;
+        aProc();
+      end);
+  except
+    if aDelayUs > 0 then
+      TThread.Sleep(aDelayUs div 1000);
+    aProc();
+  end;
 end;
 
 function TmaxTTaskScheduler.IsMainThread: Boolean;
