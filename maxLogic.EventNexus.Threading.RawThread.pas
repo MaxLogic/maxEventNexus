@@ -1,19 +1,10 @@
-unit {$IFDEF max_FPC}maxLogic_EventNexus_Threading_RawThread{$ELSE}maxLogic.EventNexus.Threading.RawThread{$ENDIF};
-
-{$I fpc_delphimode.inc}
-
-{$IFDEF FPC}
-  {$DEFINE max_FPC}
-{$ELSE}
-  {$DEFINE max_DELPHI}
-{$ENDIF}
+unit maxLogic.EventNexus.Threading.RawThread;
 
 interface
 
 uses
-  Classes, SysUtils,
-  {$IFDEF max_DELPHI} System.Threading, {$ENDIF}
-  {$IFDEF max_FPC} maxLogic_EventNexus_Threading_Adapter {$ELSE} maxLogic.EventNexus.Threading.Adapter {$ENDIF};
+  Classes, SysUtils, System.Threading,
+  maxLogic.EventNexus.Threading.Adapter;
 
 type
   TmaxRawThreadScheduler = class(TInterfacedObject, IEventNexusScheduler)
@@ -98,17 +89,11 @@ begin
 end;
 
 class procedure TmaxProcThread.Start(const aProc: TmaxProc; aDelayUs: Integer);
-{$IFDEF max_DELPHI}
 var
   lDelayMs: Integer;
-{$ELSE}
-var
-  lThread: TmaxProcThread;
-{$ENDIF}
 begin
   if not ProcAssigned(aProc) then
     Exit;
-  {$IFDEF max_DELPHI}
   if aDelayUs > 0 then
     lDelayMs := (aDelayUs + 999) div 1000
   else
@@ -120,10 +105,6 @@ begin
         TThread.Sleep(lDelayMs);
       aProc();
     end);
-  {$ELSE}
-  lThread := TmaxProcThread.Create(aProc, aDelayUs);
-  TThread(lThread).Start;
-  {$ENDIF}
 end;
 
 { TmaxRawThreadScheduler }

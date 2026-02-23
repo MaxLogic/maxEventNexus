@@ -1,26 +1,13 @@
-unit {$IFDEF max_FPC}maxLogic_EventNexus_Threading_Adapter{$ELSE}maxLogic.EventNexus.Threading.Adapter{$ENDIF};
-
-{$I fpc_delphimode.inc}
-
-{$IFDEF FPC}
-  {$DEFINE max_FPC}
-{$ELSE}
-  {$DEFINE max_DELPHI}
-{$ENDIF}
+unit maxLogic.EventNexus.Threading.Adapter;
 
 interface
 
 uses
-  SysUtils{$IFDEF max_FPC}, maxLogic.fpc.compatibility{$ENDIF};
+  SysUtils;
 
 type
-{$IFDEF max_FPC}
-  TmaxProc = TProc;
-  TmaxProcOf<T> = TProc1<T>;
-{$ELSE}
   TmaxProc = reference to procedure;
   TmaxProcOf<T> = reference to procedure(const aValue: T);
-{$ENDIF}
 
   IEventNexusScheduler = interface
     ['{9FD531B7-4A0E-4E17-96F1-9134FDEBA02F}']
@@ -35,17 +22,8 @@ function ProcAssigned(const aProc: TmaxProc): Boolean; inline;
 implementation
 
 function ProcAssigned(const aProc: TmaxProc): Boolean;
-{$IFDEF max_FPC}
-var
-  lMethod: TMethod;
-{$ENDIF}
 begin
-{$IFDEF max_FPC}
-  lMethod := TMethod(aProc);
-  Result := lMethod.Code <> nil;
-{$ELSE}
   Result := Assigned(aProc);
-{$ENDIF}
 end;
 
 end.
