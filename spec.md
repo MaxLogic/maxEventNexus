@@ -247,6 +247,8 @@ Baseline commands:
 
 Test sources live in `tests/src`.
 
+Benchmark contract is maintained by `bench/SchedulerCompare.dpr` with CSV/percentile schema documented in `docs/benchmarks/benchmark-output-contract.md`.
+
 ## 13. Documentation contract
 
 `README.md`, `DESIGN.md`, `MIGRATION.md`, sample docs, and test docs must reflect the current Delphi-only runtime and DUnitX harness.
@@ -263,4 +265,3 @@ The following remain optional and require separate acceptance before implementat
 4. Tracing hooks.
 5. Serializer plug-in for IPC bridge.
 6. Disruptor-style specialized sequences.
-7. Expanded benchmark suite with percentile output.

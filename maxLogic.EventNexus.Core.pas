@@ -77,6 +77,18 @@ type
     CurrentQueueDepth: UInt32;
   end;
 
+  // Keep hot counters on separate cache-line-sized slots to reduce write contention.
+  TmaxPaddedCounter64 = record
+    Value: Int64;
+    Pad1: Int64;
+    Pad2: Int64;
+    Pad3: Int64;
+    Pad4: Int64;
+    Pad5: Int64;
+    Pad6: Int64;
+    Pad7: Int64;
+  end;
+
   ImaxBusMetrics = interface
     ['{2C4B91E3-1C0A-4B5C-B8B0-0C1A5C3E6D10}']
     function GetStatsNamed(const aName: string): TmaxTopicStats;
@@ -155,10 +167,10 @@ type
     fSticky: boolean;
     fPolicy: TmaxQueuePolicy;
     fPolicyExplicit: boolean;
-    fPostsTotal: Int64;
-    fDeliveredTotal: Int64;
-    fDroppedTotal: Int64;
-    fExceptionsTotal: Int64;
+    fPostsTotal: TmaxPaddedCounter64;
+    fDeliveredTotal: TmaxPaddedCounter64;
+    fDroppedTotal: TmaxPaddedCounter64;
+    fExceptionsTotal: TmaxPaddedCounter64;
     fMaxQueueDepth: UInt32;
     fCurrentQueueDepth: UInt32;
     fMetricName: TmaxString;
@@ -321,8 +333,8 @@ type
 	    fNamedLock: TmaxMonitorObject;
 	    fNamedTypedLock: TmaxMonitorObject;
 	    fGuidLock: TmaxMonitorObject;
-	    fConfigLock: TmaxMonitorObject;
-	    fMetricsLock: TmaxMonitorObject;
+	    fConfigLock: TLightweightMREW;
+	    fMetricsLock: TLightweightMREW;
 	    fMetricsIndex: ImaxMetricsIndex;
 	    fTyped: TmaxTypeTopicDict;
 	    fNamed: TmaxNameTopicDict;
@@ -865,10 +877,10 @@ begin
   fMetricName := '';
 	fLastMetricSample := 0;
 	fWarnedHighWater := False;
-	fPostsTotal := 0;
-	fDeliveredTotal := 0;
-	fDroppedTotal := 0;
-	fExceptionsTotal := 0;
+	fPostsTotal.Value := 0;
+	fDeliveredTotal.Value := 0;
+	fDroppedTotal.Value := 0;
+	fExceptionsTotal.Value := 0;
 	fMaxQueueDepth := 0;
 	fCurrentQueueDepth := 0;
 end;
@@ -961,35 +973,35 @@ end;
 
 procedure TmaxTopicBase.AddPost;
 begin
-	TInterlocked.Add(fPostsTotal, 1);
+	TInterlocked.Add(fPostsTotal.Value, 1);
 	TouchMetrics;
 end;
 
 procedure TmaxTopicBase.AddDelivered(aCount: integer);
 begin
 	if aCount > 0 then
-		TInterlocked.Add(fDeliveredTotal, aCount);
+		TInterlocked.Add(fDeliveredTotal.Value, aCount);
 	TouchMetrics;
 end;
 
 procedure TmaxTopicBase.AddDropped;
 begin
-	TInterlocked.Add(fDroppedTotal, 1);
+	TInterlocked.Add(fDroppedTotal.Value, 1);
 	TouchMetrics;
 end;
 
 procedure TmaxTopicBase.AddException;
 begin
-	TInterlocked.Add(fExceptionsTotal, 1);
+	TInterlocked.Add(fExceptionsTotal.Value, 1);
 	TouchMetrics;
 end;
 
 function TmaxTopicBase.GetStats: TmaxTopicStats;
 begin
-	Result.PostsTotal := UInt64(TInterlocked.Read(fPostsTotal));
-	Result.DeliveredTotal := UInt64(TInterlocked.Read(fDeliveredTotal));
-	Result.DroppedTotal := UInt64(TInterlocked.Read(fDroppedTotal));
-	Result.ExceptionsTotal := UInt64(TInterlocked.Read(fExceptionsTotal));
+	Result.PostsTotal := UInt64(TInterlocked.Read(fPostsTotal.Value));
+	Result.DeliveredTotal := UInt64(TInterlocked.Read(fDeliveredTotal.Value));
+	Result.DroppedTotal := UInt64(TInterlocked.Read(fDroppedTotal.Value));
+	Result.ExceptionsTotal := UInt64(TInterlocked.Read(fExceptionsTotal.Value));
 	Result.MaxQueueDepth := fMaxQueueDepth;
 	Result.CurrentQueueDepth := fCurrentQueueDepth;
 end;
@@ -1008,10 +1020,10 @@ begin
 		fMetricName := '';
 		fLastMetricSample := 0;
 		fWarnedHighWater := False;
-		fPostsTotal := 0;
-		fDeliveredTotal := 0;
-		fDroppedTotal := 0;
-		fExceptionsTotal := 0;
+		fPostsTotal.Value := 0;
+		fDeliveredTotal.Value := 0;
+		fDroppedTotal.Value := 0;
+		fExceptionsTotal.Value := 0;
 		fMaxQueueDepth := 0;
 		fCurrentQueueDepth := 0;
 		TMonitor.PulseAll(Self);
@@ -2611,11 +2623,11 @@ procedure TmaxBus.PublishMetricTypedTopic(const aKey: PTypeInfo; const aTopic: T
 begin
   if (aKey = nil) or (aTopic = nil) then
     Exit;
-  TMonitor.Enter(fMetricsLock);
+  fMetricsLock.BeginWrite;
   try
     fMetricsIndex := fMetricsIndex.AddTyped(aKey, aTopic);
   finally
-    TMonitor.Exit(fMetricsLock);
+    fMetricsLock.EndWrite;
   end;
 end;
 
@@ -2623,11 +2635,11 @@ procedure TmaxBus.PublishMetricNamedTopic(const aNameKey: TmaxString; const aTop
 begin
   if (aNameKey = '') or (aTopic = nil) then
     Exit;
-  TMonitor.Enter(fMetricsLock);
+  fMetricsLock.BeginWrite;
   try
     fMetricsIndex := fMetricsIndex.AddNamed(aNameKey, aTopic);
   finally
-    TMonitor.Exit(fMetricsLock);
+    fMetricsLock.EndWrite;
   end;
 end;
 
@@ -2635,11 +2647,11 @@ procedure TmaxBus.PublishMetricNamedTypedTopic(const aNameKey: TmaxString; const
 begin
   if (aNameKey = '') or (aKey = nil) or (aTopic = nil) then
     Exit;
-  TMonitor.Enter(fMetricsLock);
+  fMetricsLock.BeginWrite;
   try
     fMetricsIndex := fMetricsIndex.AddNamedTyped(aNameKey, aKey, aTopic);
   finally
-    TMonitor.Exit(fMetricsLock);
+    fMetricsLock.EndWrite;
   end;
 end;
 
@@ -2647,11 +2659,11 @@ procedure TmaxBus.PublishMetricGuidTopic(const aKey: TGuid; const aTopic: TmaxTo
 begin
   if (aTopic = nil) or IsEqualGUID(aKey, cGuidNull) then
     Exit;
-  TMonitor.Enter(fMetricsLock);
+  fMetricsLock.BeginWrite;
   try
     fMetricsIndex := fMetricsIndex.AddGuid(aKey, aTopic);
   finally
-    TMonitor.Exit(fMetricsLock);
+    fMetricsLock.EndWrite;
   end;
 end;
 
@@ -2665,8 +2677,6 @@ begin
   fNamedLock := TmaxMonitorObject.Create;
   fNamedTypedLock := TmaxMonitorObject.Create;
   fGuidLock := TmaxMonitorObject.Create;
-  fConfigLock := TmaxMonitorObject.Create;
-  fMetricsLock := TmaxMonitorObject.Create;
   fMetricsIndex := TmaxMetricsIndex.CreateEmpty;
   fTyped := TmaxTypeTopicDict.Create([doOwnsValues]);
   fNamed := TmaxNameTopicDict.Create([doOwnsValues], TIStringComparer.Ordinal);
@@ -2684,11 +2694,11 @@ end;
 
 procedure TmaxBus.SetAsyncScheduler(const aAsync: IEventNexusScheduler);
 begin
-  TMonitor.Enter(fConfigLock);
+  fConfigLock.BeginWrite;
   try
     fAsync := aAsync;
   finally
-    TMonitor.Exit(fConfigLock);
+    fConfigLock.EndWrite;
   end;
 end;
 
@@ -2706,8 +2716,6 @@ begin
   fPresetGuids.Free;
   fAutoSubs.Free;
   fAutoSubsLock.Free;
-  fMetricsLock.Free;
-  fConfigLock.Free;
   fGuidLock.Free;
   fNamedTypedLock.Free;
   fNamedLock.Free;
@@ -2748,14 +2756,14 @@ var
   lObj: TmaxTopicBase;
   lPolicy: TmaxQueuePolicy;
 begin
-  TMonitor.Enter(fConfigLock);
+  fConfigLock.BeginWrite;
   try
     if aPreset = TmaxQueuePreset.Unspecified then
       fPresetTypes.Remove(aKey)
     else
       fPresetTypes.AddOrSetValue(aKey, aPreset);
   finally
-    TMonitor.Exit(fConfigLock);
+    fConfigLock.EndWrite;
   end;
 
   lPolicy := PolicyForPreset(aPreset);
@@ -2775,14 +2783,14 @@ var
   lPolicy: TmaxQueuePolicy;
   lInner: TPair<PTypeInfo, TmaxTopicBase>;
 begin
-  TMonitor.Enter(fConfigLock);
+  fConfigLock.BeginWrite;
   try
     if aPreset = TmaxQueuePreset.Unspecified then
       fPresetNames.Remove(aNameKey)
     else
       fPresetNames.AddOrSetValue(aNameKey, aPreset);
   finally
-    TMonitor.Exit(fConfigLock);
+    fConfigLock.EndWrite;
   end;
 
   lPolicy := PolicyForPreset(aPreset);
@@ -2810,14 +2818,14 @@ var
   lObj: TmaxTopicBase;
   lPolicy: TmaxQueuePolicy;
 begin
-  TMonitor.Enter(fConfigLock);
+  fConfigLock.BeginWrite;
   try
     if aPreset = TmaxQueuePreset.Unspecified then
       fPresetGuids.Remove(aGuid)
     else
       fPresetGuids.AddOrSetValue(aGuid, aPreset);
   finally
-    TMonitor.Exit(fConfigLock);
+    fConfigLock.EndWrite;
   end;
 
   lPolicy := PolicyForPreset(aPreset);
@@ -2989,13 +2997,13 @@ var
 begin
   lKey := TypeInfo(t);
   lMetricName := TypeMetricName(lKey);
-  TMonitor.Enter(fConfigLock);
+  fConfigLock.BeginWrite;
   try
     lSticky := fStickyTypes.ContainsKey(lKey);
     lPreset := TmaxQueuePreset.Unspecified;
     fPresetTypes.TryGetValue(lKey, lPreset);
   finally
-    TMonitor.Exit(fConfigLock);
+    fConfigLock.EndWrite;
   end;
 
   lCreated := False;
@@ -3094,13 +3102,13 @@ begin
     aHandler(v);
   end;
 
-  TMonitor.Enter(fConfigLock);
+  fConfigLock.BeginWrite;
   try
     lSticky := fStickyTypes.ContainsKey(lKey);
     lPreset := TmaxQueuePreset.Unspecified;
     fPresetTypes.TryGetValue(lKey, lPreset);
   finally
-    TMonitor.Exit(fConfigLock);
+    fConfigLock.EndWrite;
   end;
 
   lCreated := False;
@@ -3206,13 +3214,13 @@ begin
 
   if lTopic = nil then
   begin
-    TMonitor.Enter(fConfigLock);
+    fConfigLock.BeginWrite;
     try
       lSticky := fStickyTypes.ContainsKey(lKey);
       lPreset := TmaxQueuePreset.Unspecified;
       fPresetTypes.TryGetValue(lKey, lPreset);
     finally
-      TMonitor.Exit(fConfigLock);
+      fConfigLock.EndWrite;
     end;
     if not lSticky then
       exit;
@@ -3378,13 +3386,13 @@ begin
 
   if lTopic = nil then
   begin
-    TMonitor.Enter(fConfigLock);
+    fConfigLock.BeginWrite;
     try
       lSticky := fStickyTypes.ContainsKey(lKey);
       lPreset := TmaxQueuePreset.Unspecified;
       fPresetTypes.TryGetValue(lKey, lPreset);
     finally
-      TMonitor.Exit(fConfigLock);
+      fConfigLock.EndWrite;
     end;
     if not lSticky then
       exit;
@@ -3535,13 +3543,13 @@ var
 begin
   lNameKey := aName;
   lMetric := NamedMetricName(lNameKey);
-  TMonitor.Enter(fConfigLock);
+  fConfigLock.BeginWrite;
   try
     lSticky := fStickyNames.ContainsKey(lNameKey);
     lPreset := TmaxQueuePreset.Unspecified;
     fPresetNames.TryGetValue(lNameKey, lPreset);
   finally
-    TMonitor.Exit(fConfigLock);
+    fConfigLock.EndWrite;
   end;
 
   lCreated := False;
@@ -3640,13 +3648,13 @@ begin
 
   if lTopic = nil then
   begin
-    TMonitor.Enter(fConfigLock);
+    fConfigLock.BeginWrite;
     try
       lSticky := fStickyNames.ContainsKey(lNameKey);
       lPreset := TmaxQueuePreset.Unspecified;
       fPresetNames.TryGetValue(lNameKey, lPreset);
     finally
-      TMonitor.Exit(fConfigLock);
+      fConfigLock.EndWrite;
     end;
     if not lSticky then
       exit;
@@ -3787,13 +3795,13 @@ begin
 
   if lTopic = nil then
   begin
-    TMonitor.Enter(fConfigLock);
+    fConfigLock.BeginWrite;
     try
       lSticky := fStickyNames.ContainsKey(lNameKey);
       lPreset := TmaxQueuePreset.Unspecified;
       fPresetNames.TryGetValue(lNameKey, lPreset);
     finally
-      TMonitor.Exit(fConfigLock);
+      fConfigLock.EndWrite;
     end;
     if not lSticky then
       exit;
@@ -3930,13 +3938,13 @@ var
   lKey := TypeInfo(t);
   lNameKey := aName;
   lMetric := NamedTypeMetricName(lNameKey, lKey);
-	  TMonitor.Enter(fConfigLock);
+	  fConfigLock.BeginWrite;
 	  try
 	    lSticky := fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey);
 	    lPreset := TmaxQueuePreset.Unspecified;
 	    fPresetNames.TryGetValue(lNameKey, lPreset);
 	  finally
-	    TMonitor.Exit(fConfigLock);
+	    fConfigLock.EndWrite;
 	  end;
 
   lHasBasePolicy := False;
@@ -4067,13 +4075,13 @@ var
     aHandler(v);
   end;
 
-	  TMonitor.Enter(fConfigLock);
+	  fConfigLock.BeginWrite;
 	  try
 	    lSticky := fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey);
 	    lPreset := TmaxQueuePreset.Unspecified;
 	    fPresetNames.TryGetValue(lNameKey, lPreset);
 	  finally
-	    TMonitor.Exit(fConfigLock);
+	    fConfigLock.EndWrite;
 	  end;
 
   lHasBasePolicy := False;
@@ -4193,13 +4201,13 @@ begin
   lKey := TypeInfo(t);
   lNameKey := aName;
   lMetric := NamedTypeMetricName(lNameKey, lKey);
-  TMonitor.Enter(fConfigLock);
+  fConfigLock.BeginWrite;
   try
     lSticky := fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey);
     lPreset := TmaxQueuePreset.Unspecified;
     fPresetNames.TryGetValue(lNameKey, lPreset);
   finally
-    TMonitor.Exit(fConfigLock);
+    fConfigLock.EndWrite;
   end;
 
   lHasBasePolicy := False;
@@ -4380,13 +4388,13 @@ begin
   lKey := TypeInfo(t);
   lNameKey := aName;
   lMetric := NamedTypeMetricName(lNameKey, lKey);
-  TMonitor.Enter(fConfigLock);
+  fConfigLock.BeginWrite;
   try
     lSticky := fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey);
     lPreset := TmaxQueuePreset.Unspecified;
     fPresetNames.TryGetValue(lNameKey, lPreset);
   finally
-    TMonitor.Exit(fConfigLock);
+    fConfigLock.EndWrite;
   end;
 
   lHasBasePolicy := False;
@@ -4566,13 +4574,13 @@ begin
   lTypeKey := TypeInfo(t);
   lKey := GetTypeData(lTypeKey)^.Guid;
   lMetric := GuidMetricName(lKey);
-  TMonitor.Enter(fConfigLock);
+  fConfigLock.BeginWrite;
   try
     lSticky := fStickyTypes.ContainsKey(lTypeKey);
     lPreset := TmaxQueuePreset.Unspecified;
     fPresetGuids.TryGetValue(lKey, lPreset);
   finally
-    TMonitor.Exit(fConfigLock);
+    fConfigLock.EndWrite;
   end;
 
   lCreated := False;
@@ -4673,13 +4681,13 @@ begin
     aHandler(v);
   end;
 
-  TMonitor.Enter(fConfigLock);
+  fConfigLock.BeginWrite;
   try
     lSticky := fStickyTypes.ContainsKey(lTypeKey);
     lPreset := TmaxQueuePreset.Unspecified;
     fPresetGuids.TryGetValue(lKey, lPreset);
   finally
-    TMonitor.Exit(fConfigLock);
+    fConfigLock.EndWrite;
   end;
 
   lCreated := False;
@@ -4787,13 +4795,13 @@ begin
 
   if lTopic = nil then
   begin
-    TMonitor.Enter(fConfigLock);
+    fConfigLock.BeginWrite;
     try
       lSticky := fStickyTypes.ContainsKey(lTypeKey);
       lPreset := TmaxQueuePreset.Unspecified;
       fPresetGuids.TryGetValue(lKey, lPreset);
     finally
-      TMonitor.Exit(fConfigLock);
+      fConfigLock.EndWrite;
     end;
     if not lSticky then
       exit;
@@ -4960,13 +4968,13 @@ begin
 
   if lTopic = nil then
   begin
-    TMonitor.Enter(fConfigLock);
+    fConfigLock.BeginWrite;
     try
       lSticky := fStickyTypes.ContainsKey(lTypeKey);
       lPreset := TmaxQueuePreset.Unspecified;
       fPresetGuids.TryGetValue(lKey, lPreset);
     finally
-      TMonitor.Exit(fConfigLock);
+      fConfigLock.EndWrite;
     end;
     if not lSticky then
       exit;
@@ -5112,14 +5120,14 @@ var
 begin
   lKey := TypeInfo(t);
   lMetric := TypeMetricName(lKey);
-  TMonitor.Enter(fConfigLock);
+  fConfigLock.BeginWrite;
   try
     if aEnable then
       fStickyTypes.AddOrSetValue(lKey, True)
     else
       fStickyTypes.Remove(lKey);
   finally
-    TMonitor.Exit(fConfigLock);
+    fConfigLock.EndWrite;
   end;
 
   TMonitor.Enter(fTypedLock);
@@ -5168,14 +5176,14 @@ var
 begin
   lNameKey := aName;
   lMetric := NamedMetricName(lNameKey);
-  TMonitor.Enter(fConfigLock);
+  fConfigLock.BeginWrite;
   try
     if aEnable then
       fStickyNames.AddOrSetValue(lNameKey, True)
     else
       fStickyNames.Remove(lNameKey);
   finally
-    TMonitor.Exit(fConfigLock);
+    fConfigLock.EndWrite;
   end;
 
   TMonitor.Enter(fNamedLock);
@@ -5213,13 +5221,13 @@ var
 begin
   lKey := TypeInfo(t);
   lMetric := TypeMetricName(lKey);
-  TMonitor.Enter(fConfigLock);
+  fConfigLock.BeginWrite;
   try
     lSticky := fStickyTypes.ContainsKey(lKey);
     lPreset := TmaxQueuePreset.Unspecified;
     fPresetTypes.TryGetValue(lKey, lPreset);
   finally
-    TMonitor.Exit(fConfigLock);
+    fConfigLock.EndWrite;
   end;
 
   TMonitor.Enter(fTypedLock);
@@ -5261,13 +5269,13 @@ begin
   lKey := TypeInfo(t);
   lNameKey := aName;
   lMetric := NamedTypeMetricName(lNameKey, lKey);
-  TMonitor.Enter(fConfigLock);
+  fConfigLock.BeginWrite;
   try
     lSticky := fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey);
     lPreset := TmaxQueuePreset.Unspecified;
     fPresetNames.TryGetValue(lNameKey, lPreset);
   finally
-    TMonitor.Exit(fConfigLock);
+    fConfigLock.EndWrite;
   end;
 
   lHasBasePolicy := False;
@@ -5327,13 +5335,13 @@ begin
   lTypeKey := TypeInfo(t);
   lGuid := GetTypeData(lTypeKey)^.Guid;
   lMetric := GuidMetricName(lGuid);
-  TMonitor.Enter(fConfigLock);
+  fConfigLock.BeginWrite;
   try
     lSticky := fStickyTypes.ContainsKey(lTypeKey);
     lPreset := TmaxQueuePreset.Unspecified;
     fPresetGuids.TryGetValue(lGuid, lPreset);
   finally
-    TMonitor.Exit(fConfigLock);
+    fConfigLock.EndWrite;
   end;
 
   TMonitor.Enter(fGuidLock);
@@ -5489,7 +5497,7 @@ begin
     lStickyGuids := TDictionary<TGuid, boolean>.Create;
 
     // Snapshot config without holding it during bus/topic locks (avoid lock-order deadlocks)
-    TMonitor.Enter(fConfigLock);
+    fConfigLock.BeginWrite;
     try
       for lKvStickyType in fStickyTypes do
         lStickyTypes.AddOrSetValue(lKvStickyType.Key, True);
@@ -5502,7 +5510,7 @@ begin
       for lKvPresetGuid in fPresetGuids do
         lPresetGuids.AddOrSetValue(lKvPresetGuid.Key, lKvPresetGuid.Value);
     finally
-      TMonitor.Exit(fConfigLock);
+      fConfigLock.EndWrite;
     end;
 
     for lKvStickyType in lStickyTypes do
@@ -5714,13 +5722,13 @@ begin
   else
   begin
     Result := PolicyForPreset(TmaxQueuePreset.Unspecified);
-    TMonitor.Enter(fConfigLock);
+    fConfigLock.BeginWrite;
     try
       lPreset := TmaxQueuePreset.Unspecified;
       if fPresetTypes.TryGetValue(lKey, lPreset) and (lPreset <> TmaxQueuePreset.Unspecified) then
         Result := PolicyForPreset(lPreset);
     finally
-      TMonitor.Exit(fConfigLock);
+      fConfigLock.EndWrite;
     end;
   end;
 end;
@@ -5744,13 +5752,13 @@ begin
   else
   begin
     Result := PolicyForPreset(TmaxQueuePreset.Unspecified);
-    TMonitor.Enter(fConfigLock);
+    fConfigLock.BeginWrite;
     try
       lPreset := TmaxQueuePreset.Unspecified;
       if fPresetNames.TryGetValue(lNameKey, lPreset) and (lPreset <> TmaxQueuePreset.Unspecified) then
         Result := PolicyForPreset(lPreset);
     finally
-      TMonitor.Exit(fConfigLock);
+      fConfigLock.EndWrite;
     end;
   end;
 end;
@@ -5776,13 +5784,13 @@ begin
   else
   begin
     Result := PolicyForPreset(TmaxQueuePreset.Unspecified);
-    TMonitor.Enter(fConfigLock);
+    fConfigLock.BeginWrite;
     try
       lPreset := TmaxQueuePreset.Unspecified;
       if fPresetGuids.TryGetValue(lGuid, lPreset) and (lPreset <> TmaxQueuePreset.Unspecified) then
         Result := PolicyForPreset(lPreset);
     finally
-      TMonitor.Exit(fConfigLock);
+      fConfigLock.EndWrite;
     end;
   end;
 end;

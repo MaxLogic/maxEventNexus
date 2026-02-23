@@ -1,105 +1,72 @@
-# Bench Harness Overview
+# Benchmark Overview
 
-This folder contains standalone executables used to exercise and compare
-different event-bus implementations.  All programs are console apps; build
-them with Delphi (unless otherwise noted) and run them directly from the command
-line.
+This folder contains Delphi benchmark programs for EventNexus.
 
-## 1. EventNexus-Only Workloads
+## Build
 
-### `BenchHarness.pas`
+- `./build-delphi.sh bench/SchedulerCompare.dproj -config Release`
+- `./build-delphi.sh bench/CompareBuses.dproj -config Release`
 
-*Purpose:* Stress EventNexus with configurable producers, consumers, payload
-size, sticky cache, and coalescing.
+## EventNexus workload (`BenchHarness.pas`)
 
-```
-fpc @../../../fpc.cfg BenchHarness.pas -Fu.. -FE.
-./BenchHarness --producers=4 --consumers=4 --events=100000 --payload=256 --sticky --coalesce
-```
+Purpose:
 
-Metrics printed:
+- stress post/dispatch throughput with configurable producers, subscribers, and payload size,
+- exercise sticky and coalescing options.
 
-| Field | Meaning |
-|-------|---------|
-| `Time ms` | Wall-clock duration from first post to final consumer completion |
-| `Throughput evt/s` | Delivered events ÷ duration |
-| `Posted/Delivered` | Counters from EventNexus metrics surface |
+Example runs:
 
-### `SchedulerCompare.dpr` (Delphi)
-
-*Purpose:* Compare internal scheduler adapters (`TmaxRawThreadScheduler`,
-`TmaxAsyncScheduler`, `TmaxTTaskScheduler`) under identical loads.
-
-```
-dcc32 SchedulerCompare.dpr
-SchedulerCompare
+```bash
+./bench/BenchHarness --producers=4 --consumers=4 --events=100000 --payload=256 --sticky --coalesce
+./bench/BenchHarness --producers=4 --consumers=1000 --events=20000 --payload=64
 ```
 
-Each run reports elapsed time for posting/consuming 20k events with four async
-subscribers.
+The second scenario is the high-subscriber stress profile used to validate copy-on-write snapshot scaling.
 
-## 2. Cross-Framework Comparison
+Reported fields:
 
-### `CompareBuses.dpr` (Delphi)
+- `Time ms`
+- `Throughput evt/s`
+- `Posted/Delivered`
 
-*Purpose:* Measure throughput and heap deltas across:
+## Scheduler comparison (`SchedulerCompare.dpr`)
 
-- EventNexus (configured with the MaxAsync adapter)
-- iPub Messaging (`reference/iPub.Rtl.Messaging.pas`)
-- NX Horizon (`reference/NX.Horizon.pas`)
+Compares internal scheduler adapters under equivalent workloads and emits percentile summaries:
 
-```
-dcc32 CompareBuses.dpr
-CompareBuses --producers=4 --consumers=4 --events=50000
-```
+- `TmaxRawThreadScheduler`
+- `TmaxAsyncScheduler`
+- `TmaxTTaskScheduler`
 
-### Behaviour under Test
+Key options:
 
-1. A `TBenchmarkEvent` holds an integer payload via the `IBenchmarkEvent`
-   interface so all buses can exchange the same type.
-2. For each bus, a wrapper implements:
-   - `Subscribe` — registers the callback using that library’s idioms (async
-     delivery mode where available).
-   - `Post` — pushes `IBenchmarkEvent` instances.
-   - `Clear` — tears down subscriptions to avoid leaks between runs.
-3. Producers (`TProducerThread`) post events in parallel.  Consumers decrement
-   an atomic “remaining events” counter and signal an event object when all work
-   drains.  Main thread waits with `CheckSynchronize` to let queued main-thread
-   work execute.
+- `--events=<n>`
+- `--consumers=<n>`
+- `--runs=<n>`
+- `--delivery=posting|main|async|background`
+- `--metrics-readers=<n>`
+- `--metrics-reads=<n>`
+- `--csv=<path>`
 
-### Output
+Example:
 
-For each framework the benchmark prints:
-
-| Field | Meaning |
-|-------|---------|
-| `Elapsed ms` | Total duration for all producers + drain time |
-| `Throughput evt/s` | Total events × 1000 ÷ elapsed milliseconds |
-| `Heap delta (bytes)` | `GetHeapStatus.TotalAllocated` delta before/after run |
-| `TotalAllocated delta` | Aggregated allocation delta from `GetMemoryManagerState` |
-
-These deltas help identify sustained memory growth across frameworks.
-
-### Customising Runs
-
-Command-line switches mirror `BenchHarness`:
-
-```
---producers=N   Number of posting threads (default 4)
---consumers=N   Number of subscribers per bus (default 4)
---events=N      Events posted per producer (default 50,000)
+```batch
+bench\SchedulerCompare.exe --events=2000 --consumers=2 --runs=3 --delivery=async --metrics-readers=1 --metrics-reads=5000 --csv=bench\scheduler-summary.csv
 ```
 
-Increase these values to explore heavy-load scenarios.  Keep an eye on timeout
-exceptions which indicate a bus failed to drain within 60 seconds.
+Output contract (clock source, percentile method, CSV schema):
 
-## 3. Adding New Buses or Schedulers
+- `docs/benchmarks/benchmark-output-contract.md`
 
-1. Implement `IBenchmarkBus` wrappers for the new framework in
-   `CompareBuses.dpr`.
-2. Register the new entry in the `entries` array inside `RunAllBenchmarks`.
-3. (Optional) Add a scheduler factory to `SchedulerCompare.dpr` for finer
-   adapter comparisons.
+## Cross-framework comparison (`CompareBuses.dpr`)
 
-Please ensure any added dependency units remain checked-in under `reference/`
-or `lib/` so the benchmarks build out of the box.
+Compares EventNexus against reference wrappers in `reference/` under shared producer/subscriber load.
+
+Example:
+
+```bash
+./bench/CompareBuses --producers=4 --consumers=4 --events=50000
+```
+
+## Notes
+
+- CSV rows include `status` and `error` columns so scheduler-specific failures are visible while still producing one complete report file.

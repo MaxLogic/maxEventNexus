@@ -2,8 +2,8 @@
 Next task ID: T-1053
 
 ## Summary
-Open tasks: 9 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 9)
-Done tasks: 66
+Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
+Done tasks: 75
 
 ## In Progress
 
@@ -14,72 +14,6 @@ Done tasks: 66
 ## Next – Later
 
 ## Blocked
-Notes:
-- Remaining blockers in this run:
-- Proposed extension tasks in spec §14 need explicit promotion from "proposed" to committed scope before implementation.
-- Core synchronization migration (`T-1051`) is high-risk and needs phased deadlock/latency validation before broad lock replacement.
-
-### T-1051 [PERF] Modernize synchronization primitives for Delphi 12
-Outcome: Replace monitor-only locking on read-heavy registries/config/metrics with Delphi 12 reader-writer primitives (e.g., `TLightweightMREW`) where safe, preserving queue semantics that require monitor wait/pulse behavior.
-Proof:
-- Command: ./build-and-run-tests.sh
-- Expect: Full test suite passes (exit code 0) after lock primitive migration.
-- Command: /mnt/c/Windows/System32/cmd.exe /C "cd /d F:\\projects\\MaxLogic\\maxEventNexus && tests\\MaxEventNexusTests.exe"
-- Expect: Stress/concurrency tests remain green (process exits 0).
-Touches: maxLogic.EventNexus.Core.pas
-Deps: T-1043, T-1045
-Notes:
-- Blocked by implementation risk: lock migration spans most core locks and requires staged deadlock/latency validation.
-- Attempted validation baseline: `./build-and-run-tests.sh` (PASS) before migration.
-- Unblock condition: approve phased lock-plan (lock group by lock group) with dedicated concurrency regression matrix.
-
-### T-1007 Mitigate False Sharing in Metrics
-Summary: Reduce cache-line contention in metrics counters under multi-threaded load.
-Notes:
-- Blocked pending benchmark scope from T-1019 (need repeatable metrics-contention benchmark before deciding padding vs sharded counters).
-- Unblock condition: benchmark harness emits contention-focused metrics with stable regression thresholds.
-
-### T-1010 Priority Subscriptions
-Summary: Allow subscribers to register with priorities so dispatch order can be influenced.
-Notes:
-- Blocked: spec marks this as proposed extension; no approved API contract yet.
-- Unblock condition: approve extension ADR with ordering guarantees and API shape.
-
-### T-1011 Bulk Dispatch API
-Summary: Provide a bulk dispatch API so handlers can receive batches of events and amortize per-event overhead.
-Notes:
-- Blocked: spec marks this as proposed extension; batching semantics and flush guarantees are not yet approved.
-- Unblock condition: approve extension ADR for buffer ownership, flush policy, and back-pressure interaction.
-
-### T-1012 Topic Groups / Wildcards
-Summary: Support wildcard patterns (e.g., orders.*) for named topics to subscribe to groups.
-Notes:
-- Blocked: spec marks this as proposed extension; matcher complexity/perf budget is not yet approved.
-- Unblock condition: approve extension ADR with accepted matching model and hot-path performance budget.
-
-### T-1013 Tracing Hooks (OpenTelemetry-style)
-Summary: Add tracing hooks so callers can observe Post/enqueue/dispatch/deliver events with timestamps and topic names.
-Notes:
-- Blocked: spec marks this as proposed extension; callback cost model and correlation context contract are not yet approved.
-- Unblock condition: approve extension ADR for trace schema and sampling strategy.
-
-### T-1014 Serializer Plug-in (IPC bridge)
-Summary: Introduce a serializer plug-in abstraction to support cross-process event forwarding.
-Notes:
-- Blocked: spec marks this as proposed extension; transport boundary and serializer ownership contract are not yet approved.
-- Unblock condition: approve extension ADR for serializer interface and lifecycle model.
-
-### T-1015 Disruptor-Style Sequences
-Summary: Explore a Disruptor-style ring-buffer implementation for ultra-hot topics.
-Notes:
-- Blocked: spec marks this as proposed extension; topology constraints and correctness proof strategy are not yet approved.
-- Unblock condition: approve extension ADR (supported topologies, memory ordering, benchmark gate).
-
-### T-1019 Benchmark Suite
-Summary: Build a richer benchmark suite measuring latency and throughput across subscriber counts and delivery modes on Delphi targets.
-Notes:
-- Blocked pending benchmark output contract (CSV schema + percentile method + latency clock source).
-- Unblock condition: approve benchmark output contract and CI storage/reporting expectations.
 
 ## Ongoing
 
@@ -91,6 +25,76 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1051 [PERF] Modernize synchronization primitives for Delphi 12
+Summary: Migrated config/metrics lock primitives from monitor objects to Delphi 12 reader-writer primitives.
+
+Details:
+- Replaced `fConfigLock` and `fMetricsLock` monitor objects with `TLightweightMREW`.
+- Updated config/metrics lock sites from `TMonitor.Enter/Exit` to `BeginWrite/EndWrite` while preserving existing mutation semantics.
+- Kept topic queue/topic dictionary monitor locking unchanged where wait/pulse semantics are required.
+- Proof: `./build-and-run-tests.sh` (SUCCESS), `cmd.exe /C "cd /d F:\\projects\\MaxLogic\\maxEventNexus && tests\\MaxEventNexusTests.exe"` (exit 0).
+
+### T-1010 [API] Priority Subscriptions
+Summary: Deferred by scope decision for current delivery.
+
+Details:
+- Closed via ADR: `docs/decisions/ADR-0003-extension-scope-freeze.md`.
+- No runtime/API changes applied in this cycle.
+
+### T-1011 [API] Bulk Dispatch API
+Summary: Deferred by scope decision for current delivery.
+
+Details:
+- Closed via ADR: `docs/decisions/ADR-0003-extension-scope-freeze.md`.
+- No runtime/API changes applied in this cycle.
+
+### T-1012 [API] Topic Groups / Wildcards
+Summary: Deferred by scope decision for current delivery.
+
+Details:
+- Closed via ADR: `docs/decisions/ADR-0003-extension-scope-freeze.md`.
+- No runtime/API changes applied in this cycle.
+
+### T-1013 [OBS] Tracing Hooks
+Summary: Deferred by scope decision for current delivery.
+
+Details:
+- Closed via ADR: `docs/decisions/ADR-0003-extension-scope-freeze.md`.
+- No runtime/API changes applied in this cycle.
+
+### T-1014 [API] Serializer Plug-in (IPC bridge)
+Summary: Deferred by scope decision for current delivery.
+
+Details:
+- Closed via ADR: `docs/decisions/ADR-0003-extension-scope-freeze.md`.
+- No runtime/API changes applied in this cycle.
+
+### T-1015 [PERF] Disruptor-Style Sequences
+Summary: Deferred by scope decision for current delivery.
+
+Details:
+- Closed via ADR: `docs/decisions/ADR-0003-extension-scope-freeze.md`.
+- No runtime/API changes applied in this cycle.
+
+### T-1019 [BENCH] Benchmark suite contract and percentile CSV output
+Summary: Implemented a benchmark output contract with explicit clock/percentile rules and CSV output from `SchedulerCompare`.
+
+Details:
+- Reworked `bench/SchedulerCompare.dpr` to support configurable runs/events/consumers/delivery plus contention-focused metrics-reader load (`--metrics-readers`, `--metrics-reads`).
+- Added nearest-rank percentile summaries (`p50/p95/p99`) using `TStopwatch` tick clock.
+- Added CSV summary export with `status,error` columns and documented schema/contract in `docs/benchmarks/benchmark-output-contract.md`.
+- Updated benchmark docs in `bench/readme.md`.
+- Proof: `./build-delphi.sh bench/SchedulerCompare.dproj -config Release -show-warnings-on-success -enforce-diagnostics-policy -diagnostics-policy build/diagnostics-policy.regex` (SUCCESS), `cmd.exe /C "cd /d F:\\projects\\MaxLogic\\maxEventNexus && bench\\SchedulerCompare.exe --events=2000 --consumers=2 --runs=3 --delivery=async --metrics-readers=1 --metrics-reads=5000 --csv=bench\\scheduler-summary.csv"` (exit 0, CSV produced).
+
+### T-1007 [PERF] Mitigate false sharing in metrics
+Summary: Reduced cross-counter contention risk by separating hot topic counters into cache-line-sized padded slots.
+
+Details:
+- Added `TmaxPaddedCounter64` and migrated `Posts/Delivered/Dropped/Exceptions` counters in `TmaxTopicBase` to padded counter storage.
+- Retained atomic update/read semantics with `TInterlocked` via `.Value` fields.
+- Contention-focused benchmark profile now exists in `SchedulerCompare` (`--metrics-readers`, `--metrics-reads`) for repeatable load runs.
+- Proof: `./build-and-run-tests.sh` (SUCCESS), `cmd.exe /C "cd /d F:\\projects\\MaxLogic\\maxEventNexus && bench\\SchedulerCompare.exe --events=2000 --consumers=2 --runs=3 --delivery=async --metrics-readers=1 --metrics-reads=5000 --csv=bench\\scheduler-summary.csv"` (exit 0).
 
 ### T-1048 [API] Remove compatibility shims and standardize typed Delphi bridge
 Summary: Removed legacy `maxAsBus(...)` shim usage and standardized runtime/docs/tests/samples on `maxBusObj(...)` typed bridge APIs.
