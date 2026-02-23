@@ -2,23 +2,12 @@
 Next task ID: T-1058
 
 ## Summary
-Open tasks: 3 (In Progress: 0, Next Today: 3, Next This Week: 0, Next Later: 0, Blocked: 0)
-Done tasks: 77
+Open tasks: 2 (In Progress: 0, Next Today: 2, Next This Week: 0, Next Later: 0, Blocked: 0)
+Done tasks: 78
 
 ## In Progress
 
 ## Next – Today
-
-### T-1055 [BUILD] Add Delphi static-analysis runner and report baseline
-Outcome: Add repeatable static-analysis scripts for Delphi 12 (`build-static-analysis.sh` / `build-static-analysis.bat`) that run available analyzers and emit normalized reports under `build/analysis/`.
-Proof:
-- Command: ./build-static-analysis.sh
-- Expect: exits 0 and writes `build/analysis/summary.md`, `build/analysis/fixinsight.txt`, and `build/analysis/pascal-analyzer.txt` (or explicit tool-unavailable markers in summary).
-- Command: ./build-and-run-tests.sh
-- Expect: exits 0 after analysis baseline wiring.
-Touches: build-static-analysis.sh, build-static-analysis.bat, build/analysis/, tests/
-Notes:
-- Phase 2 modernization: static analysis automation for Delphi-only codebase.
 
 ### T-1056 [API] Audit and document Delphi 12 API polish candidates
 Outcome: Produce a Delphi 12 API-polish decision record that captures approved/refused API cleanup candidates (including any public-signature impacts) before implementation work starts.
@@ -58,6 +47,15 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1055 [BUILD] Add Delphi static-analysis runner and report baseline
+Summary: Added repeatable static-analysis wrappers that run DelphiAIKit/FixInsight with normalized baseline artifacts under `build/analysis/`.
+
+Details:
+- Added `build-static-analysis.sh` (WSL/Linux) and `build-static-analysis.bat` (Windows) wrappers around `$delphi-static-analysis` skill scripts.
+- Wrappers now write stable output artifacts: `build/analysis/summary.md`, `build/analysis/fixinsight.txt`, and `build/analysis/pascal-analyzer.txt`.
+- When Pascal Analyzer is not configured, wrappers emit explicit `TOOL_UNAVAILABLE` marker output instead of failing the run.
+- Proof: `./build-static-analysis.sh` (exit 0, normalized files created), `./build-and-run-tests.sh` (SUCCESS).
 
 ### T-1054 [BENCH] Fix TTask scheduler thread-creation failures in SchedulerCompare
 Summary: Removed thread-creation instability from the async benchmark profile so `TTask` rows complete successfully under benchmark contention.

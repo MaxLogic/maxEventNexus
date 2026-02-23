@@ -16,6 +16,7 @@
 - Core topic counters now use native `TInterlocked` operations directly, and core string handling uses Delphi-native `string` aliasing. (T-1050)
 - Typed/named topic snapshots now use versioned cache reuse to avoid repeated subscriber-array copies when no structural mutations occur. (T-1008)
 - Added diagnostics-policy enforcement in `build-delphi.bat` with regex allowlist (`build/diagnostics-policy.regex`); test scripts now fail on untriaged warnings/hints. (T-1052)
+- Added `build-static-analysis.sh` / `build-static-analysis.bat` wrappers to run Delphi static-analysis baselines via DelphiAIKit/FixInsight and normalize outputs under `build/analysis/` (with explicit tool-unavailable markers when needed). (T-1055)
 - Replaced legacy `maxAsBus(...)` shim with typed bridge overloads `maxBusObj` / `maxBusObj(aIntf)` and migrated runtime docs/tests/samples accordingly. (T-1048)
 - Scheduler benchmark now has a documented output contract (clock source + nearest-rank percentiles + CSV schema/status columns) and supports contention-focused metrics-reader load profiles. (T-1019)
 - Async benchmark harness now applies bounded queue/in-flight guards, uses `TTask.Future` metrics readers, and caps `maxAsync` to one in-process async run to avoid cumulative memory-pressure failures during scheduler comparisons. (T-1053, T-1054)

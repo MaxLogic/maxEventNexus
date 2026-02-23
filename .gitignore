@@ -80,3 +80,4 @@ reference/
 .github/
 bench/scheduler-summary.csv
 last-session.md
+build/analysis/
