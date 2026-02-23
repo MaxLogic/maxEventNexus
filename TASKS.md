@@ -1,13 +1,46 @@
 # Tasks
-Next task ID: T-1055
+Next task ID: T-1058
 
 ## Summary
-Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
+Open tasks: 3 (In Progress: 0, Next Today: 3, Next This Week: 0, Next Later: 0, Blocked: 0)
 Done tasks: 77
 
 ## In Progress
 
 ## Next – Today
+
+### T-1055 [BUILD] Add Delphi static-analysis runner and report baseline
+Outcome: Add repeatable static-analysis scripts for Delphi 12 (`build-static-analysis.sh` / `build-static-analysis.bat`) that run available analyzers and emit normalized reports under `build/analysis/`.
+Proof:
+- Command: ./build-static-analysis.sh
+- Expect: exits 0 and writes `build/analysis/summary.md`, `build/analysis/fixinsight.txt`, and `build/analysis/pascal-analyzer.txt` (or explicit tool-unavailable markers in summary).
+- Command: ./build-and-run-tests.sh
+- Expect: exits 0 after analysis baseline wiring.
+Touches: build-static-analysis.sh, build-static-analysis.bat, build/analysis/, tests/
+Notes:
+- Phase 2 modernization: static analysis automation for Delphi-only codebase.
+
+### T-1056 [API] Audit and document Delphi 12 API polish candidates
+Outcome: Produce a Delphi 12 API-polish decision record that captures approved/refused API cleanup candidates (including any public-signature impacts) before implementation work starts.
+Proof:
+- Command: rg -n "maxBusObj|ImaxBus|ImaxBusAdvanced|ImaxBusQueues|ImaxBusMetrics|TmaxBus" README.md spec.md maxLogic.EventNexus*.pas
+- Expect: command output is used to justify scope and `docs/decisions/ADR-0004-delphi12-api-polish.md` is added with accepted/rejected candidates.
+- Command: ./build-and-run-tests.sh
+- Expect: exits 0 after any doc/API-alignment edits.
+Touches: docs/decisions/, README.md, spec.md, maxLogic.EventNexus*.pas
+Notes:
+- Keep current guardrail: do not change existing public signatures without explicit approval.
+
+### T-1057 [PERF] Add benchmark regression threshold gate
+Outcome: Add a deterministic benchmark-threshold checker so SchedulerCompare CSV output can fail CI/local runs when key latency/throughput regressions exceed configured limits.
+Proof:
+- Command: /mnt/c/Windows/System32/cmd.exe /C "cd /d F:\\projects\\MaxLogic\\maxEventNexus && bench\\SchedulerCompare.exe --events=2000 --consumers=2 --runs=3 --delivery=async --metrics-readers=1 --metrics-reads=5000 --csv=bench\\scheduler-summary.csv"
+- Expect: process exits 0 and CSV rows for schedulers have `status=ok`.
+- Command: ./build/check-benchmark-thresholds.sh bench/scheduler-summary.csv
+- Expect: exits 0 when thresholds pass and exits non-zero with a clear message when thresholds are exceeded.
+Touches: bench/SchedulerCompare.dpr, bench/readme.md, build/check-benchmark-thresholds.sh, build/check-benchmark-thresholds.bat
+Notes:
+- Phase 2 modernization: move benchmark checks from ad-hoc runs to enforceable gates.
 
 ## Next – This Week
 
