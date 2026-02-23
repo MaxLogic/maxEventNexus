@@ -2,10 +2,12 @@
 
 ## What's New (2026-02-23)
 
-- Project docs now describe the Delphi-only runtime surface and remove legacy cross-compiler guidance.
-- Tests are documented and executed with DUnitX (`tests/MaxEventNexusTests.dpr`).
-- Queue policy preset defaults and override behavior are documented for typed, named, and GUID topics.
-- Lock-free posting behavior is documented explicitly: `Post` no longer uses a global bus lock.
+- Runtime/public units are now fully Delphi-only; remaining FPC conditionals were removed from adapter/facade scheduler paths.
+- Tests run through DUnitX (`tests/MaxEventNexusTests.dpr`) with compatibility support for published-method legacy suites.
+- Test/CI scripts enforce diagnostics policy (`build/diagnostics-policy.regex`) so untriaged warnings/hints fail the build.
+- Async benchmark profile is stabilized (bounded queue/in-flight guards + scheduler submission fallbacks), with CSV contract rows remaining `status=ok`.
+- Sample and benchmark projects now carry explicit unit search paths for shared foundation/mORMot units in group builds.
+- Queue policy preset defaults/overrides and lock-free posting behavior are documented for typed, named, and GUID topics.
 
 EventNexus is a type-safe event bus for Delphi 12+ with typed, named, and GUID topic routing, delivery-mode control, sticky cache, coalescing, and queue policies.
 
