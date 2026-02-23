@@ -57,6 +57,12 @@ Output contract (clock source, percentile method, CSV schema):
 
 - `docs/benchmarks/benchmark-output-contract.md`
 
+Threshold gate (pass/fail):
+
+- `./build/check-benchmark-thresholds.sh bench/scheduler-summary.csv`
+- `build\\check-benchmark-thresholds.bat bench\\scheduler-summary.csv`
+- Optional second argument overrides threshold config path (default: `bench/scheduler-thresholds.csv`).
+
 ## Cross-framework comparison (`CompareBuses.dpr`)
 
 Compares EventNexus against reference wrappers in `reference/` under shared producer/subscriber load.
