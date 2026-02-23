@@ -5,7 +5,8 @@ program AutoSubscribeSample;
 
 uses
   SysUtils,
-  maxLogic.EventNexus;
+  maxLogic.EventNexus,
+  maxLogic.EventNexus.Core;
 
 type
   TWorker = class
@@ -20,14 +21,16 @@ begin
 end;
 
 var
-  LWorker: TWorker;
+  lBusObj: TmaxBus;
+  lWorker: TWorker;
 begin
-  LWorker := TWorker.Create;
+  lBusObj := maxBusObj(maxBus);
+  lWorker := TWorker.Create;
   try
-    AutoSubscribe(LWorker);
-    maxBus.Post<Integer>(42);
-    AutoUnsubscribe(LWorker);
+    AutoSubscribe(lWorker);
+    lBusObj.Post<Integer>(42);
+    AutoUnsubscribe(lWorker);
   finally
-    LWorker.Free;
+    lWorker.Free;
   end;
 end.

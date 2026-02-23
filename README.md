@@ -1,215 +1,128 @@
 # EventNexus
 
+## What's New (2026-02-23)
 
-## What's New (2025-12-15)
+- Project docs now describe the Delphi-only runtime surface and remove legacy cross-compiler guidance.
+- Tests are documented and executed with DUnitX (`tests/MaxEventNexusTests.dpr`).
+- Queue policy preset defaults and override behavior are documented for typed, named, and GUID topics.
+- Lock-free posting behavior is documented explicitly: `Post` no longer uses a global bus lock.
 
-* **Subscription tokens** — `Subscribe*` returns an `ImaxSubscription` token. Releasing the last reference auto‑unsubscribes (idempotent).
-* **Weak‑target liveness guard** — For object‑method handlers we store `{CodePtr, WeakTarget}` and rehydrate at dispatch:
-  * **Delphi 12+ / FPC 3.2.2**: lightweight `(Ptr → Generation)` registry; invoke only if generation matches (Delphi uses a `FreeInstance` hook; no AV probing).
-* **Queued‑before‑cancel safety** — Enqueued work prior to cancel uses the liveness check; dead targets are skipped and subscriptions are pruned lazily.
-* **Main delivery policy** — `maxSetMainThreadPolicy(...)` controls how `Main` delivery degrades in console contexts when a UI main thread is unavailable. (T-1003)
-* **GUID advanced controls** — GUID topics now support coalescing, queue policies, `TryPostGuidOf`, and GUID stats retrieval. (T-1035)
-* **Metric sampling throttling** — `maxSetMetricSampleInterval(...)` limits metric callback frequency for high-rate topics. (T-1004)
-* **Lock-free metrics snapshots** — `GetTotals` / `GetStats*` read without taking bus locks; per-topic counters are atomic. (T-1036)
-* **Queue policy presets** — apply spec defaults via `maxSetQueuePreset*` when we haven't set an explicit policy. (T-1029)
-* **No global bus lock** — posts no longer serialize across unrelated topics; registries and per-topic state use fine-grained synchronization. (T-1040)
-* **Post hot-path allocations reduced** — Posting-mode Post/TryPost avoids per-subscriber heap allocations in the steady state. (T-1031)
-* **Design & Spec updated** — See [`DESIGN.md`](DESIGN.md) and [`spec.md`](spec.md) for full details (tokens, pruning, dispatch path, executors).
-* **Delphi vs FPC generics** — FPC supports generic methods on interfaces; on Delphi we use the concrete `TmaxBus` (via `maxAsBus(...)`) for generic calls.
+EventNexus is a type-safe event bus for Delphi 12+ with typed, named, and GUID topic routing, delivery-mode control, sticky cache, coalescing, and queue policies.
 
+## Core API shape on Delphi
 
-EventNexus is a type‑safe, high‑performance event bus for Delphi 12+ and FPC 3.2.2. It decouples publishers and subscribers across typed, GUID, and string‑named topics while remaining thread‑safe and allocation‑light.
+Delphi does not allow generic methods on interfaces (`E2535`), so the public API is split:
 
-## Quick start
+- `ImaxBus` / `ImaxBusAdvanced` / `ImaxBusQueues` / `ImaxBusMetrics` expose non-generic named operations.
+- `TmaxBus` exposes generic typed/named/GUID methods.
+- Typed bridge `maxBusObj(...)` gives access to `TmaxBus` when we start from an interface.
 
-Delphi 12+:
+### Interface-first example (named topic)
 
 ```pascal
-uses maxLogic.EventNexus, maxLogic.EventNexus.Core;
-
-type
-  TOrderPlaced = record
-    Id: Integer;
-  end;
+uses
+  maxLogic.EventNexus;
 
 var
-  Bus: TmaxBus;
-  Sub: ImaxSubscription;
-begin
-  Bus := TmaxBus(maxAsBus(maxBus));
-  Sub := Bus.Subscribe<TOrderPlaced>(
-    procedure(const E: TOrderPlaced)
-    begin
-      // handle event
-    end,
-    TmaxDelivery.Posting);
-
-  Bus.Post<TOrderPlaced>(Default(TOrderPlaced));
-end;
-```
-
-FPC 3.2.2:
-
-```pascal
-uses maxLogic_EventNexus_Core;
-
-type
-  TOrderPlaced = record
-    Id: Integer;
-  end;
-
-var
-  Sub: ImaxSubscription;
-
-procedure HandleOrderPlaced(const E: TOrderPlaced);
-begin
-  // handle event
-end;
-
-begin
-  Sub := maxBus.Subscribe<TOrderPlaced>(@HandleOrderPlaced, TmaxDelivery.Posting);
-  maxBus.Post<TOrderPlaced>(Default(TOrderPlaced));
-end.
-```
-
-On Delphi, you can tag methods with `maxSubscribe` and register them automatically:
-
-```pascal
-{$IFNDEF FPC}
-{$RTTI EXPLICIT METHODS([vcPublic, vcProtected])}
-type
-  TWorker = class
-  public
-    [maxSubscribe]
-    procedure OnPing(const aValue: Integer);
-  end;
-
-procedure TWorker.OnPing(const aValue: Integer);
-begin
-  Writeln('ping ', aValue);
-end;
-
-var LWorker: TWorker;
-begin
-  LWorker := TWorker.Create;
-  AutoSubscribe(LWorker);
-  TmaxBus(maxAsBus(maxBus)).Post<Integer>(42);
-  AutoUnsubscribe(LWorker);
-  LWorker.Free;
-end;
-{$ENDIF}
-```
-
-See `samples/AutoSubscribeSample.pas` for a full program.
-
-Manual registration offers identical behavior on all compilers (named topics are always available on `ImaxBus`):
-
-```pascal
-{$IFDEF FPC}
-procedure HandlePing;
-begin
-  Writeln('ping');
-end;
-{$ENDIF}
-
-var
+  lBus: ImaxBus;
   lSub: ImaxSubscription;
 begin
-  {$IFDEF FPC}
-  lSub := maxBus.SubscribeNamed('ping', @HandlePing, TmaxDelivery.Posting);
-  {$ELSE}
-  lSub := maxBus.SubscribeNamed('ping',
+  lBus := maxBus;
+  lSub := lBus.SubscribeNamed('ping',
     procedure
     begin
-      Writeln('ping');
+      Writeln('pong');
     end,
     TmaxDelivery.Posting);
-  {$ENDIF}
-  maxBus.PostNamed('ping');
-  lSub.Unsubscribe;
+
+  lBus.PostNamed('ping');
+  lSub := nil; // auto-unsubscribe
 end;
 ```
 
-See `samples/ManualSubscribeSample.pas` for a parity demonstration.
-
-## Async Schedulers
-
-EventNexus ships multiple scheduler adapters implementing `IEventNexusScheduler`:
-
-* `maxLogic.EventNexus.Threading.RawThread` (default fallback) spins lightweight threads per task.
-* `maxLogic.EventNexus.Threading.MaxAsync` uses `maxAsync.pas` from MaxLogicFoundation.
-* `maxLogic.EventNexus.Threading.TTask` integrates Delphi's `System.Threading.TTask`.
-
-Inject the adapter you want:
+### Generic example (typed topic)
 
 ```pascal
-uses maxLogic.EventNexus, maxLogic.EventNexus.Threading.MaxAsync;
+uses
+  maxLogic.EventNexus, maxLogic.EventNexus.Core;
 
-begin
-  maxSetAsyncScheduler(CreateMaxAsyncScheduler);
-end;
-```
+type
+  TOrderPlaced = record
+    Id: Integer;
+  end;
 
-Swap adapters at runtime to match your threading framework.
-
-## Advanced usage
-
-Enable sticky delivery (late subscribers get the latest cached value):
-
-```pascal
 var
-  Adv: ImaxBusAdvanced;
+  lBus: TmaxBus;
+  lSub: ImaxSubscription;
 begin
-  Adv := maxBus as ImaxBusAdvanced;
-  {$IFDEF FPC}
-  Adv.EnableSticky<TOrderPlaced>(True);
-  {$ELSE}
-  TmaxBus(maxAsBus(Adv)).EnableSticky<TOrderPlaced>(True);
-  {$ENDIF}
-end;
-```
-
-Enable coalescing (only deliver the latest per key within a window):
-
-```pascal
-var
-  Adv: ImaxBusAdvanced;
-begin
-  Adv := maxBus as ImaxBusAdvanced;
-  {$IFDEF FPC}
-  Adv.EnableCoalesceOf<TKeyed>(
-    function(const aValue: TKeyed): TmaxString
+  lBus := maxBusObj;
+  lSub := lBus.Subscribe<TOrderPlaced>(
+    procedure(const aEvent: TOrderPlaced)
     begin
-      Result := aValue.Key;
+      Writeln(aEvent.Id);
     end,
-    10000 {us});
-  {$ELSE}
-  TmaxBus(maxAsBus(Adv)).EnableCoalesceOf<TKeyed>(
-    function(const aValue: TKeyed): TmaxString
-    begin
-      Result := aValue.Key;
-    end,
-    10000 {us});
-  {$ENDIF}
+    TmaxDelivery.Posting);
+
+  lBus.Post<TOrderPlaced>(Default(TOrderPlaced));
+  lSub := nil;
 end;
 ```
 
-Queue policy configuration (bounded queues + overflow behavior):
+## Delivery modes and main-thread policy
+
+`TmaxDelivery` values:
+
+- `Posting`: inline on the caller thread.
+- `Main`: marshaled to main/UI thread when available.
+- `Async`: queued via configured scheduler.
+- `Background`: async when called on main thread, otherwise inline.
+
+For console/service contexts where `Main` cannot marshal to a UI loop, configure fallback behavior:
+
+```pascal
+maxSetMainThreadPolicy(TmaxMainThreadPolicy.DegradeToPosting);
+// or DegradeToAsync / Strict
+```
+
+Policy behavior:
+
+- `Strict`: raises `EmaxMainThreadRequired`.
+- `DegradeToAsync`: reroutes `Main` delivery to scheduler async path.
+- `DegradeToPosting`: runs handler on posting thread.
+
+## Queue policies
+
+Per-topic policy (`TmaxQueuePolicy`) controls bounded queue behavior:
+
+- `MaxDepth = 0` means unbounded.
+- `Overflow = DropNewest | DropOldest | Block | Deadline`.
+- `DeadlineUs` is used by `Deadline` overflow mode.
+
+Set explicit policy:
 
 ```pascal
 var
-  Q: ImaxBusQueues;
-  P: TmaxQueuePolicy;
+  lQueues: ImaxBusQueues;
+  lPolicy: TmaxQueuePolicy;
 begin
-  Q := maxBus as ImaxBusQueues;
-  P.MaxDepth := 256;
-  P.Overflow := TmaxOverflow.DropOldest;
-  P.DeadlineUs := 0;
-  Q.SetPolicyNamed('orders.state', P);
+  lQueues := maxBus as ImaxBusQueues;
+  lPolicy.MaxDepth := 256;
+  lPolicy.Overflow := TmaxOverflow.DropOldest;
+  lPolicy.DeadlineUs := 0;
+  lQueues.SetPolicyNamed('orders.state', lPolicy);
 end;
 ```
 
-Queue policy presets (spec defaults) for topics where we haven't set an explicit policy:
+Preset defaults (`TmaxQueuePreset`) apply only when no explicit policy exists:
+
+| Preset | MaxDepth | Overflow | DeadlineUs |
+|---|---:|---|---:|
+| `State` | 256 | `DropOldest` | 0 |
+| `Action` | 1024 | `Deadline` | 2000 |
+| `ControlPlane` | 1 | `Block` | 0 |
+| `Unspecified` | 0 | `DropNewest` | 0 |
+
+Configure presets:
 
 ```pascal
 maxSetQueuePresetNamed('orders.state', TmaxQueuePreset.State);
@@ -217,23 +130,56 @@ maxSetQueuePresetForType(TypeInfo(TOrderPlaced), TmaxQueuePreset.Action);
 maxSetQueuePresetGuid(StringToGUID('{00000000-0000-0000-0000-000000000000}'), TmaxQueuePreset.ControlPlane);
 ```
 
-Metrics sampling (install a callback + throttle interval):
+## Sticky and coalescing
+
+- Sticky: `EnableSticky<T>(True)` / `EnableStickyNamed(...)` caches latest event.
+- Coalescing: `EnableCoalesceOf<T>(...)`, `EnableCoalesceNamedOf<T>(...)`, `EnableCoalesceGuidOf<T>(...)` keeps latest value per key per window.
+
+## Scheduling adapters
+
+`IEventNexusScheduler` implementations shipped in this repo:
+
+- `maxLogic.EventNexus.Threading.RawThread` (default fallback)
+- `maxLogic.EventNexus.Threading.MaxAsync`
+- `maxLogic.EventNexus.Threading.TTask`
+
+Inject at runtime:
+
+```pascal
+uses
+  maxLogic.EventNexus, maxLogic.EventNexus.Threading.MaxAsync;
+
+begin
+  maxSetAsyncScheduler(CreateMaxAsyncScheduler);
+end;
+```
+
+## Metrics
+
+Install callback + throttle interval:
 
 ```pascal
 maxSetMetricSampleInterval(250);
 maxSetMetricCallback(
   procedure(const aName: string; const aStats: TmaxTopicStats)
   begin
-    // aName is the metric topic name; aStats is a cheap snapshot
+    // lightweight snapshot
   end);
 ```
 
-## Performance
+## Tests (DUnitX)
 
-* Target performance envelopes and constraints are defined in `spec.md` (§7).
-* See `bench/` for the benchmark harness and methodology.
+- Build tests: `./build-tests.sh`
+- Build + run tests: `./build-and-run-tests.sh`
+- Binary: `tests/MaxEventNexusTests.exe`
+- Diagnostics policy gate: build scripts enforce `build/diagnostics-policy.regex` and fail on untriaged warnings/hints.
 
-## Documentation
+The test runner is DUnitX-based and executes the active fixture suite from `tests/src`.
 
-* [Bus specification](spec.md)
-* [Architecture](DESIGN.md)
+## Docs
+
+- `spec.md`
+- `DESIGN.md`
+- `MIGRATION.md`
+- `samples/readme.md`
+- `tests/readme.md`

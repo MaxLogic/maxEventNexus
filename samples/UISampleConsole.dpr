@@ -3,10 +3,10 @@ program UISampleConsole;
 {$APPTYPE CONSOLE}
 
 uses
-  {$IFDEF UNIX}cthreads,{$ENDIF}
-  SysUtils,
   Classes,
-  maxLogic.EventNexus;
+  SysUtils,
+  maxLogic.EventNexus,
+  maxLogic.EventNexus.Core;
 
 function KeyOf(const aValue: Integer): TmaxString;
 begin
@@ -35,17 +35,19 @@ var
 begin
   for i := 1 to 1000 do
   begin
-    maxBus.Post<Integer>(i);
+    maxBusObj(maxBus).Post<Integer>(i);
     Sleep(1);
   end;
 end;
 
 var
   lProd: TProducer;
+  lBusObj: TmaxBus;
   lSub: ImaxSubscription;
 begin
-  (maxBus as ImaxBusAdvanced).EnableCoalesceOf<Integer>(@KeyOf, 100000);
-  lSub := maxBus.Subscribe<Integer>(@OnValue, TmaxDelivery.Main);
+  lBusObj := maxBusObj(maxBus);
+  lBusObj.EnableCoalesceOf<Integer>(KeyOf, 100000);
+  lSub := lBusObj.Subscribe<Integer>(OnValue, TmaxDelivery.Main);
   lProd := TProducer.Create(False);
   while not gDone do
     CheckSynchronize(10);
@@ -53,4 +55,3 @@ begin
   lProd.Free;
   lSub.Unsubscribe;
 end.
-

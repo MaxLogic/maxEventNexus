@@ -4,7 +4,8 @@ program ManualSubscribeSample;
 
 uses
   SysUtils,
-  maxLogic.EventNexus;
+  maxLogic.EventNexus,
+  maxLogic.EventNexus.Core;
 
 type
   TWorker = class
@@ -18,13 +19,15 @@ begin
 end;
 
 var
+  lBusObj: TmaxBus;
   lWorker: TWorker;
   lSub: ImaxSubscription;
 begin
+  lBusObj := maxBusObj(maxBus);
   lWorker := TWorker.Create;
   try
-    lSub := maxBus.Subscribe<Integer>(lWorker.OnPing);
-    maxBus.Post<Integer>(42);
+    lSub := lBusObj.Subscribe<Integer>(lWorker.OnPing);
+    lBusObj.Post<Integer>(42);
     lSub.Unsubscribe;
   finally
     lWorker.Free;

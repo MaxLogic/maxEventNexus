@@ -1,16 +1,14 @@
 program ConsoleSample;
 
-{$I ..\..\MaxLogicFoundation\fpc_delphimode.inc}
 {$APPTYPE CONSOLE}
 
 uses
   SysUtils,
   maxLogic.EventNexus,
+  maxLogic.EventNexus.Core,
   maxLogic.EventNexus.Threading.RawThread,
-  {$IFDEF max_DELPHI}
   maxLogic.EventNexus.Threading.MaxAsync,
   maxLogic.EventNexus.Threading.TTask,
-  {$ENDIF}
   maxLogic.EventNexus.Threading.Adapter;
 
 type
@@ -40,9 +38,10 @@ end;
 
   var
     lBus: ImaxBus;
+    lBusObj: TmaxBus;
     lPolicy: TmaxQueuePolicy;
     lSub: ImaxSubscription;
-    schedulerArg: string;
+    lSchedulerArg: string;
 
 procedure OnInt(const aValue: Integer);
 begin
@@ -76,66 +75,51 @@ begin
     Writeln('Scheduler: default raw-thread');
     Exit;
   end;
-  schedulerArg := LowerCase(ParamStr(1));
-  if schedulerArg = 'raw' then
+  lSchedulerArg := LowerCase(ParamStr(1));
+  if lSchedulerArg = 'raw' then
   begin
     maxSetAsyncScheduler(TmaxRawThreadScheduler.Create);
     Writeln('Scheduler: raw-thread');
   end
-  else if schedulerArg = 'maxasync' then
+  else if lSchedulerArg = 'maxasync' then
   begin
-  {$IFDEF max_DELPHI}
     maxSetAsyncScheduler(CreateMaxAsyncScheduler);
     Writeln('Scheduler: maxAsync');
-  {$ELSE}
-    Writeln('maxAsync scheduler unavailable on this compiler; using default raw-thread.');
-  {$ENDIF}
   end
-  else if schedulerArg = 'ttask' then
+  else if lSchedulerArg = 'ttask' then
   begin
-  {$IFDEF max_DELPHI}
     maxSetAsyncScheduler(CreateTTaskScheduler);
     Writeln('Scheduler: TTask');
-  {$ELSE}
-    Writeln('TTask scheduler unavailable on this compiler; using default raw-thread.');
-  {$ENDIF}
   end
   else
-    Writeln('Unknown scheduler "', schedulerArg,
+    Writeln('Unknown scheduler "', lSchedulerArg,
       '". Options: raw | maxasync | ttask. Using default raw-thread.');
 end;
 
   begin
     ConfigureScheduler;
     lBus := maxBus;
+    lBusObj := maxBusObj(lBus);
 
   lPolicy.MaxDepth := 1;
   lPolicy.Overflow := DropOldest;
   lPolicy.DeadlineUs := 0;
-    (lBus as ImaxBusQueues).SetPolicyFor<Integer>(lPolicy);
-    (lBus as ImaxBusAdvanced).EnableSticky<Integer>(True);
-{$IFDEF FPC}
-    (lBus as ImaxBusAdvanced).EnableCoalesceOf<Integer>(@KeyOfInt);
-    lSub := lBus.Subscribe<Integer>(@OnInt);
-    lBus.SubscribeNamed('tick', @OnNamed);
-    lBus.SubscribeGuidOf<ITextMsg>(@OnGuid);
-    lBus.Subscribe<string>(@OnAsync, TmaxDelivery.Async);
-{$ELSE}
-    (lBus as ImaxBusAdvanced).EnableCoalesceOf<Integer>(KeyOfInt);
-    lSub := lBus.Subscribe<Integer>(OnInt);
-    lBus.SubscribeNamed('tick', OnNamed);
-    lBus.SubscribeGuidOf<ITextMsg>(OnGuid);
-    lBus.Subscribe<string>(OnAsync, TmaxDelivery.Async);
-{$ENDIF}
+    lBusObj.SetPolicyFor<Integer>(lPolicy);
+    lBusObj.EnableSticky<Integer>(True);
+    lBusObj.EnableCoalesceOf<Integer>(KeyOfInt);
+    lSub := lBusObj.Subscribe<Integer>(OnInt);
+    lBusObj.SubscribeNamed('tick', OnNamed);
+    lBusObj.SubscribeGuidOf<ITextMsg>(OnGuid);
+    lBusObj.Subscribe<string>(OnAsync, TmaxDelivery.Async);
 
-  lBus.Post<Integer>(1);
-  lBus.Post<Integer>(2);
-  lBus.Post<Integer>(12);
+  lBusObj.Post<Integer>(1);
+  lBusObj.Post<Integer>(2);
+  lBusObj.Post<Integer>(12);
   Sleep(50);
 
-  lBus.PostNamed('tick');
-  lBus.PostGuidOf<ITextMsg>(TTextMsg.Create('hello'));
-  lBus.Post<string>('world');
+  lBusObj.PostNamed('tick');
+  lBusObj.PostGuidOf<ITextMsg>(TTextMsg.Create('hello'));
+  lBusObj.Post<string>('world');
   Sleep(50);
   lSub.Unsubscribe;
 end.

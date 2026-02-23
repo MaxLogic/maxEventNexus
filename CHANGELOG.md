@@ -3,10 +3,23 @@
 ## [Unreleased]
 
 ### Added
+- `tests/src/MaxEventNexus.Testing.pas` with a DUnitX-backed `TmaxTestCase` compatibility layer and RTTI published-method suite runner. (T-1044, T-1045)
 
 ### Changed
+- Runtime units are now Delphi-only (FPC conditionals removed from `maxLogic.EventNexus*` public/runtime paths) and the full group project builds in Debug with updated samples/bench wiring. (T-1043)
+- Test runner switched from `TSynTests` to DUnitX (`tests/MaxEventNexusTests.dpr`), with existing behavioral coverage executed through the DUnitX fixture. (T-1044, T-1045)
+- Test build scripts now target Delphi Debug explicitly (`build-tests.sh` / `build-tests.bat`) to match the DUnitX harness path used by CI/local runs. (T-1046)
+- Rewrote README, design, migration, and spec docs for Delphi-only support and DUnitX workflows; removed stale cross-compiler guidance from active docs. (T-1047, T-1025)
+- Documented queue preset category defaults/override behavior plus high-water metric signaling in the public docs/spec. (T-1027)
+- Documented that `Post` no longer uses a global bus lock and clarified per-topic synchronization strategy. (T-1039)
+- Named-topic keys now use comparer-driven case-insensitive lookups (no uppercase normalization helper in hot paths). (T-1049)
+- Core topic counters now use native `TInterlocked` operations directly, and core string handling uses Delphi-native `string` aliasing. (T-1050)
+- Typed/named topic snapshots now use versioned cache reuse to avoid repeated subscriber-array copies when no structural mutations occur. (T-1008)
+- Added diagnostics-policy enforcement in `build-delphi.bat` with regex allowlist (`build/diagnostics-policy.regex`); test scripts now fail on untriaged warnings/hints. (T-1052)
+- Replaced legacy `maxAsBus(...)` shim with typed bridge overloads `maxBusObj` / `maxBusObj(aIntf)` and migrated runtime docs/tests/samples accordingly. (T-1048)
 
 ### Fixed
+- Sample and benchmark programs now call generic bus APIs through `maxBusObj(...)` typed bridge helpers so they compile against the current Delphi interface surface. (T-1043, T-1048)
 
 ## [1.0.0] - 2025-12-15
 

@@ -1,44 +1,74 @@
 # EventNexus Migration Guide
 
+This guide maps common iPub/NX Horizon usage into current EventNexus APIs and runtime behavior.
 
-## 2025-10-06 — Tokens & Weak-Target Liveness
+## Runtime shape to keep in mind
 
-**Summary**
-- Introduced `ISubscription` tokens returned by all `Subscribe*` APIs. Releasing the last reference auto-unsubscribes (idempotent). `Unsubscribe` remains available.
-- Added dispatch-time **weak-target liveness** for object-method handlers:
-  - **Delphi 12+**: `System.WeakReference.TWeakReference<TObject>` guards the target; invoke only if `TryGetTarget` succeeds.
-  - **FPC 3.2.2**: lightweight `(Ptr → Generation)` registry; invoke only if generation matches.
-- Queued-before-cancel behavior clarified: already-enqueued items rely on liveness check; dead targets are skipped; subscriptions are pruned lazily.
+- Interface layer (`ImaxBus*`) is non-generic on Delphi.
+- Generic APIs live on `TmaxBus`.
+- Use `maxBusObj` (or `maxBusObj(aBusInterface)`) when we need generic `TmaxBus` calls.
+- Test harness is DUnitX (`tests/MaxEventNexusTests.dpr`).
 
-**Required actions for integrators**
-- Prefer storing the returned `ISubscription` in a field; assign it to `nil` in the destructor to auto-unsubscribe.
-- If you previously relied on manual `Unsubscribe` only, your code continues to work. Tokens are the recommended pattern.
-- No public API signature changes; behavior is safer by default. If you used reflection to access internal handler storage, note that handler records now contain `{CodePtr, WeakTarget}` instead of `{CodePtr, DataPtr}`.
+## Recommended subscription lifetime pattern
 
-**Notes**
-- No dependency on mORMot2; Delphi uses RTL `System.WeakReference`, FPC uses built-in shim.
-- See `DESIGN.md` and `spec.md` for architectural details and testing matrix additions.
+`Subscribe*` returns `ImaxSubscription`.
 
-This guide helps transition existing iPub Messaging or NX Horizon code to EventNexus.
+- Keep token in a field for lifecycle ownership.
+- Set token to `nil` in teardown/destructor for auto-unsubscribe.
+- Explicit `Unsubscribe` remains valid and idempotent.
 
-## From iPub Messaging
+## iPub to EventNexus mapping
 
 | iPub concept | EventNexus equivalent |
-|--------------|----------------------|
-| `Post(name, payload)` | `PostNamedOf<T>(name, payload)` |
-| `Post(interface)` | `PostGuidOf<T>(payload)` |
-| `Post(type)` | `Post<T>(payload)` |
-| `Subscribe(name, handler)` | `SubscribeNamed(name, handler)` |
-| `Subscribe(type, handler)` | `Subscribe<T>(handler)` |
-| Attributes for auto-wiring | `maxSubscribeAttribute` with `AutoSubscribe`/`AutoUnsubscribe` |
+|---|---|
+| `Post(name, payload)` | `PostNamedOf<T>(name, payload)` on `TmaxBus` |
+| `Post(interface)` | `PostGuidOf<T>(payload)` on `TmaxBus` |
+| `Post(type)` | `Post<T>(payload)` on `TmaxBus` |
+| `Subscribe(name, handler)` | `SubscribeNamed(name, handler)` on `ImaxBus` |
+| `Subscribe(type, handler)` | `Subscribe<T>(handler)` on `TmaxBus` |
+| Auto wiring attributes | `maxSubscribeAttribute` + `AutoSubscribe`/`AutoUnsubscribe` |
 
-## From NX Horizon
+## NX Horizon to EventNexus mapping
 
 | NX Horizon concept | EventNexus equivalent |
-|--------------------|----------------------|
+|---|---|
 | `Publish<T>` / `Subscribe<T>` | `Post<T>` / `Subscribe<T>` |
-| Delivery modes (Immediate/Main/Background) | `Posting`, `Main`, `Async`, `Background` |
-| Sticky events | `EnableSticky<T>(True)` or `EnableStickyNamed` |
-| Queue throttling | `TmaxQueuePolicy` via `SetPolicyFor` or `SetPolicyNamed` |
+| Immediate/Main/Background | `Posting`, `Main`, `Async`, `Background` |
+| Sticky events | `EnableSticky<T>(True)` / `EnableStickyNamed(...)` |
+| Coalescing | `EnableCoalesceOf<T>(...)` |
+| Queue throttling | `SetPolicy*` and `maxSetQueuePreset*` |
 
-EventNexus keeps manual registration APIs available across compilers while offering optional Delphi attributes for convenience.
+## Main delivery policy migration
+
+If old code assumes UI-thread marshaling always exists, set explicit policy for console/service workloads:
+
+```pascal
+maxSetMainThreadPolicy(TmaxMainThreadPolicy.Strict);
+// or DegradeToAsync / DegradeToPosting
+```
+
+Behavior when posting `Main` from non-main thread in console context:
+
+- `Strict`: raises `EmaxMainThreadRequired`.
+- `DegradeToAsync`: schedules on async executor.
+- `DegradeToPosting`: executes inline on posting thread.
+
+## Queue preset migration
+
+If old code relied on implicit queue behavior, configure preset defaults once:
+
+```pascal
+maxSetQueuePresetNamed('orders.state', TmaxQueuePreset.State);
+maxSetQueuePresetForType(TypeInfo(TOrderPlaced), TmaxQueuePreset.Action);
+maxSetQueuePresetGuid(StringToGUID('{00000000-0000-0000-0000-000000000000}'), TmaxQueuePreset.ControlPlane);
+```
+
+Explicit per-topic `SetPolicy*` overrides presets.
+
+## Test migration to DUnitX
+
+- Build: `./build-tests.sh`
+- Build + run: `./build-and-run-tests.sh`
+- Runner: `tests/MaxEventNexusTests.exe`
+
+When porting older tests, we should use DUnitX fixtures/assertions and keep deterministic proof commands in `TASKS.md`.

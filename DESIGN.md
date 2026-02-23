@@ -1,61 +1,108 @@
 # EventNexus Architecture
 
-This document outlines the internal architecture of the MaxLogic Event Bus. It complements `spec.md` and focuses on the moving parts and their relationships.
+This document explains how EventNexus is assembled internally and how the runtime pieces interact.
 
-## Topics
-* **Typed** topics keyed by generic type `T`.
-* **Named** topics keyed by case-insensitive `string`.
-* **GUID** topics keyed by `TGuid`.
-All topic lookups are stored in dictionaries mapping the topic identifier to subscriber lists.
+## Topic model
 
-## Subscriber Storage
-* Each topic keeps a **copy-on-write (COW)** array of handlers to preserve ordering during mutation and enable lock-free iteration during dispatch.
-* Handlers are stored as records containing the callback `CodePtr`, a **weak target** reference, the delivery mode, and flags required by sticky/coalesce features.
+EventNexus supports three topic families:
 
-## Subscriptions & Tokens
-* `Subscribe*` returns an **ISubscription token**. Releasing the last interface reference automatically **unsubscribes** (idempotent). `Unsubscribe` remains available for explicit teardown.
-* Tokens internally track `Active` (atomic bool) and an **in-flight counter** so `Cancel` can be implemented as: mark inactive → remove from the topic list (copy-on-write) → optionally wait for in-flight invokes to finish (policy-dependent).
+- Typed topics keyed by `PTypeInfo` (`Subscribe<T>`, `Post<T>` on `TmaxBus`).
+- Named topics keyed by `string` (`SubscribeNamed`, `PostNamed` on `ImaxBus`).
+- GUID topics keyed by `TGuid` (`SubscribeGuidOf<T>`, `PostGuidOf<T>` on `TmaxBus`).
 
-## Weak-Target Liveness (Delphi/FPC)
-* For **object-method** handlers, each entry stores `{CodePtr, WeakTarget}` and reconstructs the `TMethod` on dispatch.
-  * **Delphi 12+ / FPC 3.2.2**: `WeakTarget` is a lightweight registry `(Ptr → Generation)`. On free/finalization, the generation increments. Invoke only if `{Ptr, GenAtSubscribe} == CurrentGen`.
-* **Rationale**: protects against forgotten unsubscribe, async races, and ABA reuse. **No try/except probes** on the hot path.
-* **Pruning**: when a dead target is detected, the subscription is marked and **pruned lazily** on the next mutation/sweep to keep COW arrays compact.
+Each family has its own dictionary and lock, so unrelated topic families do not serialize through one global bus lock.
 
-## Dispatch Path
-1. **Post** looks up the topic and snapshots the **copy-on-write** handler array.
-2. For each handler:
-   * Skip if `Active=false`.
-   * Rehydrate `WeakTarget`; if missing/stale → mark for prune and continue.
-   * Increment **in-flight**; invoke according to **Delivery**:
-     * `Posting`: same thread.
-    * `Main`: marshal via `IEventNexusScheduler.RunOnMain`.
-     * `Async` / `Background`: enqueue on the configured executor.
-   * Decrement **in-flight** after completion.
-3. **Queued-before-cancel** items: if a handler was enqueued before its token was released, the **liveness check** ensures it becomes a **no-op** once the target dies or the subscription is canceled.
+## API surface split (Delphi constraint)
 
-## Subscriber Storage (details)
-* Per-topic **copy-on-write array** of handler records to minimize contention and preserve per-subscriber order.
-* Handler record fields: `CodePtr`, `WeakTarget`, `Delivery`, `Flags(Sticky, CoalesceKeyPresent)`, and links to per-topic state when needed.
-* Copy-on-write happens only on structural changes (subscribe/unsubscribe/prune); dispatch is lock-free on the array snapshot.
+Delphi blocks generic methods on interfaces (`E2535`), so we intentionally split public API:
 
-## Queues (executors)
-* `Main`/`Async`/`Background` marshal through the `IEventNexusScheduler` abstraction so Delphi/FPC differences are isolated.
-* Queue policy (`TmaxQueuePolicy`) defines max depth, overflow behavior and optional deadlines. Drops are recorded in metrics.
+- Interfaces (`ImaxBus`, `ImaxBusAdvanced`, `ImaxBusQueues`, `ImaxBusMetrics`) expose non-generic named operations.
+- Class `TmaxBus` exposes generic typed/named/GUID operations.
+- `maxBusObj(...)` is the bridge from interface references to class generic methods.
 
-## Sticky Cache & Coalescer
-* **Sticky**: optional last-value cache per topic; late subscribers get the cached event immediately.
-* **Coalesce**: optional per-topic key function; pending item replaced by the latest with the same key; zero-window coalescing defers dispatch until the posting cycle completes.
+## Subscriber storage
 
-## Cancellation & Races
-* `Unsubscribe` and token release are **idempotent** and thread-safe.
-* In-flight coordination uses an atomic counter or `TCountdownEvent` to ensure `Cancel` can choose to wait/non-wait (implementation policy).
-* No global bus lock is required; per-topic operations use COW arrays and versioned lists.
-* Dead/canceled handlers are **pruned lazily**; maintenance occurs on the next write or via a periodic sweep.
+Each concrete topic (`TTypedTopic<T>`, `TNamedTopic`) stores subscribers in copy-on-write arrays.
 
-## Metrics & Diagnostics
-* Per-topic counters: posts, deliveries, drops, exceptions, peak depth, prunes.
-* Async error hook reports exceptions from background deliveries along with the topic identifier.
+- Subscribe/unsubscribe creates a new array snapshot.
+- Dispatch reads a stable snapshot.
+- Weak-target liveness checks prune dead entries lazily.
 
-## Compatibility Notes
-* **iPub** and **NX.Horizon** rely on manual unsubscribe; EventNexus adds a **weak-target guard** and **token auto-unsubscribe** for safety-by-default while keeping method-handler ergonomics.
+This keeps mutation cost predictable and keeps dispatch iteration simple.
+
+## Weak-target liveness
+
+For object-method subscriptions we capture a weak target token (pointer + generation).
+
+- Object destruction increments generation via the weak registry hook.
+- Dispatch compares stored generation vs current generation.
+- Mismatch means stale target; invocation is skipped and subscription is pruned.
+
+This avoids AV-probing as a liveness strategy.
+
+## Dispatch and locking
+
+`TmaxBus.Dispatch` routes by `TmaxDelivery`:
+
+- `Posting`: immediate call.
+- `Main`: marshal to scheduler main queue when available.
+- `Async`: scheduler async queue.
+- `Background`: async from main thread; inline from worker threads.
+
+`Post` no longer takes a global bus lock.
+
+- Topic lookup uses per-family locks (`fTypedLock`, `fNamedLock`, `fNamedTypedLock`, `fGuidLock`).
+- Per-topic queueing/processing is synchronized inside `TmaxTopicBase`.
+- Metrics index updates are copy-on-write and protected by a dedicated metrics lock.
+
+## Main-thread policy in console contexts
+
+When `Main` delivery is requested but no UI main-thread marshaling is available (`IsConsole`):
+
+- `Strict`: raise `EmaxMainThreadRequired`.
+- `DegradeToAsync`: reroute to async scheduler.
+- `DegradeToPosting`: run inline.
+
+Global configuration is set via `maxSetMainThreadPolicy`.
+
+## Sticky cache and coalescing
+
+Sticky:
+
+- Topic stores last payload/state.
+- Late subscribers are fed cached value according to subscriber delivery mode.
+
+Coalescing:
+
+- Optional key selector maps event to coalesce key.
+- Pending dictionary stores latest event per key.
+- Flush is scheduled by scheduler (`RunDelayed`) to avoid blocking waits.
+
+## Queue policy and presets
+
+Every topic has `TmaxQueuePolicy`:
+
+- `MaxDepth` (0 means unbounded).
+- `Overflow` strategy (`DropNewest`, `DropOldest`, `Block`, `Deadline`).
+- `DeadlineUs` for `Deadline` mode.
+
+Presets are configured globally by topic category (`State`, `Action`, `ControlPlane`) and only applied when topic policy is not explicit.
+
+## Metrics and warnings
+
+Per-topic counters track posts, delivered, dropped, exceptions, max queue depth, and current queue depth.
+
+High-water warning behavior:
+
+- warning state flips on when queue depth exceeds 10_000,
+- resets when queue depth drops to 5_000 or below,
+- transitions trigger metric touch so external samplers can observe both warning and recovery.
+
+`GetStats*` and `GetTotals` read topic snapshots from the metrics index.
+
+## Testing model
+
+The active unit-test harness is DUnitX (`tests/MaxEventNexusTests.dpr`).
+
+- `./build-tests.sh` builds test binary.
+- `./build-and-run-tests.sh` builds and runs fixture suite.
