@@ -1,11 +1,9 @@
-unit {$IFDEF FPC}maxLogic_EventNexus{$ELSE}maxLogic.EventNexus{$ENDIF};
-
-{$I fpc_delphimode.inc}
+unit maxLogic.EventNexus;
 
 interface
 
 uses
-  {$IFDEF FPC}maxLogic_EventNexus_Core{$ELSE}maxLogic.EventNexus.Core{$ENDIF};
+  maxLogic.EventNexus.Core;
 
 implementation
 
