@@ -17,6 +17,10 @@
 - Typed/named topic snapshots now use versioned cache reuse to avoid repeated subscriber-array copies when no structural mutations occur. (T-1008)
 - Added diagnostics-policy enforcement in `build-delphi.bat` with regex allowlist (`build/diagnostics-policy.regex`); test scripts now fail on untriaged warnings/hints. (T-1052)
 - Replaced legacy `maxAsBus(...)` shim with typed bridge overloads `maxBusObj` / `maxBusObj(aIntf)` and migrated runtime docs/tests/samples accordingly. (T-1048)
+- Scheduler benchmark now has a documented output contract (clock source + nearest-rank percentiles + CSV schema/status columns) and supports contention-focused metrics-reader load profiles. (T-1019)
+- Topic metric counters now use padded counter slots to reduce cross-counter cache-line contention under concurrent posting. (T-1007)
+- Extension backlog items (priority/bulk/wildcards/tracing/serializer/disruptor) are explicitly deferred for the current delivery via ADR-0003 to remove scope ambiguity. (T-1010..T-1015)
+- Config/metrics lock primitives are now Delphi 12 `TLightweightMREW`-based instead of monitor objects, preserving existing mutation semantics while modernizing lock infrastructure. (T-1051)
 
 ### Fixed
 - Sample and benchmark programs now call generic bus APIs through `maxBusObj(...)` typed bridge helpers so they compile against the current Delphi interface surface. (T-1043, T-1048)
