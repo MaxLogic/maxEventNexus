@@ -2,23 +2,12 @@
 Next task ID: T-1058
 
 ## Summary
-Open tasks: 1 (In Progress: 0, Next Today: 1, Next This Week: 0, Next Later: 0, Blocked: 0)
-Done tasks: 79
+Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
+Done tasks: 80
 
 ## In Progress
 
 ## Next – Today
-
-### T-1057 [PERF] Add benchmark regression threshold gate
-Outcome: Add a deterministic benchmark-threshold checker so SchedulerCompare CSV output can fail CI/local runs when key latency/throughput regressions exceed configured limits.
-Proof:
-- Command: /mnt/c/Windows/System32/cmd.exe /C "cd /d F:\\projects\\MaxLogic\\maxEventNexus && bench\\SchedulerCompare.exe --events=2000 --consumers=2 --runs=3 --delivery=async --metrics-readers=1 --metrics-reads=5000 --csv=bench\\scheduler-summary.csv"
-- Expect: process exits 0 and CSV rows for schedulers have `status=ok`.
-- Command: ./build/check-benchmark-thresholds.sh bench/scheduler-summary.csv
-- Expect: exits 0 when thresholds pass and exits non-zero with a clear message when thresholds are exceeded.
-Touches: bench/SchedulerCompare.dpr, bench/readme.md, build/check-benchmark-thresholds.sh, build/check-benchmark-thresholds.bat
-Notes:
-- Phase 2 modernization: move benchmark checks from ad-hoc runs to enforceable gates.
 
 ## Next – This Week
 
@@ -36,6 +25,15 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1057 [PERF] Add benchmark regression threshold gate
+Summary: Added deterministic benchmark threshold gates for scheduler CSV output, with pass/fail behavior on both Linux/WSL and Windows.
+
+Details:
+- Added threshold config `bench/scheduler-thresholds.csv` for scheduler/delivery profiles.
+- Added `build/check-benchmark-thresholds.sh` and `build/check-benchmark-thresholds.bat` to validate status plus throughput/latency limits.
+- Updated `bench/readme.md` with threshold-gate usage and default config path.
+- Proof: `/mnt/c/Windows/System32/cmd.exe /C "cd /d F:\\projects\\MaxLogic\\maxEventNexus && bench\\SchedulerCompare.exe --events=2000 --consumers=2 --runs=3 --delivery=async --metrics-readers=1 --metrics-reads=5000 --csv=bench\\scheduler-summary.csv"` (exit 0, scheduler rows `status=ok`), `./build/check-benchmark-thresholds.sh bench/scheduler-summary.csv` (exit 0), `./build/check-benchmark-thresholds.sh bench/scheduler-summary.csv /tmp/scheduler-thresholds-strict.csv` (exit 1 with `FAIL:` messages).
 
 ### T-1056 [API] Audit and document Delphi 12 API polish candidates
 Summary: Added ADR-0004 with a Delphi 12 API-polish candidate audit and explicit accept/reject decisions, including public-signature impact assessment.

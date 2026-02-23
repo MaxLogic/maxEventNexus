@@ -18,6 +18,7 @@
 - Added diagnostics-policy enforcement in `build-delphi.bat` with regex allowlist (`build/diagnostics-policy.regex`); test scripts now fail on untriaged warnings/hints. (T-1052)
 - Added `build-static-analysis.sh` / `build-static-analysis.bat` wrappers to run Delphi static-analysis baselines via DelphiAIKit/FixInsight and normalize outputs under `build/analysis/` (with explicit tool-unavailable markers when needed). (T-1055)
 - Added ADR-0004 with Delphi 12 API-polish accept/reject decisions and explicit public-signature impact guardrails for Phase 2 work. (T-1056)
+- Added benchmark threshold gates (`build/check-benchmark-thresholds.sh` + `.bat`) with scheduler profile limits from `bench/scheduler-thresholds.csv` to fail CI/local runs on latency/throughput regressions. (T-1057)
 - Replaced legacy `maxAsBus(...)` shim with typed bridge overloads `maxBusObj` / `maxBusObj(aIntf)` and migrated runtime docs/tests/samples accordingly. (T-1048)
 - Scheduler benchmark now has a documented output contract (clock source + nearest-rank percentiles + CSV schema/status columns) and supports contention-focused metrics-reader load profiles. (T-1019)
 - Async benchmark harness now applies bounded queue/in-flight guards, uses `TTask.Future` metrics readers, and caps `maxAsync` to one in-process async run to avoid cumulative memory-pressure failures during scheduler comparisons. (T-1053, T-1054)
