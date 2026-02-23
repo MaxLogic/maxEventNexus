@@ -18,14 +18,6 @@ type
 implementation
 
 type
-  TmaxProcAdapter = class
-  private
-    fProc: TmaxProc;
-  public
-    constructor Create(const aProc: TmaxProc);
-    procedure Invoke;
-  end;
-
   TmaxProcThread = class(TThread)
   private
     fProc: TmaxProc;
@@ -36,27 +28,6 @@ type
     constructor Create(const aProc: TmaxProc; aDelayUs: Integer);
     class procedure Start(const aProc: TmaxProc; aDelayUs: Integer = 0); static;
   end;
-
-{ TmaxProcAdapter }
-
-constructor TmaxProcAdapter.Create(const aProc: TmaxProc);
-begin
-  inherited Create;
-  fProc := aProc;
-end;
-
-procedure TmaxProcAdapter.Invoke;
-var
-  lProc: TmaxProc;
-begin
-  lProc := fProc;
-  try
-    if ProcAssigned(lProc) then
-      lProc();
-  finally
-    Free;
-  end;
-end;
 
 { TmaxProcThread }
 
@@ -115,18 +86,14 @@ begin
 end;
 
 procedure TmaxRawThreadScheduler.RunOnMain(const aProc: TmaxProc);
-var
-  lAdapter: TmaxProcAdapter;
 begin
   if not ProcAssigned(aProc) then
     Exit;
-  lAdapter := TmaxProcAdapter.Create(aProc);
-  try
-    TThread.Queue(nil, lAdapter.Invoke);
-  except
-    lAdapter.Free;
-    raise;
-  end;
+  TThread.Queue(nil,
+    procedure
+    begin
+      aProc();
+    end);
 end;
 
 procedure TmaxRawThreadScheduler.RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);

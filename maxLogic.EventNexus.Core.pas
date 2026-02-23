@@ -508,8 +508,6 @@ type
     Alive: boolean;
   end;
 
-  TDelphiObjectAccess = class(TObject);
-
   TDelphiWeakRegistry = class
   private
     type
@@ -598,7 +596,6 @@ end;
 function TDelphiWeakRegistry.EnsureHook(const aObj: TObject): boolean;
 var
   lClass: TClass;
-  lMethod: procedure of object;
   lOrig: Pointer;
   lSlot: PPointer;
   {$IFDEF MSWINDOWS}
@@ -616,8 +613,7 @@ begin
     fLock.Leave;
   end;
 
-  lMethod := TDelphiObjectAccess(aObj).FreeInstance;
-  lOrig := TMethod(lMethod).Code;
+  lOrig := PPointer(NativeInt(lClass) + vmtFreeInstance)^;
   if lOrig = @DelphiWeakFreeInstanceHook then
     exit(True);
 
@@ -980,7 +976,7 @@ end;
 procedure TmaxTopicBase.AddDelivered(aCount: integer);
 begin
 	if aCount > 0 then
-		TInterlocked.Add(fDeliveredTotal.Value, aCount);
+		TInterlocked.Add(fDeliveredTotal.Value, Int64(aCount));
 	TouchMetrics;
 end;
 
@@ -1041,7 +1037,8 @@ var
   lDeadlineMs: Cardinal;
   lDeadlineUs: Int64;
   lDeadlineTicks: Int64;
-  lRemaining: integer;
+  lRemainingMs: Int64;
+  lWaitMs: Cardinal;
   lElapsedMs: Int64;
   lEnqueueTimer: TMaxStopwatch;
   lWrapped: TmaxProc;
@@ -1097,13 +1094,17 @@ begin
               while fQueue.Count >= fPolicy.MaxDepth do
               begin
                 lElapsedMs := lTimer.ElapsedMilliseconds;
-                lRemaining := integer(Int64(lDeadlineMs) - lElapsedMs);
-                if lRemaining <= 0 then
+                lRemainingMs := Int64(lDeadlineMs) - lElapsedMs;
+                if lRemainingMs <= 0 then
                 begin
                   AddDropped;
                   exit(False);
                 end;
-                TMonitor.Wait(self, Cardinal(lRemaining));
+                if lRemainingMs > High(Cardinal) then
+                  lWaitMs := High(Cardinal)
+                else
+                  lWaitMs := lRemainingMs;
+                TMonitor.Wait(self, lWaitMs);
               end;
             end;
           end;
@@ -1365,13 +1366,13 @@ begin
     if NameEquals(fNamedTyped[lIdx].NameKey, aNameKey) then
     begin
       lStats := fNamedTyped[lIdx].Topic.GetStats;
-      Inc(Result.PostsTotal, lStats.PostsTotal);
-      Inc(Result.DeliveredTotal, lStats.DeliveredTotal);
-      Inc(Result.DroppedTotal, lStats.DroppedTotal);
-      Inc(Result.ExceptionsTotal, lStats.ExceptionsTotal);
+      Result.PostsTotal := Result.PostsTotal + lStats.PostsTotal;
+      Result.DeliveredTotal := Result.DeliveredTotal + lStats.DeliveredTotal;
+      Result.DroppedTotal := Result.DroppedTotal + lStats.DroppedTotal;
+      Result.ExceptionsTotal := Result.ExceptionsTotal + lStats.ExceptionsTotal;
       if lStats.MaxQueueDepth > Result.MaxQueueDepth then
         Result.MaxQueueDepth := lStats.MaxQueueDepth;
-      Inc(Result.CurrentQueueDepth, lStats.CurrentQueueDepth);
+      Result.CurrentQueueDepth := Result.CurrentQueueDepth + lStats.CurrentQueueDepth;
     end;
 end;
 
@@ -1385,49 +1386,49 @@ begin
   for lIdx := 0 to High(fTyped) do
   begin
     lStats := fTyped[lIdx].Topic.GetStats;
-    Inc(Result.PostsTotal, lStats.PostsTotal);
-    Inc(Result.DeliveredTotal, lStats.DeliveredTotal);
-    Inc(Result.DroppedTotal, lStats.DroppedTotal);
-    Inc(Result.ExceptionsTotal, lStats.ExceptionsTotal);
+    Result.PostsTotal := Result.PostsTotal + lStats.PostsTotal;
+    Result.DeliveredTotal := Result.DeliveredTotal + lStats.DeliveredTotal;
+    Result.DroppedTotal := Result.DroppedTotal + lStats.DroppedTotal;
+    Result.ExceptionsTotal := Result.ExceptionsTotal + lStats.ExceptionsTotal;
     if lStats.MaxQueueDepth > Result.MaxQueueDepth then
       Result.MaxQueueDepth := lStats.MaxQueueDepth;
-    Inc(Result.CurrentQueueDepth, lStats.CurrentQueueDepth);
+    Result.CurrentQueueDepth := Result.CurrentQueueDepth + lStats.CurrentQueueDepth;
   end;
 
   for lIdx := 0 to High(fNamed) do
   begin
     lStats := fNamed[lIdx].Topic.GetStats;
-    Inc(Result.PostsTotal, lStats.PostsTotal);
-    Inc(Result.DeliveredTotal, lStats.DeliveredTotal);
-    Inc(Result.DroppedTotal, lStats.DroppedTotal);
-    Inc(Result.ExceptionsTotal, lStats.ExceptionsTotal);
+    Result.PostsTotal := Result.PostsTotal + lStats.PostsTotal;
+    Result.DeliveredTotal := Result.DeliveredTotal + lStats.DeliveredTotal;
+    Result.DroppedTotal := Result.DroppedTotal + lStats.DroppedTotal;
+    Result.ExceptionsTotal := Result.ExceptionsTotal + lStats.ExceptionsTotal;
     if lStats.MaxQueueDepth > Result.MaxQueueDepth then
       Result.MaxQueueDepth := lStats.MaxQueueDepth;
-    Inc(Result.CurrentQueueDepth, lStats.CurrentQueueDepth);
+    Result.CurrentQueueDepth := Result.CurrentQueueDepth + lStats.CurrentQueueDepth;
   end;
 
   for lIdx := 0 to High(fNamedTyped) do
   begin
     lStats := fNamedTyped[lIdx].Topic.GetStats;
-    Inc(Result.PostsTotal, lStats.PostsTotal);
-    Inc(Result.DeliveredTotal, lStats.DeliveredTotal);
-    Inc(Result.DroppedTotal, lStats.DroppedTotal);
-    Inc(Result.ExceptionsTotal, lStats.ExceptionsTotal);
+    Result.PostsTotal := Result.PostsTotal + lStats.PostsTotal;
+    Result.DeliveredTotal := Result.DeliveredTotal + lStats.DeliveredTotal;
+    Result.DroppedTotal := Result.DroppedTotal + lStats.DroppedTotal;
+    Result.ExceptionsTotal := Result.ExceptionsTotal + lStats.ExceptionsTotal;
     if lStats.MaxQueueDepth > Result.MaxQueueDepth then
       Result.MaxQueueDepth := lStats.MaxQueueDepth;
-    Inc(Result.CurrentQueueDepth, lStats.CurrentQueueDepth);
+    Result.CurrentQueueDepth := Result.CurrentQueueDepth + lStats.CurrentQueueDepth;
   end;
 
   for lIdx := 0 to High(fGuid) do
   begin
     lStats := fGuid[lIdx].Topic.GetStats;
-    Inc(Result.PostsTotal, lStats.PostsTotal);
-    Inc(Result.DeliveredTotal, lStats.DeliveredTotal);
-    Inc(Result.DroppedTotal, lStats.DroppedTotal);
-    Inc(Result.ExceptionsTotal, lStats.ExceptionsTotal);
+    Result.PostsTotal := Result.PostsTotal + lStats.PostsTotal;
+    Result.DeliveredTotal := Result.DeliveredTotal + lStats.DeliveredTotal;
+    Result.DroppedTotal := Result.DroppedTotal + lStats.DroppedTotal;
+    Result.ExceptionsTotal := Result.ExceptionsTotal + lStats.ExceptionsTotal;
     if lStats.MaxQueueDepth > Result.MaxQueueDepth then
       Result.MaxQueueDepth := lStats.MaxQueueDepth;
-    Inc(Result.CurrentQueueDepth, lStats.CurrentQueueDepth);
+    Result.CurrentQueueDepth := Result.CurrentQueueDepth + lStats.CurrentQueueDepth;
   end;
 end;
 
@@ -3567,7 +3568,7 @@ begin
       lCreated := True;
     end
     else
-      lTopic := TNamedTopic(lObj);
+      lTopic := lObj as TNamedTopic;
     lTopic.SetMetricName(lMetric);
   finally
     TMonitor.Exit(fNamedLock);
@@ -3639,7 +3640,7 @@ begin
   try
     if fNamed.TryGetValue(lNameKey, lObj) then
     begin
-      lTopic := TNamedTopic(lObj);
+      lTopic := lObj as TNamedTopic;
       lTopic.SetMetricName(lMetric);
     end;
   finally
@@ -3672,7 +3673,7 @@ begin
 	        lCreated := True;
 	      end
 	      else
-	        lTopic := TNamedTopic(lObj);
+		        lTopic := lObj as TNamedTopic;
 	      lTopic.SetMetricName(lMetric);
 	    finally
 	      TMonitor.Exit(fNamedLock);
@@ -3786,7 +3787,7 @@ begin
   try
     if fNamed.TryGetValue(lNameKey, lObj) then
     begin
-      lTopic := TNamedTopic(lObj);
+      lTopic := lObj as TNamedTopic;
       lTopic.SetMetricName(lMetric);
     end;
   finally
@@ -3819,7 +3820,7 @@ begin
 	        lCreated := True;
 	      end
 	      else
-	        lTopic := TNamedTopic(lObj);
+		        lTopic := lObj as TNamedTopic;
 	      lTopic.SetMetricName(lMetric);
 	    finally
 	      TMonitor.Exit(fNamedLock);
