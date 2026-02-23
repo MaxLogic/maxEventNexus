@@ -76,3 +76,4 @@ reference/
 *.otares
 *.cmds
 *.log
+.agents/

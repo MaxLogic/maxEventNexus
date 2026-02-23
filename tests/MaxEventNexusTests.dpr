@@ -1,81 +1,87 @@
 program MaxEventNexusTests;
 
-{$I ../fpc_delphimode.inc}
-
-{$IFDEF FPC}
-{$DEFINE max_FPC}
-{$ELSE}
-{$DEFINE max_DELPHI}
-{$ENDIF}
+{$APPTYPE CONSOLE}
+{$STRONGLINKTYPES ON}
 
 uses
-  mormot.core.Test in 'src\mormot.core.test.pas',
   SysUtils,
-  Classes,
-  {$IFDEF max_DELPHI}
-  System.Generics.Collections,
-  {$ELSE}
-  Generics.Collections,
-  {$ENDIF}
-  SyncObjs,
-  {$IFDEF max_DELPHI} System.IOUtils, {$ENDIF}
-
-  {$IFDEF max_FPC}
-  maxLogic_EventNexus_Threading_Adapter in '..\maxLogic.EventNexus.Threading.Adapter.pas',
-  maxLogic_EventNexus_Threading_RawThread in '..\maxLogic.EventNexus.Threading.RawThread.pas',
-  maxLogic_EventNexus in '..\maxLogic.EventNexus.pas',
-  {$ELSE}
-  maxLogic.EventNexus.Threading.Adapter in '..\maxLogic.EventNexus.Threading.Adapter.pas',
-  maxLogic.EventNexus.Threading.RawThread in '..\maxLogic.EventNexus.Threading.RawThread.pas',
-  {$IFDEF max_DELPHI}
-  maxLogic.EventNexus.Threading.MaxAsync in '..\maxLogic.EventNexus.Threading.MaxAsync.pas',
-  maxLogic.EventNexus.Threading.TTask in '..\maxLogic.EventNexus.Threading.TTask.pas',
-  {$ENDIF }
+  System.IOUtils,
+  DUnitX.Loggers.Console,
+  DUnitX.TestFramework,
+  DUnitX.TestRunner,
   maxLogic.EventNexus in '..\maxLogic.EventNexus.pas',
-  {$ENDIF}
-  MaxEventNexus.Main.Tests in 'src\MaxEventNexus.Main.Tests.pas';
+  maxLogic.EventNexus.Core in '..\maxLogic.EventNexus.Core.pas',
+  maxLogic.EventNexus.Threading.Adapter in '..\maxLogic.EventNexus.Threading.Adapter.pas',
+  maxLogic.EventNexus.Threading.MaxAsync in '..\maxLogic.EventNexus.Threading.MaxAsync.pas',
+  maxLogic.EventNexus.Threading.RawThread in '..\maxLogic.EventNexus.Threading.RawThread.pas',
+  maxLogic.EventNexus.Threading.TTask in '..\maxLogic.EventNexus.Threading.TTask.pas',
+  MaxEventNexus.Main.Tests in 'src\MaxEventNexus.Main.Tests.pas',
+  MaxEventNexus.Testing in 'src\MaxEventNexus.Testing.pas';
+
+type
+  [TestFixture]
+  TEventNexusLegacyFixture = class
+  public
+    [Test]
+    procedure RunLegacySuite;
+  end;
+
+procedure TEventNexusLegacyFixture.RunLegacySuite;
+begin
+  RunPublishedTests('MaxEventNexus', [
+    TTestAggregateException,
+    TTestAsyncDelivery,
+    TTestAsyncExceptions,
+    TTestCoalesce,
+    TTestFuzz,
+    TTestGuidTopics,
+    TTestHighWaterReset,
+    TTestMainThreadPolicy,
+    TTestMetrics,
+    TTestMetricsThrottling,
+    TTestMetricsCallbackTotals,
+    TTestNamedTopics,
+    TTestQueuePolicy,
+    TTestQueuePolicyPresets,
+    TTestSchedulers,
+    TTestSticky,
+    TTestStress,
+    TTestSubscribeOrdering,
+    TTestSubscriptionTokens,
+    TTestUnsubscribeAll,
+    TTestWeakTargets,
+    TTestWeakTargetABA
+  ]);
+end;
 
 var
-  lTests: TSynTests;
-  {$IFDEF max_DELPHI}
-  L: string;
-  {$ENDIF}
+  lExitCode: Integer;
+  lLogger: ITestLogger;
+  lLogsDir: string;
+  lResults: IRunResults;
+  lRunner: ITestRunner;
+
 begin
-  {$IFDEF max_DELPHI}
-  L := TPath.Combine(ExtractFilePath(ParamStr(0)), 'logs');
-  if TDirectory.Exists(L) then
-    TDirectory.Delete(L, True);
-  TDirectory.CreateDirectory(L);
-  {$ENDIF}
-  lTests := TSynTests.Create('MaxEventNexus');
-	  try
-	    lTests.AddCase(TTestAggregateException);
-	    lTests.AddCase(TTestAsyncDelivery);
-	    lTests.AddCase(TTestAsyncExceptions);
-	    lTests.AddCase(TTestCoalesce);
-	    lTests.AddCase(TTestFuzz);
-	    lTests.AddCase(TTestGuidTopics);
-    lTests.AddCase(TTestHighWaterReset);
-	    lTests.AddCase(TTestMainThreadPolicy);
-	    lTests.AddCase(TTestMetrics);
-	    lTests.AddCase(TTestMetricsConcurrent);
-	    lTests.AddCase(TTestMetricsThrottling);
-	    lTests.AddCase(TTestMetricsCallbackTotals);
-    lTests.AddCase(TTestNamedTopics);
-    lTests.AddCase(TTestQueuePolicy);
-    lTests.AddCase(TTestQueuePolicyPresets);
-    lTests.AddCase(TTestSchedulers);
-    lTests.AddCase(TTestSticky);
-    lTests.AddCase(TTestStress);
-    lTests.AddCase(TTestSubscribeOrdering);
-    lTests.AddCase(TTestSubscriptionTokens);
-    lTests.AddCase(TTestUnsubscribeAll);
-    lTests.AddCase(TTestWeakTargets);
-    lTests.AddCase(TTestWeakTargetABA);
+  lLogsDir := TPath.Combine(ExtractFilePath(ParamStr(0)), 'logs');
+  if TDirectory.Exists(lLogsDir) then
+    TDirectory.Delete(lLogsDir, True);
+  TDirectory.CreateDirectory(lLogsDir);
 
-    lTests.Run;
-  finally
-    lTests.Free;
-  end;
+  TDUnitX.CheckCommandLine;
+  TDUnitX.RegisterTestFixture(TEventNexusLegacyFixture);
+
+  lRunner := TDUnitX.CreateRunner;
+  lRunner.UseRTTI := True;
+  lRunner.FailsOnNoAsserts := False;
+
+  lLogger := TDUnitXConsoleLogger.Create(True);
+  lRunner.AddLogger(lLogger);
+
+  lResults := lRunner.Execute;
+  if lResults.AllPassed then
+    lExitCode := 0
+  else
+    lExitCode := 1;
+
+  Halt(lExitCode);
 end.
-

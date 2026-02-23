@@ -7,7 +7,7 @@ pushd "%~dp0"
 for /f %%t in ('powershell -NoProfile -Command "Get-Date -Format o"') do set "BUILD_START=%%t"
 
 rem =============================================================================
-rem v 1.4.5
+rem v 1.5.0
 rem =============================================================================
 
 rem ---- CONFIG (avoid rsvars collisions)
@@ -22,6 +22,8 @@ set "PROJECT="
 set "VER=%DEFAULT_VER%"
 set "BUILD_CONFIG=%DEFAULT_BUILD_CONFIG%"
 set "BUILD_PLATFORM=%DEFAULT_BUILD_PLATFORM%"
+set "ENFORCE_DIAGNOSTICS_POLICY="
+set "DIAGNOSTICS_POLICY_FILE=%~dp0build\diagnostics-policy.regex"
 
 :parse_args
 if "%~1"=="" goto args_done
@@ -45,6 +47,20 @@ if /I "%~1"=="-platform" (
 if /I "%~1"=="-keep-logs" set "KEEP_LOGS=1" & shift & goto parse_args
 if /I "%~1"=="-show-warnings-on-success" set "SHOW_WARN_ON_SUCCESS=1" & shift & goto parse_args
 if /I "%~1"=="-no-brand" set "NO_BRAND=1" & shift & goto parse_args
+if /I "%~1"=="-enforce-diagnostics-policy" set "ENFORCE_DIAGNOSTICS_POLICY=1" & shift & goto parse_args
+if /I "%~1"=="-diagnostics-policy" (
+  if "%~2"=="" ( echo ERROR: -diagnostics-policy requires a value.& set "EXITCODE=2" & goto usage_fail )
+  if exist "%~2" (
+    set "DIAGNOSTICS_POLICY_FILE=%~2"
+  ) else if exist "%~dp0%~2" (
+    set "DIAGNOSTICS_POLICY_FILE=%~dp0%~2"
+  ) else (
+    echo ERROR: Diagnostics policy file not found: %~2
+    set "EXITCODE=2"
+    goto usage_fail
+  )
+  shift & shift & goto parse_args
+)
 
 if not defined PROJECT (
   if exist "%~1" (
@@ -70,6 +86,7 @@ if not defined PROJECT (
 
 set "PRJ_NAME=%PROJECT%"
 for %%p in ("%PROJECT%") do set "PROJECT=%%~fp"
+for %%p in ("%DIAGNOSTICS_POLICY_FILE%") do set "DIAGNOSTICS_POLICY_FILE=%%~fp"
 
 rem ---- ASCII header (pipes escaped)
 echo +================================================================================+
@@ -168,6 +185,17 @@ for /f %%W in ('
   findstr /I /C:": warning " "%OUTLOG%" ^| findstr /I /V /C:" hint warning " ^| find /c /v ""
 ') do set "WARNCOUNT=%%W"
 
+if defined ENFORCE_DIAGNOSTICS_POLICY (
+  call :enforce_diagnostics_policy "%OUTLOG%" "%DIAGNOSTICS_POLICY_FILE%"
+  if errorlevel 1 (
+    echo(
+    call :print_elapsed
+    echo Build FAILED. Diagnostics policy violations.
+    set "EXITCODE=1"
+    goto cleanup
+  )
+)
+
 if defined SHOW_WARN_ON_SUCCESS (
   call :print_sanitized "%OUTLOG%"
   echo(
@@ -185,7 +213,7 @@ goto cleanup
 
 :usage_fail
 echo.
-echo Usage: %~nx0 ^<project.dproj^> [-ver N] [-config Debug^|Release] [-platform Platform] [-keep-logs] [-show-warnings-on-success] [-no-brand]
+echo Usage: %~nx0 ^<project.dproj^> [-ver N] [-config Debug^|Release] [-platform Platform] [-keep-logs] [-show-warnings-on-success] [-no-brand] [-enforce-diagnostics-policy] [-diagnostics-policy path]
 goto cleanup
 
 :print_elapsed
@@ -208,6 +236,32 @@ setlocal DisableDelayedExpansion
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$root=[IO.Path]::GetFullPath('%ROOT%')+'\'; $rx=[regex]::Escape($root); $nobrand=$env:NO_BRAND -ne $null; Get-Content -LiteralPath '%PFILE%' | ForEach-Object { $s=$_; $s=$s -replace ('(?i)'+$rx),''; $s=$s -replace ('(?i)\['+$rx),'['; if($nobrand -and ($s -match '^(Embarcadero\s+Delphi\b|Copyright\s*\(c\))')) { } elseif($s -match ':\s+warning ' -or $s -match ' hint warning ' -or $s -match ':\s+hint ') { } else { $s } }"
 endlocal & exit /b 0
+
+:enforce_diagnostics_policy
+set "PFILE=%~1"
+set "POLICY=%~2"
+if not exist "%PFILE%" (
+  echo ERROR: Build log for diagnostics policy not found: %PFILE%
+  exit /b 1
+)
+if not exist "%POLICY%" (
+  echo ERROR: Diagnostics policy file not found: %POLICY%
+  exit /b 1
+)
+setlocal DisableDelayedExpansion
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$ErrorActionPreference='Stop';" ^
+  "$root=[IO.Path]::GetFullPath('%ROOT%')+'\';" ^
+  "$rx=[regex]::Escape($root);" ^
+  "$rules=Get-Content -LiteralPath '%POLICY%' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' -and -not $_.StartsWith('#') };" ^
+  "if($rules.Count -eq 0){ Write-Host 'ERROR: Diagnostics policy has no rules.'; exit 1 };" ^
+  "$patterns=@(); foreach($rule in $rules){ $patterns += [regex]::new($rule,[System.Text.RegularExpressions.RegexOptions]::IgnoreCase) };" ^
+  "$diag=Get-Content -LiteralPath '%PFILE%' | ForEach-Object { $s=$_; $s=$s -replace ('(?i)'+$rx),''; $s=$s -replace ('(?i)\['+$rx),'['; if($s -match ':\s+(warning|hint warning|hint)\s+[WH]\d{4}:'){ $s } };" ^
+  "$unmatched=@(); foreach($line in $diag){ $ok=$false; foreach($p in $patterns){ if($p.IsMatch($line)){ $ok=$true; break } } if(-not $ok){ $unmatched += $line } };" ^
+  "if($unmatched.Count -gt 0){ Write-Host 'Diagnostics policy violations:'; $unmatched | ForEach-Object { Write-Host $_ }; exit 1 };" ^
+  "Write-Host ('Diagnostics policy passed. Matched lines: ' + $diag.Count + ', rules: ' + $patterns.Count);"
+set "PSCODE=%ERRORLEVEL%"
+endlocal & exit /b %PSCODE%
 
 :cleanup
 if defined KEEP_LOGS (
