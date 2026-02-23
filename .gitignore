@@ -77,3 +77,6 @@ reference/
 *.cmds
 *.log
 .agents/
+.github/
+bench/scheduler-summary.csv
+last-session.md
