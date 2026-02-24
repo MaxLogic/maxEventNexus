@@ -26,7 +26,7 @@ type
     procedure Execute; override;
   public
     constructor Create(const aProc: TmaxProc; aDelayUs: Integer);
-    class procedure Start(const aProc: TmaxProc; aDelayUs: Integer = 0); static;
+    class procedure StartAsync(const aProc: TmaxProc; aDelayUs: Integer = 0); static;
   end;
 
 { TmaxProcThread }
@@ -59,7 +59,7 @@ begin
     lProc();
 end;
 
-class procedure TmaxProcThread.Start(const aProc: TmaxProc; aDelayUs: Integer);
+class procedure TmaxProcThread.StartAsync(const aProc: TmaxProc; aDelayUs: Integer);
 var
   lDelayMs: Integer;
 begin
@@ -82,7 +82,7 @@ end;
 
 procedure TmaxRawThreadScheduler.RunAsync(const aProc: TmaxProc);
 begin
-  TmaxProcThread.Start(aProc);
+  TmaxProcThread.StartAsync(aProc);
 end;
 
 procedure TmaxRawThreadScheduler.RunOnMain(const aProc: TmaxProc);
@@ -104,7 +104,7 @@ begin
     lDelay := 0
   else
     lDelay := aDelayUs;
-  TmaxProcThread.Start(aProc, lDelay);
+  TmaxProcThread.StartAsync(aProc, lDelay);
 end;
 
 function TmaxRawThreadScheduler.IsMainThread: Boolean;

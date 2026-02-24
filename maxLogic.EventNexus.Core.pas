@@ -349,8 +349,8 @@ type
 		    fAutoSubs: TmaxAutoSubDict;
 			    fMainThreadId: TThreadID;
 			    procedure SetAsyncScheduler(const aAsync: IEventNexusScheduler);
-		    function ScheduleTypedCoalesce<t>(const aTopicName: TmaxString;
-		      aTopic: TTypedTopic<t>; const aSubs: TArray<TTypedSubscriber<t>>): boolean;
+    procedure ScheduleTypedCoalesce<t>(const aTopicName: TmaxString;
+      aTopic: TTypedTopic<t>; const aSubs: TArray<TTypedSubscriber<t>>);
 		    procedure PublishMetricTypedTopic(const aKey: PTypeInfo; const aTopic: TmaxTopicBase);
 		    procedure PublishMetricNamedTopic(const aNameKey: TmaxString; const aTopic: TmaxTopicBase);
 		    procedure PublishMetricNamedTypedTopic(const aNameKey: TmaxString; const aKey: PTypeInfo; const aTopic: TmaxTopicBase);
@@ -2504,13 +2504,14 @@ end;
 
 { TmaxBus }
 
-	function TmaxBus.ScheduleTypedCoalesce<t>(const aTopicName: TmaxString;
-	  aTopic: TTypedTopic<t>; const aSubs: TArray<TTypedSubscriber<t>>): boolean;
+	procedure TmaxBus.ScheduleTypedCoalesce<t>(const aTopicName: TmaxString;
+	  aTopic: TTypedTopic<t>; const aSubs: TArray<TTypedSubscriber<t>>);
 var
   lSubsCopy: TArray<TTypedSubscriber<t>>;
+  lScheduled: TmaxProc;
 begin
   lSubsCopy := Copy(aSubs);
-  fAsync.RunDelayed(
+  lScheduled :=
     procedure
     var
       lEvents: TArray<t>;
@@ -2615,9 +2616,13 @@ begin
               lErrs.Free;
           end;
         end);
-    end,
-    aTopic.CoalesceWindow);
-	Result := True;
+    end;
+  try
+    fAsync.RunDelayed(lScheduled, aTopic.CoalesceWindow);
+  except
+    // Keep progress even if delayed scheduling backend rejects the submission.
+    lScheduled();
+  end;
 end;
 
 procedure TmaxBus.PublishMetricTypedTopic(const aKey: PTypeInfo; const aTopic: TmaxTopicBase);
@@ -3949,6 +3954,7 @@ var
 	  end;
 
   lHasBasePolicy := False;
+  lBasePolicy := Default(TmaxQueuePolicy);
 	  TMonitor.Enter(fNamedLock);
 	  try
 	    if fNamed.TryGetValue(lNameKey, lBase) then
@@ -4086,6 +4092,7 @@ var
 	  end;
 
   lHasBasePolicy := False;
+  lBasePolicy := Default(TmaxQueuePolicy);
 	  TMonitor.Enter(fNamedLock);
 	  try
 	    if fNamed.TryGetValue(lNameKey, lBase) then
@@ -4212,6 +4219,7 @@ begin
   end;
 
   lHasBasePolicy := False;
+  lBasePolicy := Default(TmaxQueuePolicy);
   TMonitor.Enter(fNamedLock);
   try
     if fNamed.TryGetValue(lNameKey, lBase) then
@@ -4399,6 +4407,7 @@ begin
   end;
 
   lHasBasePolicy := False;
+  lBasePolicy := Default(TmaxQueuePolicy);
   TMonitor.Enter(fNamedLock);
   try
     if fNamed.TryGetValue(lNameKey, lBase) then
@@ -5280,6 +5289,7 @@ begin
   end;
 
   lHasBasePolicy := False;
+  lBasePolicy := Default(TmaxQueuePolicy);
   TMonitor.Enter(fNamedLock);
   try
     if fNamed.TryGetValue(lNameKey, lBase) then

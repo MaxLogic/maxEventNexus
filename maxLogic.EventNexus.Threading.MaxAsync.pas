@@ -25,7 +25,7 @@ implementation
 procedure TmaxAsyncScheduler.ScheduleAsync(const aProc: TmaxProc; aDelayUs: Integer);
 var
   lDelayMs: Integer;
-  lHandle: iAsync;
+  lHandle: iAsync; //PALOFF lifetime anchor for async handle until completion callback
   lProc: TmaxProc;
 begin
   if not ProcAssigned(aProc) then
