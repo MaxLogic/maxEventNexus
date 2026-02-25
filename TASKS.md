@@ -2,8 +2,8 @@
 Next task ID: T-1074
 
 ## Summary
-Open tasks: 1 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 1, Blocked: 0)
-Done tasks: 95
+Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
+Done tasks: 96
 
 ## In Progress
 
@@ -12,18 +12,6 @@ Done tasks: 95
 ## Next – This Week
 
 ## Next – Later
-
-### T-1073 [BUILD] Add analyzer debt regression gate for top FixInsight codes
-Outcome: Add a lightweight analyzer regression gate script that fails when `C101`/`C103` counts increase above the accepted baseline captured after cleanup.
-Proof:
-- Command: `./build-static-analysis.sh && ./build/check-analysis-thresholds.sh build/analysis/summary.md build/analysis/analysis-thresholds.csv`
-- Expect: exit code `0` for compliant baseline and non-zero when synthetic stricter thresholds are used.
-- Command: `./build-and-run-tests.sh`
-- Expect: exit code `0`; analyzer gating additions do not break test build/run flow.
-Touches: `build/check-analysis-thresholds.sh`, `build/check-analysis-thresholds.bat`, `build/analysis/analysis-thresholds.csv`, `build/analysis/summary.md`, `TASKS.md`
-Deps: `T-1072`
-Notes:
-- Mirror the existing benchmark-threshold gate pattern to keep tooling consistent across quality gates.
 
 ## Blocked
 
@@ -37,6 +25,17 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1073 [BUILD] Add analyzer debt regression gate for top FixInsight codes
+Summary: Added analyzer threshold gate scripts and a tracked FixInsight baseline so top-code debt regressions (`C101`, `C103`) fail fast in local/CI runs.
+
+Details:
+- Added `build/check-analysis-thresholds.sh` and `build/check-analysis-thresholds.bat` to validate counts parsed from `build/analysis/summary.md` against `build/analysis/analysis-thresholds.csv`.
+- Added tracked threshold baseline file `build/analysis/analysis-thresholds.csv` seeded to `C101=21`, `C103=17`.
+- Updated `build-static-analysis.sh` and `build-static-analysis.bat` to preserve `analysis-thresholds.csv` even when analyzer output cleanup is enabled.
+- Proof: `./build-static-analysis.sh && ./build/check-analysis-thresholds.sh build/analysis/summary.md build/analysis/analysis-thresholds.csv` (exit `0`, `Analysis thresholds passed: 2 code(s) checked ...`).
+- Proof: `./build/check-analysis-thresholds.sh build/analysis/summary.md /tmp/analysis-thresholds-strict.csv` (exit `1`, expected `FAIL:` lines for stricter limits).
+- Proof: `./build-and-run-tests.sh` (exit `0`, DUnitX suite passes).
 
 ### T-1072 [CORE] Reduce FixInsight high-volume debt in runtime and test core
 Summary: Reduced top FixInsight debt by refactoring high-churn tests into smaller helper paths and trimming variable-heavy setup logic without changing public APIs.

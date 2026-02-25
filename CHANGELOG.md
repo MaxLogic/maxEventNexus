@@ -25,6 +25,7 @@
 - Added diagnostics-policy enforcement in `build-delphi.bat` with regex allowlist (`build/diagnostics-policy.regex`); test scripts now fail on untriaged warnings/hints. (T-1052)
 - Added `build-static-analysis.sh` / `build-static-analysis.bat` wrappers to run Delphi static-analysis baselines via DelphiAIKit/FixInsight and normalize outputs under `build/analysis/` (with explicit tool-unavailable markers when needed). (T-1055)
 - Reduced FixInsight top-code debt in the core test suite by refactoring long/variable-heavy coverage paths (`C101/C103` baseline `24/20` to `21/17`) without public API changes. (T-1072)
+- Added analyzer-threshold gate scripts (`build/check-analysis-thresholds.sh` + `.bat`) with tracked FixInsight limits (`build/analysis/analysis-thresholds.csv`) to fail on `C101`/`C103` regressions. (T-1073)
 - Added ADR-0004 with Delphi 12 API-polish accept/reject decisions and explicit public-signature impact guardrails for Phase 2 work. (T-1056)
 - Added benchmark threshold gates (`build/check-benchmark-thresholds.sh` + `.bat`) with scheduler profile limits from `bench/scheduler-thresholds.csv` to fail CI/local runs on latency/throughput regressions. (T-1057)
 - Replaced legacy `maxAsBus(...)` shim with typed bridge overloads `maxBusObj` / `maxBusObj(aIntf)` and migrated runtime docs/tests/samples accordingly. (T-1048)
