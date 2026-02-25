@@ -357,6 +357,11 @@ type
   end;
 
   TTestInterfaceGenerics = class(TmaxTestCase)
+  private
+    procedure VerifyPostAndTryPost(const aBus: ImaxBus; const aBusObj: TmaxBus; var aReceived: integer);
+    procedure VerifyStickyBehavior(const aBus: ImaxBus; const aBusObj: TmaxBus; var aReceived: integer);
+    procedure VerifyQueuePolicyRoundTrip(const aBus: ImaxBus; const aBusObj: TmaxBus);
+    procedure VerifyStatsForInteger(const aBus: ImaxBus; const aBusObj: TmaxBus);
   published
     procedure UsesInterfaceGenerics;
   end;
@@ -1555,6 +1560,18 @@ procedure TTestStress.OneMillionPosts;
 const
   cTOPICS = 10;
   cPOSTS = 1000000;
+  cModeByTopic: array[0..cTOPICS - 1] of TmaxDelivery = (
+    TmaxDelivery.Posting,
+    TmaxDelivery.Posting,
+    TmaxDelivery.Posting,
+    TmaxDelivery.Async,
+    TmaxDelivery.Async,
+    TmaxDelivery.Async,
+    TmaxDelivery.Background,
+    TmaxDelivery.Background,
+    TmaxDelivery.Main,
+    TmaxDelivery.Main
+  );
 var
   lBus: ImaxBus;
   lPrevSched: IEventNexusScheduler;
@@ -1562,8 +1579,6 @@ var
   lSubs: array[0..cTOPICS - 1] of ImaxSubscription;
   lHits: integer;
   i: integer;
-  idx: integer;
-  lMode: TmaxDelivery;
 
   {$IFDEF max_FPC}
   procedure Handler(const aValue: integer);
@@ -1586,17 +1601,8 @@ begin
 
     for i := 0 to cTOPICS - 1 do
     begin
-      if i < 3 then
-        lMode := TmaxDelivery.Posting
-      else if i < 6 then
-        lMode := TmaxDelivery.Async
-      else if i < 8 then
-        lMode := TmaxDelivery.Background
-      else
-        lMode := TmaxDelivery.Main;
-
       {$IFDEF max_FPC}
-      lSubs[i] := lBus.SubscribeNamedOf<integer>(lNames[i], @Handler, lMode);
+      lSubs[i] := lBus.SubscribeNamedOf<integer>(lNames[i], @Handler, cModeByTopic[i]);
       {$ELSE}
       lSubs[i] := maxBusObj(lBus).SubscribeNamedOf<integer>(lNames[i],
         procedure(const aValue: integer)
@@ -1605,17 +1611,16 @@ begin
             Exit;
           TInterlocked.Increment(lHits);
         end,
-        lMode);
+        cModeByTopic[i]);
       {$ENDIF}
     end;
 
     for i := 1 to cPOSTS do
     begin
-      idx := i mod cTOPICS;
       {$IFDEF max_FPC}
-      lBus.PostNamedOf<integer>(lNames[idx], i);
+      lBus.PostNamedOf<integer>(lNames[i mod cTOPICS], i);
       {$ELSE}
-      maxBusObj(lBus).PostNamedOf<integer>(lNames[idx], i);
+      maxBusObj(lBus).PostNamedOf<integer>(lNames[i mod cTOPICS], i);
       {$ENDIF}
     end;
 
@@ -2518,9 +2523,7 @@ var
   lBus: ImaxBus;
   lQueues: ImaxBusQueues;
   lPolicy: TmaxQueuePolicy;
-  t: TPostThread;
-  ok: boolean;
-  lMetrics: ImaxBusMetrics;
+  lThread: TPostThread;
   lStats: TmaxTopicStats;
   lCount: integer;
 
@@ -2554,30 +2557,25 @@ begin
       Inc(lCount);
     end);
   {$ENDIF}
-  t := TPostThread.Create(lBus, 1);
-  t.start;
-  Sleep(10);
+  lThread := TPostThread.Create(lBus, 1);
+  try
+    lThread.start;
+    Sleep(10);
+    {$IFDEF max_FPC}
+    Check(lBus.TryPost<integer>(2));
+    Check(not lBus.TryPost<integer>(3));
+    {$ELSE}
+    Check(maxBusObj(lBus).TryPost<integer>(2));
+    Check(not maxBusObj(lBus).TryPost<integer>(3));
+    {$ENDIF}
+    lThread.WaitFor;
+  finally
+    lThread.Free;
+  end;
   {$IFDEF max_FPC}
-  ok := lBus.TryPost<integer>(2);
+  lStats := (lBus as ImaxBusMetrics).GetStatsFor<integer>;
   {$ELSE}
-  ok := maxBusObj(lBus).TryPost<integer>(2);
-  {$ENDIF}
-  {$IFDEF max_DELPHI} LogLine('TTestQueuePolicy.DropOldestRemoves', 'TryPost(2)=' + BoolToStr(ok, True)); {$ENDIF}
-  Check(ok);
-  {$IFDEF max_FPC}
-  ok := lBus.TryPost<integer>(3);
-  {$ELSE}
-  ok := maxBusObj(lBus).TryPost<integer>(3);
-  {$ENDIF}
-  {$IFDEF max_DELPHI} LogLine('TTestQueuePolicy.DropOldestRemoves', 'TryPost(3)=' + BoolToStr(ok, True)); {$ENDIF}
-  Check(not ok);
-  t.WaitFor;
-  t.Free;
-  lMetrics := lBus as ImaxBusMetrics;
-  {$IFDEF max_FPC}
-  lStats := lMetrics.GetStatsFor<integer>;
-  {$ELSE}
-  lStats := maxBusObj(lMetrics).GetStatsFor<integer>;
+  lStats := maxBusObj(lBus as ImaxBusMetrics).GetStatsFor<integer>;
   {$ENDIF}
   CheckEquals(3, lStats.PostsTotal);
   CheckEquals(2, lStats.DeliveredTotal);
@@ -5057,66 +5055,64 @@ end;
 
 { TTestInterfaceGenerics }
 
-procedure TTestInterfaceGenerics.UsesInterfaceGenerics;
+procedure TTestInterfaceGenerics.VerifyPostAndTryPost(const aBus: ImaxBus; const aBusObj: TmaxBus;
+  var aReceived: integer);
 var
-  lBus: ImaxBus;
-  lAdv: ImaxBusAdvanced;
-  lQueues: ImaxBusQueues;
-  lMetrics: ImaxBusMetrics;
-  lBusObj: TmaxBus;
   lReceived: integer;
-  lPolicy: TmaxQueuePolicy;
-  lStats: TmaxTopicStats;
-begin
-  lBus := maxBus;
-  lBus.Clear;
-  {$IFNDEF max_FPC}
-  lBusObj := maxBusObj(lBus);
-  {$ENDIF}
-
-  // Test Subscribe/Post with integer
-  lReceived := 0;
-  {$IFDEF max_FPC}
+{$IFDEF max_FPC}
   procedure Handler(const aValue: integer);
   begin
     lReceived := aValue;
   end;
-  lBus.Subscribe<integer>(@Handler, Posting);
+{$ENDIF}
+begin
+  lReceived := 0;
+  {$IFDEF max_FPC}
+  aBus.Subscribe<integer>(@Handler, Posting);
+  aBus.Post<integer>(42);
+  CheckEquals(42, lReceived, 'Post/Subscribe delivery');
+  Check(aBus.TryPost<integer>(43), 'TryPost should succeed');
   {$ELSE}
-  lBusObj.Subscribe<integer>(
+  aBusObj.Subscribe<integer>(
     procedure(const aValue: integer)
     begin
       lReceived := aValue;
     end,
     Posting);
-  {$ENDIF}
-  lBusObj.Post<integer>(42);
+  aBusObj.Post<integer>(42);
   CheckEquals(42, lReceived, 'Post/Subscribe delivery');
-
-  // Test TryPost
-  Check(lBusObj.TryPost<integer>(43), 'TryPost should succeed');
-  // Since we are in Posting mode, the handler should have been called synchronously
-  CheckEquals(43, lReceived, 'TryPost delivery');
-
-  // Test EnableSticky via ImaxBusAdvanced
-  lAdv := lBus as ImaxBusAdvanced;
-  {$IFDEF max_FPC}
-  lAdv.EnableSticky<integer>(True);
-  lBus.Post<integer>(100);
-  {$ELSE}
-  lBusObj.EnableSticky<integer>(True);
-  lBusObj.Post<integer>(100);
+  Check(aBusObj.TryPost<integer>(43), 'TryPost should succeed');
   {$ENDIF}
-  // Now subscribe a new handler and check it gets the sticky value
-  lReceived := 0;
-  {$IFDEF max_FPC}
+  CheckEquals(43, lReceived, 'TryPost delivery');
+  aReceived := lReceived;
+end;
+
+procedure TTestInterfaceGenerics.VerifyStickyBehavior(const aBus: ImaxBus; const aBusObj: TmaxBus;
+  var aReceived: integer);
+var
+  lAdv: ImaxBusAdvanced;
+  lReceived: integer;
+{$IFDEF max_FPC}
   procedure StickyHandler(const aValue: integer);
   begin
     lReceived := aValue;
   end;
-  lBus.Subscribe<integer>(@StickyHandler, Posting);
+{$ENDIF}
+begin
+  lAdv := aBus as ImaxBusAdvanced;
+  {$IFDEF max_FPC}
+  lAdv.EnableSticky<integer>(True);
+  aBus.Post<integer>(100);
   {$ELSE}
-  lBusObj.Subscribe<integer>(
+  aBusObj.EnableSticky<integer>(True);
+  aBusObj.Post<integer>(100);
+  {$ENDIF}
+
+  lReceived := 0;
+  {$IFDEF max_FPC}
+  aBus.Subscribe<integer>(@StickyHandler, Posting);
+  {$ELSE}
+  aBusObj.Subscribe<integer>(
     procedure(const aValue: integer)
     begin
       lReceived := aValue;
@@ -5124,9 +5120,15 @@ begin
     Posting);
   {$ENDIF}
   CheckEquals(100, lReceived, 'Sticky delivery');
+  aReceived := lReceived;
+end;
 
-  // Test SetPolicyFor/GetPolicyFor via ImaxBusQueues
-  lQueues := lBus as ImaxBusQueues;
+procedure TTestInterfaceGenerics.VerifyQueuePolicyRoundTrip(const aBus: ImaxBus; const aBusObj: TmaxBus);
+var
+  lQueues: ImaxBusQueues;
+  lPolicy: TmaxQueuePolicy;
+begin
+  lQueues := aBus as ImaxBusQueues;
   lPolicy.MaxDepth := 5;
   lPolicy.Overflow := DropOldest;
   lPolicy.DeadlineUs := 0;
@@ -5134,23 +5136,47 @@ begin
   lQueues.SetPolicyFor<integer>(lPolicy);
   lPolicy := lQueues.GetPolicyFor<integer>;
   {$ELSE}
-  lBusObj.SetPolicyFor<integer>(lPolicy);
-  lPolicy := lBusObj.GetPolicyFor<integer>;
+  aBusObj.SetPolicyFor<integer>(lPolicy);
+  lPolicy := aBusObj.GetPolicyFor<integer>;
   {$ENDIF}
   CheckEquals(5, lPolicy.MaxDepth, 'Policy MaxDepth round-trip');
   Check(lPolicy.Overflow = DropOldest, 'Policy Overflow round-trip');
+end;
 
-  // Test GetStatsFor via ImaxBusMetrics
-  lMetrics := lBus as ImaxBusMetrics;
+procedure TTestInterfaceGenerics.VerifyStatsForInteger(const aBus: ImaxBus; const aBusObj: TmaxBus);
+var
+  lMetrics: ImaxBusMetrics;
+  lStats: TmaxTopicStats;
+begin
+  lMetrics := aBus as ImaxBusMetrics;
   {$IFDEF max_FPC}
   lStats := lMetrics.GetStatsFor<integer>;
   {$ELSE}
-  lStats := lBusObj.GetStatsFor<integer>;
+  lStats := aBusObj.GetStatsFor<integer>;
   {$ENDIF}
   Check(lStats.PostsTotal >= 3, Format('PostsTotal should be at least 3, got %d', [lStats.PostsTotal]));
   Check(lStats.DeliveredTotal >= 3, Format('DeliveredTotal should be at least 3, got %d', [lStats.DeliveredTotal]));
+end;
 
-  // Cleanup
+procedure TTestInterfaceGenerics.UsesInterfaceGenerics;
+var
+  lBus: ImaxBus;
+  lBusObj: TmaxBus;
+  lReceived: integer;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  {$IFDEF max_FPC}
+  lBusObj := nil;
+  {$ELSE}
+  lBusObj := maxBusObj(lBus);
+  {$ENDIF}
+
+  VerifyPostAndTryPost(lBus, lBusObj, lReceived);
+  VerifyStickyBehavior(lBus, lBusObj, lReceived);
+  VerifyQueuePolicyRoundTrip(lBus, lBusObj);
+  VerifyStatsForInteger(lBus, lBusObj);
+
   lBus.Clear;
 end;
 

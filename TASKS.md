@@ -2,26 +2,14 @@
 Next task ID: T-1074
 
 ## Summary
-Open tasks: 2 (In Progress: 0, Next Today: 0, Next This Week: 1, Next Later: 1, Blocked: 0)
-Done tasks: 94
+Open tasks: 1 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 1, Blocked: 0)
+Done tasks: 95
 
 ## In Progress
 
 ## Next – Today
 
 ## Next – This Week
-
-### T-1072 [CORE] Reduce FixInsight high-volume debt in runtime and test core
-Outcome: Eliminate a substantial subset of high-confidence FixInsight debt (`C101`, `C103`) in `maxLogic.EventNexus.Core.pas` and `tests/src/MaxEventNexus.Main.Tests.pas` without changing public API signatures.
-Proof:
-- Command: `./build-static-analysis.sh`
-- Expect: exit code `0`; `build/analysis/summary.md` reports lower `C101` and `C103` counts than the T-1071 baseline.
-- Command: `./build-and-run-tests.sh`
-- Expect: exit code `0`; DUnitX suite passes with no new failures.
-Touches: `maxLogic.EventNexus.Core.pas`, `tests/src/MaxEventNexus.Main.Tests.pas`, `build/analysis/*`
-Deps: `T-1071`
-Notes:
-- Keep changes behavior-preserving; if a warning requires semantic change, split into a follow-up task instead of folding it into this debt sweep.
 
 ## Next – Later
 
@@ -49,6 +37,16 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1072 [CORE] Reduce FixInsight high-volume debt in runtime and test core
+Summary: Reduced top FixInsight debt by refactoring high-churn tests into smaller helper paths and trimming variable-heavy setup logic without changing public APIs.
+
+Details:
+- Refactored `TTestInterfaceGenerics.UsesInterfaceGenerics` into focused helper methods (`VerifyPostAndTryPost`, `VerifyStickyBehavior`, `VerifyQueuePolicyRoundTrip`, `VerifyStatsForInteger`) to reduce method length and variable pressure.
+- Simplified `TTestStress.OneMillionPosts` delivery-mode mapping and topic selection to reduce local-state complexity.
+- Tightened `TTestMetrics.CountsDropped` setup/teardown flow and redundant variable usage while preserving assertions and behavior.
+- Proof: `./build-and-run-tests.sh` (exit `0`, DUnitX legacy suite `Tests Passed: 1`, `Tests Failed: 0`, `Tests Errored: 0`).
+- Proof: `./build-static-analysis.sh` (exit `0`, `build/analysis/summary.md` now reports `C101=21`, `C103=17`; baseline from `T-1071` was `C101=24`, `C103=20`).
 
 ### T-1071 [ANALYSIS] Build static-analysis triage baseline and fix plan
 Summary: Added a tracked static-analysis triage baseline and phased fix plan so cleanup work can proceed in dependency order with measurable targets.
