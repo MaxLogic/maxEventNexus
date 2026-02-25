@@ -1,9 +1,9 @@
 # Tasks
-Next task ID: T-1071
+Next task ID: T-1074
 
 ## Summary
-Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
-Done tasks: 93
+Open tasks: 2 (In Progress: 0, Next Today: 0, Next This Week: 1, Next Later: 1, Blocked: 0)
+Done tasks: 94
 
 ## In Progress
 
@@ -11,7 +11,31 @@ Done tasks: 93
 
 ## Next – This Week
 
+### T-1072 [CORE] Reduce FixInsight high-volume debt in runtime and test core
+Outcome: Eliminate a substantial subset of high-confidence FixInsight debt (`C101`, `C103`) in `maxLogic.EventNexus.Core.pas` and `tests/src/MaxEventNexus.Main.Tests.pas` without changing public API signatures.
+Proof:
+- Command: `./build-static-analysis.sh`
+- Expect: exit code `0`; `build/analysis/summary.md` reports lower `C101` and `C103` counts than the T-1071 baseline.
+- Command: `./build-and-run-tests.sh`
+- Expect: exit code `0`; DUnitX suite passes with no new failures.
+Touches: `maxLogic.EventNexus.Core.pas`, `tests/src/MaxEventNexus.Main.Tests.pas`, `build/analysis/*`
+Deps: `T-1071`
+Notes:
+- Keep changes behavior-preserving; if a warning requires semantic change, split into a follow-up task instead of folding it into this debt sweep.
+
 ## Next – Later
+
+### T-1073 [BUILD] Add analyzer debt regression gate for top FixInsight codes
+Outcome: Add a lightweight analyzer regression gate script that fails when `C101`/`C103` counts increase above the accepted baseline captured after cleanup.
+Proof:
+- Command: `./build-static-analysis.sh && ./build/check-analysis-thresholds.sh build/analysis/summary.md build/analysis/analysis-thresholds.csv`
+- Expect: exit code `0` for compliant baseline and non-zero when synthetic stricter thresholds are used.
+- Command: `./build-and-run-tests.sh`
+- Expect: exit code `0`; analyzer gating additions do not break test build/run flow.
+Touches: `build/check-analysis-thresholds.sh`, `build/check-analysis-thresholds.bat`, `build/analysis/analysis-thresholds.csv`, `build/analysis/summary.md`, `TASKS.md`
+Deps: `T-1072`
+Notes:
+- Mirror the existing benchmark-threshold gate pattern to keep tooling consistent across quality gates.
 
 ## Blocked
 
@@ -25,6 +49,15 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1071 [ANALYSIS] Build static-analysis triage baseline and fix plan
+Summary: Added a tracked static-analysis triage baseline and phased fix plan so cleanup work can proceed in dependency order with measurable targets.
+
+Details:
+- Added `docs/analysis/triage-plan.md` with baseline counts, hotspot files, and phased execution (`Phase 1`, `Phase 2`).
+- Captured current baseline from analyzer outputs: FixInsight `65` findings (`C101=24`, `C103=20`), PAL `warnings=1040`, `strong_warnings=30`.
+- Proof: `./build-static-analysis.sh` (exit `0`, summary regenerated).
+- Proof: `test -f docs/analysis/triage-plan.md && rg -n "Baseline|FixInsight|Pascal Analyzer|C101|C103|Phase 1|Phase 2" docs/analysis/triage-plan.md` (exit `0`).
 
 ### T-1070 [CORE] Fix Delphi AutoSubscribe binding for one-parameter handlers
 Summary: Replaced Delphi AutoSubscribe one-parameter binding with an internal bridge that no longer depends on generic-method RTTI discovery, restoring typed/named/guid attributed handler support.
