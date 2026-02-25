@@ -37,7 +37,9 @@ begin
     TTestGuidTopics,
     TTestHighWaterReset,
     TTestMainThreadPolicy,
+    TTestAutoSubscribe,
     TTestMetrics,
+    TTestMetricsConcurrent,
     TTestMetricsThrottling,
     TTestMetricsCallbackTotals,
     TTestNamedTopics,
@@ -48,9 +50,15 @@ begin
     TTestStress,
     TTestSubscribeOrdering,
     TTestSubscriptionTokens,
+    TTestPostResult,
+    TTestDispatchErrorDetails,
+    TTestTracingHooks,
+    TTestBulkDispatch,
+    TTestWildcardNamed,
     TTestUnsubscribeAll,
     TTestWeakTargets,
-    TTestWeakTargetABA
+    TTestWeakTargetABA,
+    TTestInterfaceGenerics
   ]);
 end;
 
