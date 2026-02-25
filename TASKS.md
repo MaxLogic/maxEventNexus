@@ -1,15 +1,27 @@
 # Tasks
-Next task ID: T-1074
+Next task ID: T-1076
 
 ## Summary
-Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
-Done tasks: 96
+Open tasks: 1 (In Progress: 0, Next Today: 0, Next This Week: 1, Next Later: 0, Blocked: 0)
+Done tasks: 97
 
 ## In Progress
 
 ## Next – Today
 
 ## Next – This Week
+
+### T-1075 [CORE] Continue FixInsight C101/C103 reduction batch in high-density test fixtures
+Outcome: Reduce remaining top FixInsight debt by shrinking method length/locals in the current highest-density test fixtures while preserving behavior and public APIs.
+Proof:
+- Command: `./build-static-analysis.sh && ./build/check-analysis-thresholds.sh build/analysis/summary.md build/analysis/analysis-thresholds.csv`
+- Expect: exit code `0`; top-code thresholds stay green and summary shows no regressions while additional `C101`/`C103` reductions are achieved.
+- Command: `./build-and-run-tests.sh`
+- Expect: exit code `0`; DUnitX suite passes under the default build+analysis flow.
+Touches: `tests/src/MaxEventNexus.Main.Tests.pas`, `build/analysis/summary.md`, `TASKS.md`, `CHANGELOG.md`
+Deps: `T-1074`
+Notes:
+- Prioritize methods that still dominate `C101`/`C103` counts in `build/analysis/fixinsight.txt` to keep the batch controlled and measurable.
 
 ## Next – Later
 
@@ -25,6 +37,14 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1074 [BUILD] Integrate analysis threshold gate into default test run flow
+Summary: `build-and-run-tests` now enforces static-analysis threshold gating by default after test execution.
+
+Details:
+- Updated `build-and-run-tests.bat` so the standard flow runs: Delphi build -> DUnitX executable -> `build-static-analysis.bat` -> `build/check-analysis-thresholds.bat`.
+- This makes `C101`/`C103` regressions fail in routine local runs without requiring a separate manual command.
+- Proof: `./build-and-run-tests.sh` (exit `0`, build + tests + analysis gate pass in one command).
 
 ### T-1073 [BUILD] Add analyzer debt regression gate for top FixInsight codes
 Summary: Added analyzer threshold gate scripts and a tracked FixInsight baseline so top-code debt regressions (`C101`, `C103`) fail fast in local/CI runs.

@@ -3,11 +3,13 @@ setlocal
 
 pushd "%~dp0"
 
-rem Run tests only if the build succeeded (exit code 0)
+rem Run build, tests, static analysis, and analysis-threshold gate in one default flow.
 call build-delphi.bat tests\MaxEventNexusTests.dproj -config Debug -enforce-diagnostics-policy -diagnostics-policy build\diagnostics-policy.regex && ^
-call tests\MaxEventNexusTests.exe
+call tests\MaxEventNexusTests.exe && ^
+call build-static-analysis.bat && ^
+call build\check-analysis-thresholds.bat build\analysis\summary.md build\analysis\analysis-thresholds.csv
 
-rem Preserve the exit code from whichever ran last (build or tests)
+rem Preserve the exit code from whichever stage ran last.
 set "EXITCODE=%ERRORLEVEL%"
 
 popd
