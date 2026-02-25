@@ -32,10 +32,15 @@ type
     Value: integer;
   end;
 
+  TPostResultNoTopicEvent = record
+    Value: integer;
+  end;
+
 type
   TTestAggregateException = class(TmaxTestCase)
   published
     procedure AggregatesMultiple;
+    procedure QueueContinuesAfterAggregate;
   end;
 
   TTestAsyncDelivery = class(TmaxTestCase)
@@ -121,6 +126,7 @@ type
   TTestMetricsConcurrent = class(TmaxTestCase)
   published
     procedure TotalsReadWhilePostingAndCreatingTopics;
+    procedure StatsReadsAreSafeDuringTopicPublish;
   end;
 
   TPostThread = class(TThread)
@@ -173,6 +179,7 @@ type
   published
     procedure LateSubscriberGetsLastEvent;
     procedure ClearPreservesStickyConfig;
+    procedure TryPostStickyFirstCountsPost;
   end;
 
   TTarget = class
@@ -214,6 +221,7 @@ type
     procedure StrictRaisesOffMain;
     procedure DegradeToPostingRunsInline;
     procedure DegradeToAsyncRunsOffPostingThread;
+    procedure ClearDoesNotRebindMainThreadIdentity;
   end;
 
   {$IFDEF max_DELPHI}
@@ -223,6 +231,8 @@ type
     procedure AutoUnsubscribeClearsHandlers;
     procedure UnsubscribeAllForClearsAutoSubscriptions;
     procedure InvalidSignatureRaises;
+    procedure NamedNoArgBindsCorrectMethod;
+    procedure GuidOneParamBindsAndUnsubscribes;
   end;
   {$ENDIF}
 
@@ -231,7 +241,20 @@ type
     function GetValue: integer;
   end;
 
+  IPostResultGuidEvent = interface
+    ['{9F1962EE-B102-4A3D-AF64-DBAC6D3A0A7E}']
+    function GetValue: integer;
+  end;
+
   TIntEvent = class(TInterfacedObject, IIntEvent)
+  private
+    fVal: integer;
+  public
+    constructor Create(aValue: integer);
+    function GetValue: integer;
+  end;
+
+  TPostResultGuidEvent = class(TInterfacedObject, IPostResultGuidEvent)
   private
     fVal: integer;
   public
@@ -263,6 +286,43 @@ type
   published
     procedure TokenReleaseAutoUnsubscribes;
     procedure QueuedBeforeCancelSkipsExecution;
+    procedure ClearInvalidatesOldHandlesWithoutCrossUnsubscribe;
+  end;
+
+  TTestPostResult = class(TmaxTestCase)
+  published
+    procedure NoTopicReturnsNoTopic;
+    procedure DropNewestReturnsDropped;
+    procedure CoalescedReturnsCoalesced;
+    procedure AcceptedReturnsInlineOrQueued;
+  end;
+
+  TTestDispatchErrorDetails = class(TmaxTestCase)
+  published
+    procedure IncludesSubscriberMetadataForPost;
+    procedure IncludesMetadataForCoalescedAsyncHook;
+  end;
+
+  TTestTracingHooks = class(TmaxTestCase)
+  published
+    procedure EmitsEnqueueInvokeStartAndEnd;
+    procedure EmitsInvokeError;
+    procedure DisabledTraceProducesNoCallbacks;
+  end;
+
+  TTestBulkDispatch = class(TmaxTestCase)
+  published
+    procedure TypedBulkPreservesOrder;
+    procedure NamedOfBulkPreservesOrder;
+    procedure GuidOfBulkPreservesOrder;
+    procedure BulkAggregatesAcrossItems;
+  end;
+
+  TTestWildcardNamed = class(TmaxTestCase)
+  published
+    procedure PrefixAndGlobalWildcardMatch;
+    procedure UnsubscribeStopsWildcardDelivery;
+    procedure WildcardDispatchesWithoutPrecreatedNamedTopic;
   end;
 
   TTestMetricsCallbackTotals = class(TmaxTestCase)
@@ -333,6 +393,24 @@ type
     [maxSubscribe]
     procedure Bad(const aFirst, aSecond: integer);
   end;
+
+  TAutoSubNamedNoArg = class
+  public
+    FirstHits: integer;
+    SecondHits: integer;
+    [maxSubscribe('first')]
+    procedure OnFirst;
+    [maxSubscribe('second')]
+    procedure OnSecond;
+  end;
+
+  TAutoSubGuid = class
+  public
+    GuidHits: integer;
+    LastGuidValue: integer;
+    [maxSubscribe]
+    procedure OnGuid(const aValue: IIntEvent);
+  end;
 {$ENDIF}
 
 {$IFDEF max_DELPHI}
@@ -357,6 +435,25 @@ procedure TBadAutoSub.Bad(const aFirst, aSecond: integer);
 begin
   if aFirst = aSecond then
     Exit;
+end;
+
+procedure TAutoSubNamedNoArg.OnFirst;
+begin
+  Inc(FirstHits);
+end;
+
+procedure TAutoSubNamedNoArg.OnSecond;
+begin
+  Inc(SecondHits);
+end;
+
+procedure TAutoSubGuid.OnGuid(const aValue: IIntEvent);
+begin
+  Inc(GuidHits);
+  if aValue <> nil then
+    LastGuidValue := aValue.GetValue
+  else
+    LastGuidValue := 0;
 end;
 
 function LogsDir: string;
@@ -598,6 +695,42 @@ begin
       CheckEquals('second', e.Inner.Items[1].Message);
     end;
   end;
+end;
+
+procedure TTestAggregateException.QueueContinuesAfterAggregate;
+var
+  lBus: ImaxBus;
+  lDelivered: integer;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lDelivered := 0;
+
+  maxBusObj(lBus).Subscribe<integer>(
+    procedure(const aValue: integer)
+    begin
+      if aValue = 1 then
+        raise Exception.Create('first');
+      Inc(lDelivered);
+    end);
+  maxBusObj(lBus).Subscribe<integer>(
+    procedure(const aValue: integer)
+    begin
+      if aValue = 1 then
+        raise Exception.Create('second');
+      Inc(lDelivered);
+    end);
+
+  try
+    maxBusObj(lBus).Post<integer>(1);
+    Check(False, 'Expected aggregate exception');
+  except
+    on EmaxDispatchError do
+      ;
+  end;
+
+  maxBusObj(lBus).Post<integer>(2);
+  CheckEquals(2, lDelivered, 'Queue must continue draining after prior aggregate failure');
 end;
 
 { TTestAsyncDelivery }
@@ -1138,6 +1271,98 @@ begin
   end;
 end;
 
+procedure TTestMetricsConcurrent.StatsReadsAreSafeDuringTopicPublish;
+const
+  cTopicCount = 300;
+  cReadIterations = 4000;
+var
+  lBus: ImaxBus;
+  lBusObj: TmaxBus;
+  lQueues: ImaxBusQueues;
+  lMetrics: ImaxBusMetrics;
+  lPolicy: TmaxQueuePolicy;
+  lStart: TEvent;
+  lWriter: TThread;
+  lReader: TThread;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lBusObj := maxBusObj(lBus);
+  lQueues := lBus as ImaxBusQueues;
+  lMetrics := lBus as ImaxBusMetrics;
+
+  lPolicy.MaxDepth := 8;
+  lPolicy.Overflow := TmaxOverflow.DropNewest;
+  lPolicy.DeadlineUs := 0;
+
+  lStart := TEvent.Create(nil, True, False, '');
+  lWriter := nil;
+  lReader := nil;
+  try
+    lWriter := TThread.CreateAnonymousThread(
+      procedure
+      var
+        i: integer;
+        lName: string;
+      begin
+        if lStart.WaitFor(5000) <> wrSignaled then
+          Exit;
+        for i := 1 to cTopicCount do
+        begin
+          lName := 'metrics_race_' + IntToStr(i);
+          lQueues.SetPolicyNamed(lName, lPolicy);
+          lBusObj.PostNamed(lName);
+        end;
+      end);
+    lWriter.FreeOnTerminate := False;
+
+    lReader := TThread.CreateAnonymousThread(
+      procedure
+      var
+        i: integer;
+      begin
+        if lStart.WaitFor(5000) <> wrSignaled then
+          Exit;
+        for i := 1 to cReadIterations do
+        begin
+          lMetrics.GetTotals;
+          lMetrics.GetStatsNamed('metrics_race_' + IntToStr((i mod cTopicCount) + 1));
+          lBusObj.GetStatsFor<TMetricEvent>;
+        end;
+      end);
+    lReader.FreeOnTerminate := False;
+
+    lWriter.Start;
+    lReader.Start;
+    lStart.SetEvent;
+    lWriter.WaitFor;
+    lReader.WaitFor;
+
+    if lWriter.FatalException <> nil then
+    begin
+      if lWriter.FatalException is Exception then
+        Check(False, 'Writer failed: ' + Exception(lWriter.FatalException).ClassName + ': ' + Exception(lWriter.FatalException).Message)
+      else
+        Check(False, 'Writer failed with non-Exception fatal error');
+    end;
+
+    if lReader.FatalException <> nil then
+    begin
+      if lReader.FatalException is Exception then
+        Check(False, 'Reader failed: ' + Exception(lReader.FatalException).ClassName + ': ' + Exception(lReader.FatalException).Message)
+      else
+        Check(False, 'Reader failed with non-Exception fatal error');
+    end;
+  finally
+    lStart.SetEvent;
+    if lWriter <> nil then
+      lWriter.Free;
+    if lReader <> nil then
+      lReader.Free;
+    lStart.Free;
+  end;
+end;
+
 procedure TTestFuzz.RandomDeliveryNoDeadlock;
 const
   cTHREADS = 4;
@@ -1411,6 +1636,19 @@ begin
 end;
 
 function TIntEvent.GetValue: integer;
+begin
+  Result := fVal;
+end;
+
+{ TPostResultGuidEvent }
+
+constructor TPostResultGuidEvent.Create(aValue: integer);
+begin
+  inherited Create;
+  fVal := aValue;
+end;
+
+function TPostResultGuidEvent.GetValue: integer;
 begin
   Result := fVal;
 end;
@@ -1783,6 +2021,112 @@ begin
   end;
 end;
 
+procedure TTestMainThreadPolicy.ClearDoesNotRebindMainThreadIdentity;
+var
+  lBus: ImaxBus;
+  lSubBeforeClear: ImaxSubscription;
+  lSubAfterClear: ImaxSubscription;
+  lCleared: TEvent;
+  lGoPost: TEvent;
+  lWorker: TThread;
+  lRaisedBefore: boolean;
+  lRaisedAfter: boolean;
+  lRaisedClassBefore: string;
+  lRaisedClassAfter: string;
+  lGoSignaled: boolean;
+  lHandled: boolean;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  maxSetMainThreadPolicy(TmaxMainThreadPolicy.Strict);
+  lSubBeforeClear := nil;
+  lSubAfterClear := nil;
+  lWorker := nil;
+  lRaisedBefore := False;
+  lRaisedAfter := False;
+  lRaisedClassBefore := '';
+  lRaisedClassAfter := '';
+  lGoSignaled := False;
+  lHandled := False;
+  lCleared := TEvent.Create(nil, True, False, '');
+  lGoPost := TEvent.Create(nil, True, False, '');
+  try
+    lWorker := TThread.CreateAnonymousThread(
+      procedure
+      begin
+        try
+          maxBusObj(lBus).Post<integer>(1);
+        except
+          on lException: Exception do
+          begin
+            lRaisedBefore := True;
+            lRaisedClassBefore := lException.ClassName;
+          end;
+        end;
+
+        lBus.Clear;
+        lCleared.SetEvent;
+        lGoSignaled := lGoPost.WaitFor(5000) = wrSignaled;
+        try
+          maxBusObj(lBus).Post<integer>(2);
+        except
+          on lException: Exception do
+          begin
+            lRaisedAfter := True;
+            lRaisedClassAfter := lException.ClassName;
+          end;
+        end;
+      end);
+    lWorker.FreeOnTerminate := False;
+
+    lSubBeforeClear := maxBusObj(lBus).Subscribe<integer>(
+      procedure(const aValue: integer)
+      begin
+        lHandled := True;
+      end,
+      TmaxDelivery.Main);
+
+    lWorker.Start;
+    Check(lCleared.WaitFor(5000) = wrSignaled, 'worker clear timed out');
+
+    // Re-subscribe after worker Clear so posting still needs Main dispatch validation.
+    lSubBeforeClear := nil;
+    lSubAfterClear := maxBusObj(lBus).Subscribe<integer>(
+      procedure(const aValue: integer)
+      begin
+        lHandled := True;
+      end,
+      TmaxDelivery.Main);
+
+    // Verify we really have an active Main subscription after Clear.
+    lHandled := False;
+    maxBusObj(lBus).Post<integer>(99);
+    Check(lHandled, 'Expected active Main subscription after worker Clear');
+    lHandled := False;
+
+    lGoPost.SetEvent;
+    lWorker.WaitFor;
+
+    Check(lGoSignaled, 'Worker did not receive post-go signal');
+    CheckEquals(Ord(lRaisedBefore), Ord(lRaisedAfter), 'Clear must not change worker/main-thread classification');
+    if lRaisedBefore then
+    begin
+      CheckEquals('EmaxMainThreadRequired', lRaisedClassBefore);
+      CheckEquals('EmaxMainThreadRequired', lRaisedClassAfter);
+    end;
+    if lRaisedAfter then
+      Check(not lHandled, 'Main handler must not execute on worker thread in Strict mode');
+  finally
+    if lWorker <> nil then
+      lWorker.Free;
+    lSubAfterClear := nil;
+    lSubBeforeClear := nil;
+    maxSetMainThreadPolicy(TmaxMainThreadPolicy.DegradeToPosting);
+    lGoPost.Free;
+    lCleared.Free;
+  end;
+end;
+
 procedure TTestHighWaterReset.ResetsAfterDraining;
 var
   lBus: ImaxBus;
@@ -2030,6 +2374,56 @@ begin
     AutoUnsubscribe(lBad);
     lBad.Free;
     maxBus.Clear;
+  end;
+end;
+
+procedure TTestAutoSubscribe.NamedNoArgBindsCorrectMethod;
+var
+  lBusObj: TmaxBus;
+  lTarget: TAutoSubNamedNoArg;
+begin
+  lBusObj := maxBusObj;
+  lBusObj.Clear;
+  lTarget := TAutoSubNamedNoArg.Create;
+  try
+    AutoSubscribe(lTarget);
+
+    lBusObj.PostNamed('first');
+    lBusObj.PostNamed('second');
+    lBusObj.PostNamed('first');
+
+    CheckEquals(2, lTarget.FirstHits);
+    CheckEquals(1, lTarget.SecondHits);
+  finally
+    AutoUnsubscribe(lTarget);
+    lTarget.Free;
+    lBusObj.Clear;
+  end;
+end;
+
+procedure TTestAutoSubscribe.GuidOneParamBindsAndUnsubscribes;
+var
+  lBusObj: TmaxBus;
+  lTarget: TAutoSubGuid;
+begin
+  lBusObj := maxBusObj;
+  lBusObj.Clear;
+  lTarget := TAutoSubGuid.Create;
+  try
+    AutoSubscribe(lTarget);
+
+    lBusObj.PostGuidOf<IIntEvent>(TIntEvent.Create(42));
+    CheckEquals(1, lTarget.GuidHits);
+    CheckEquals(42, lTarget.LastGuidValue);
+
+    AutoUnsubscribe(lTarget);
+    lBusObj.PostGuidOf<IIntEvent>(TIntEvent.Create(99));
+    CheckEquals(1, lTarget.GuidHits);
+    CheckEquals(42, lTarget.LastGuidValue);
+  finally
+    AutoUnsubscribe(lTarget);
+    lTarget.Free;
+    lBusObj.Clear;
   end;
 end;
 {$ENDIF}
@@ -3478,6 +3872,27 @@ begin
   end;
 end;
 
+procedure TTestSticky.TryPostStickyFirstCountsPost;
+var
+  lBus: ImaxBus;
+  lBusObj: TmaxBus;
+  lStats: TmaxTopicStats;
+begin
+  lBus := maxBus;
+  lBusObj := maxBusObj(lBus);
+  lBus.Clear;
+  lBusObj.EnableSticky<integer>(True);
+  try
+    Check(lBusObj.TryPost<integer>(123), 'TryPost should succeed');
+    lStats := lBusObj.GetStatsFor<integer>;
+    CheckEquals(1, lStats.PostsTotal);
+    CheckEquals(0, lStats.DeliveredTotal);
+  finally
+    lBusObj.EnableSticky<integer>(False);
+    lBus.Clear;
+  end;
+end;
+
 { TWeakTargetProbe }
 
 procedure TWeakTargetProbe.OnInt(const aValue: integer);
@@ -3791,6 +4206,730 @@ begin
     lRelease.Free;
     lStarted.Free;
   end;
+end;
+
+procedure TTestSubscriptionTokens.ClearInvalidatesOldHandlesWithoutCrossUnsubscribe;
+var
+  lBus: ImaxBus;
+  lOldSub: ImaxSubscription;
+  lNewSub: ImaxSubscription;
+  lHits: integer;
+
+  {$IFDEF max_FPC}
+  procedure Handler(const aValue: integer);
+  begin
+    Inc(lHits);
+  end;
+  {$ENDIF}
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lOldSub := nil;
+  lNewSub := nil;
+  lHits := 0;
+  try
+    {$IFDEF max_FPC}
+    lOldSub := lBus.Subscribe<integer>(@Handler, TmaxDelivery.Posting);
+    lBus.Post<integer>(1);
+    {$ELSE}
+    lOldSub := maxBusObj(lBus).Subscribe<integer>(
+      procedure(const aValue: integer)
+      begin
+        Inc(lHits);
+      end,
+      TmaxDelivery.Posting);
+    maxBusObj(lBus).Post<integer>(1);
+    {$ENDIF}
+    CheckEquals(1, lHits);
+
+    lBus.Clear;
+
+    {$IFDEF max_FPC}
+    lNewSub := lBus.Subscribe<integer>(@Handler, TmaxDelivery.Posting);
+    {$ELSE}
+    lNewSub := maxBusObj(lBus).Subscribe<integer>(
+      procedure(const aValue: integer)
+      begin
+        Inc(lHits);
+      end,
+      TmaxDelivery.Posting);
+    {$ENDIF}
+    Check(lNewSub.IsActive);
+
+    lOldSub.Unsubscribe;
+    Check(lNewSub.IsActive, 'Old handle must not affect post-Clear subscription');
+
+    {$IFDEF max_FPC}
+    lBus.Post<integer>(2);
+    {$ELSE}
+    maxBusObj(lBus).Post<integer>(2);
+    {$ENDIF}
+    CheckEquals(2, lHits, 'New subscription must still receive after old handle unsubscribe');
+
+    lNewSub.Unsubscribe;
+
+    {$IFDEF max_FPC}
+    lBus.Post<integer>(3);
+    {$ELSE}
+    maxBusObj(lBus).Post<integer>(3);
+    {$ENDIF}
+    CheckEquals(2, lHits);
+  finally
+    lNewSub := nil;
+    lOldSub := nil;
+  end;
+end;
+
+{ TTestPostResult }
+
+procedure TTestPostResult.NoTopicReturnsNoTopic;
+var
+  lBus: ImaxBus;
+  lGuidEvt: IPostResultGuidEvent;
+  lEvt: TPostResultNoTopicEvent;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lGuidEvt := TPostResultGuidEvent.Create(1);
+  lEvt.Value := 42;
+
+  CheckEquals(Integer(TmaxPostResult.NoTopic), Integer(maxBusObj(lBus).PostResult<TPostResultNoTopicEvent>(lEvt)));
+  CheckEquals(Integer(TmaxPostResult.NoTopic), Integer(maxBusObj(lBus).PostResultNamed('__postresult_missing_named__')));
+  CheckEquals(Integer(TmaxPostResult.NoTopic), Integer(maxBusObj(lBus).PostResultNamedOf<TPostResultNoTopicEvent>('__postresult_missing_named__', lEvt)));
+  CheckEquals(Integer(TmaxPostResult.NoTopic), Integer(maxBusObj(lBus).PostResultGuidOf<IPostResultGuidEvent>(lGuidEvt)));
+end;
+
+procedure TTestPostResult.DropNewestReturnsDropped;
+var
+  lBus: ImaxBus;
+  lPolicy: TmaxQueuePolicy;
+  lStarted: TEvent;
+  lRelease: TEvent;
+  lThread: TThread;
+  lPostResult: TmaxPostResult;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lStarted := TEvent.Create(nil, True, False, '');
+  lRelease := TEvent.Create(nil, True, False, '');
+  lThread := nil;
+  try
+    lPolicy.MaxDepth := 1;
+    lPolicy.Overflow := TmaxOverflow.DropNewest;
+    lPolicy.DeadlineUs := 0;
+    maxBusObj(lBus).SetPolicyFor<integer>(lPolicy);
+
+    maxBusObj(lBus).Subscribe<integer>(
+      procedure(const aValue: integer)
+      begin
+        if aValue = 1 then
+        begin
+          lStarted.SetEvent;
+          lRelease.WaitFor(5000);
+        end;
+      end,
+      TmaxDelivery.Posting);
+
+    lThread := TThread.CreateAnonymousThread(
+      procedure
+      begin
+        maxBusObj(lBus).PostResult<integer>(1);
+      end);
+    lThread.FreeOnTerminate := False;
+    lThread.Start;
+
+    Check(lStarted.WaitFor(2000) = wrSignaled, 'First dispatch did not start');
+    maxBusObj(lBus).PostResult<integer>(2); // fills single queued slot
+    lPostResult := maxBusObj(lBus).PostResult<integer>(3);
+    CheckEquals(Integer(TmaxPostResult.Dropped), Integer(lPostResult));
+  finally
+    lRelease.SetEvent;
+    if lThread <> nil then
+    begin
+      lThread.WaitFor;
+      lThread.Free;
+    end;
+    lRelease.Free;
+    lStarted.Free;
+  end;
+end;
+
+procedure TTestPostResult.CoalescedReturnsCoalesced;
+var
+  lBus: ImaxBus;
+  lEvt: TKeyed;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  maxBusObj(lBus).EnableCoalesceOf<TKeyed>(
+    function(const aValue: TKeyed): TmaxString
+    begin
+      Result := aValue.Key;
+    end,
+    10000);
+  try
+    maxBusObj(lBus).Subscribe<TKeyed>(
+      procedure(const aValue: TKeyed)
+      begin
+        if aValue.Value = -1 then
+          Exit;
+      end,
+      TmaxDelivery.Posting);
+
+    lEvt.Key := 'A';
+    lEvt.Value := 1;
+    CheckEquals(Integer(TmaxPostResult.Coalesced), Integer(maxBusObj(lBus).PostResult<TKeyed>(lEvt)));
+    lEvt.Value := 2;
+    CheckEquals(Integer(TmaxPostResult.Coalesced), Integer(maxBusObj(lBus).PostResult<TKeyed>(lEvt)));
+  finally
+    maxBusObj(lBus).EnableCoalesceOf<TKeyed>(nil);
+  end;
+end;
+
+procedure TTestPostResult.AcceptedReturnsInlineOrQueued;
+var
+  lBus: ImaxBus;
+  lPolicy: TmaxQueuePolicy;
+  lStarted: TEvent;
+  lRelease: TEvent;
+  lThread: TThread;
+  lInlineResult: TmaxPostResult;
+  lQueuedResult: TmaxPostResult;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+
+  maxBusObj(lBus).Subscribe<integer>(
+    procedure(const aValue: integer)
+    begin
+      if aValue = -1 then
+        Exit;
+    end,
+    TmaxDelivery.Posting);
+  lInlineResult := maxBusObj(lBus).PostResult<integer>(11);
+  CheckEquals(Integer(TmaxPostResult.DispatchedInline), Integer(lInlineResult));
+
+  lBus.Clear;
+  lStarted := TEvent.Create(nil, True, False, '');
+  lRelease := TEvent.Create(nil, True, False, '');
+  lThread := nil;
+  try
+    lPolicy.MaxDepth := 2;
+    lPolicy.Overflow := TmaxOverflow.DropNewest;
+    lPolicy.DeadlineUs := 0;
+    maxBusObj(lBus).SetPolicyFor<integer>(lPolicy);
+
+    maxBusObj(lBus).Subscribe<integer>(
+      procedure(const aValue: integer)
+      begin
+        if aValue = 1 then
+        begin
+          lStarted.SetEvent;
+          lRelease.WaitFor(5000);
+        end;
+      end,
+      TmaxDelivery.Posting);
+
+    lThread := TThread.CreateAnonymousThread(
+      procedure
+      begin
+        maxBusObj(lBus).PostResult<integer>(1);
+      end);
+    lThread.FreeOnTerminate := False;
+    lThread.Start;
+
+    Check(lStarted.WaitFor(2000) = wrSignaled, 'First dispatch did not start');
+    lQueuedResult := maxBusObj(lBus).PostResult<integer>(22);
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(lQueuedResult));
+  finally
+    lRelease.SetEvent;
+    if lThread <> nil then
+    begin
+      lThread.WaitFor;
+      lThread.Free;
+    end;
+    lRelease.Free;
+    lStarted.Free;
+  end;
+end;
+
+{ TTestDispatchErrorDetails }
+
+procedure TTestDispatchErrorDetails.IncludesSubscriberMetadataForPost;
+var
+  lBus: ImaxBus;
+  lTypeName: string;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lTypeName := GetTypeName(TypeInfo(integer));
+
+  maxBusObj(lBus).Subscribe<integer>(
+    procedure(const aValue: integer)
+    begin
+      raise Exception.Create('detail-first');
+    end,
+    TmaxDelivery.Posting);
+  maxBusObj(lBus).Subscribe<integer>(
+    procedure(const aValue: integer)
+    begin
+      raise Exception.Create('detail-second');
+    end,
+    TmaxDelivery.Posting);
+
+  try
+    maxBusObj(lBus).Post<integer>(7);
+    Check(False, 'Expected EmaxDispatchError');
+  except
+    on lEx: EmaxDispatchError do
+    begin
+      CheckEquals(2, lEx.Inner.Count);
+      CheckEquals(2, Length(lEx.Details));
+
+      CheckEquals('Exception', lEx.Details[0].ExceptionClassName);
+      CheckEquals('detail-first', lEx.Details[0].ExceptionMessage);
+      CheckEquals(lTypeName, lEx.Details[0].Topic);
+      CheckEquals(Integer(TmaxDelivery.Posting), Integer(lEx.Details[0].Delivery));
+      Check(lEx.Details[0].SubscriberToken > 0);
+      CheckEquals(0, lEx.Details[0].SubscriberIndex);
+
+      CheckEquals('Exception', lEx.Details[1].ExceptionClassName);
+      CheckEquals('detail-second', lEx.Details[1].ExceptionMessage);
+      CheckEquals(lTypeName, lEx.Details[1].Topic);
+      CheckEquals(Integer(TmaxDelivery.Posting), Integer(lEx.Details[1].Delivery));
+      Check(lEx.Details[1].SubscriberToken > 0);
+      CheckEquals(1, lEx.Details[1].SubscriberIndex);
+    end;
+  end;
+end;
+
+procedure TTestDispatchErrorDetails.IncludesMetadataForCoalescedAsyncHook;
+var
+  lBus: ImaxBus;
+  lEvt: TKeyed;
+  lPrevScheduler: IEventNexusScheduler;
+  lSignal: TEvent;
+  lTopicName: string;
+  lWasDispatchError: boolean;
+  lInnerCount: integer;
+  lDetails: TArray<TmaxDispatchErrorDetail>;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lSignal := TEvent.Create(nil, True, False, '');
+  lPrevScheduler := maxGetAsyncScheduler;
+  lTopicName := '';
+  lWasDispatchError := False;
+  lInnerCount := 0;
+  lDetails := nil;
+  maxSetAsyncScheduler(TInlineScheduler.Create);
+  maxSetAsyncErrorHandler(
+    procedure(const aTopic: string; const aE: Exception)
+    begin
+      lTopicName := aTopic;
+      lWasDispatchError := aE is EmaxDispatchError;
+      if lWasDispatchError then
+      begin
+        lInnerCount := EmaxDispatchError(aE).Inner.Count;
+        lDetails := Copy(EmaxDispatchError(aE).Details);
+      end;
+      lSignal.SetEvent;
+    end);
+  maxBusObj(lBus).EnableCoalesceOf<TKeyed>(
+    function(const aValue: TKeyed): TmaxString
+    begin
+      Result := aValue.Key;
+    end,
+    0);
+  try
+    maxBusObj(lBus).Subscribe<TKeyed>(
+      procedure(const aValue: TKeyed)
+      begin
+        raise Exception.Create('coalesced-detail');
+      end,
+      TmaxDelivery.Posting);
+
+    lEvt.Key := 'K';
+    lEvt.Value := 10;
+    maxBusObj(lBus).Post<TKeyed>(lEvt);
+
+    Check(lSignal.WaitFor(2000) = wrSignaled, 'Async error hook was not called');
+    Check(lWasDispatchError, 'Expected EmaxDispatchError from coalesced path');
+    CheckEquals(1, lInnerCount);
+    CheckEquals(1, Length(lDetails));
+    CheckEquals('Exception', lDetails[0].ExceptionClassName);
+    CheckEquals('coalesced-detail', lDetails[0].ExceptionMessage);
+    CheckEquals(GetTypeName(TypeInfo(TKeyed)), lTopicName);
+    CheckEquals(lTopicName, lDetails[0].Topic);
+    CheckEquals(Integer(TmaxDelivery.Posting), Integer(lDetails[0].Delivery));
+    Check(lDetails[0].SubscriberToken > 0);
+    CheckEquals(0, lDetails[0].SubscriberIndex);
+  finally
+    maxBusObj(lBus).EnableCoalesceOf<TKeyed>(nil);
+    maxSetAsyncErrorHandler(nil);
+    maxSetAsyncScheduler(lPrevScheduler);
+    lSignal.Free;
+  end;
+end;
+
+{ TTestTracingHooks }
+
+procedure TTestTracingHooks.EmitsEnqueueInvokeStartAndEnd;
+var
+  lBus: ImaxBus;
+  lPrevScheduler: IEventNexusScheduler;
+  lEvents: TArray<TmaxDispatchTrace>;
+  lIdx: integer;
+  lEnqueueIdx: integer;
+  lStartIdx: integer;
+  lEndIdx: integer;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lPrevScheduler := maxGetAsyncScheduler;
+  lEvents := nil;
+  maxSetAsyncScheduler(TInlineScheduler.Create);
+  maxSetDispatchTrace(
+    procedure(const aTrace: TmaxDispatchTrace)
+    var
+      lCount: integer;
+    begin
+      lCount := Length(lEvents);
+      SetLength(lEvents, lCount + 1);
+      lEvents[lCount] := aTrace;
+    end);
+  try
+    maxBusObj(lBus).Subscribe<integer>(
+      procedure(const aValue: integer)
+      begin
+        if aValue = -1 then
+          Exit;
+      end,
+      TmaxDelivery.Async);
+    maxBusObj(lBus).Post<integer>(5);
+
+    lEnqueueIdx := -1;
+    lStartIdx := -1;
+    lEndIdx := -1;
+    for lIdx := 0 to High(lEvents) do
+    begin
+      if (lEnqueueIdx = -1) and (lEvents[lIdx].Kind = TmaxTraceKind.TraceEnqueue) then
+        lEnqueueIdx := lIdx;
+      if (lStartIdx = -1) and (lEvents[lIdx].Kind = TmaxTraceKind.TraceInvokeStart) then
+        lStartIdx := lIdx;
+      if (lEndIdx = -1) and (lEvents[lIdx].Kind = TmaxTraceKind.TraceInvokeEnd) then
+        lEndIdx := lIdx;
+    end;
+
+    Check(lEnqueueIdx >= 0, 'Missing TraceEnqueue event');
+    Check(lStartIdx >= 0, 'Missing TraceInvokeStart event');
+    Check(lEndIdx >= 0, 'Missing TraceInvokeEnd event');
+    Check(lStartIdx > lEnqueueIdx, 'InvokeStart should happen after enqueue');
+    Check(lEndIdx > lStartIdx, 'InvokeEnd should happen after InvokeStart');
+    CheckEquals(GetTypeName(TypeInfo(integer)), lEvents[lStartIdx].Topic);
+    CheckEquals(Integer(TmaxDelivery.Async), Integer(lEvents[lStartIdx].Delivery));
+    Check(lEvents[lEndIdx].DurationUs >= 0);
+  finally
+    maxSetDispatchTrace(nil);
+    maxSetAsyncScheduler(lPrevScheduler);
+  end;
+end;
+
+procedure TTestTracingHooks.EmitsInvokeError;
+var
+  lBus: ImaxBus;
+  lPrevScheduler: IEventNexusScheduler;
+  lEvents: TArray<TmaxDispatchTrace>;
+  lIdx: integer;
+  lErrorIdx: integer;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lPrevScheduler := maxGetAsyncScheduler;
+  lEvents := nil;
+  maxSetAsyncScheduler(TInlineScheduler.Create);
+  maxSetDispatchTrace(
+    procedure(const aTrace: TmaxDispatchTrace)
+    var
+      lCount: integer;
+    begin
+      lCount := Length(lEvents);
+      SetLength(lEvents, lCount + 1);
+      lEvents[lCount] := aTrace;
+    end);
+  try
+    maxBusObj(lBus).Subscribe<integer>(
+      procedure(const aValue: integer)
+      begin
+        raise Exception.Create('trace-error');
+      end,
+      TmaxDelivery.Async);
+    maxBusObj(lBus).Post<integer>(9);
+
+    lErrorIdx := -1;
+    for lIdx := 0 to High(lEvents) do
+      if lEvents[lIdx].Kind = TmaxTraceKind.TraceInvokeError then
+      begin
+        lErrorIdx := lIdx;
+        Break;
+      end;
+
+    Check(lErrorIdx >= 0, 'Missing TraceInvokeError event');
+    CheckEquals(GetTypeName(TypeInfo(integer)), lEvents[lErrorIdx].Topic);
+    CheckEquals(Integer(TmaxDelivery.Async), Integer(lEvents[lErrorIdx].Delivery));
+    CheckEquals('Exception', lEvents[lErrorIdx].ExceptionClassName);
+    CheckEquals('trace-error', lEvents[lErrorIdx].ExceptionMessage);
+    Check(lEvents[lErrorIdx].DurationUs >= 0);
+  finally
+    maxSetDispatchTrace(nil);
+    maxSetAsyncScheduler(lPrevScheduler);
+  end;
+end;
+
+procedure TTestTracingHooks.DisabledTraceProducesNoCallbacks;
+var
+  lBus: ImaxBus;
+  lTraceCalls: integer;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lTraceCalls := 0;
+  maxSetDispatchTrace(
+    procedure(const aTrace: TmaxDispatchTrace)
+    begin
+      Inc(lTraceCalls);
+      if aTrace.DurationUs = -1 then
+        Exit;
+    end);
+  maxSetDispatchTrace(nil);
+  try
+    maxBusObj(lBus).Subscribe<integer>(
+      procedure(const aValue: integer)
+      begin
+        if aValue = -1 then
+          Exit;
+      end,
+      TmaxDelivery.Posting);
+    maxBusObj(lBus).Post<integer>(1);
+    CheckEquals(0, lTraceCalls);
+  finally
+    maxSetDispatchTrace(nil);
+  end;
+end;
+
+{ TTestBulkDispatch }
+
+procedure TTestBulkDispatch.TypedBulkPreservesOrder;
+var
+  lBus: ImaxBus;
+  lValues: TList<integer>;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lValues := TList<integer>.Create;
+  try
+    maxBusObj(lBus).Subscribe<integer>(
+      procedure(const aValue: integer)
+      begin
+        lValues.Add(aValue);
+      end,
+      TmaxDelivery.Posting);
+    maxBusObj(lBus).PostMany<integer>([1, 2, 3, 4]);
+    CheckEquals(4, lValues.Count);
+    CheckEquals(1, lValues[0]);
+    CheckEquals(2, lValues[1]);
+    CheckEquals(3, lValues[2]);
+    CheckEquals(4, lValues[3]);
+  finally
+    lValues.Free;
+  end;
+end;
+
+procedure TTestBulkDispatch.NamedOfBulkPreservesOrder;
+var
+  lBus: ImaxBus;
+  lValues: TList<integer>;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lValues := TList<integer>.Create;
+  try
+    maxBusObj(lBus).SubscribeNamedOf<integer>('bulk.named',
+      procedure(const aValue: integer)
+      begin
+        lValues.Add(aValue);
+      end,
+      TmaxDelivery.Posting);
+    maxBusObj(lBus).PostManyNamedOf<integer>('bulk.named', [7, 8, 9]);
+    CheckEquals(3, lValues.Count);
+    CheckEquals(7, lValues[0]);
+    CheckEquals(8, lValues[1]);
+    CheckEquals(9, lValues[2]);
+  finally
+    lValues.Free;
+  end;
+end;
+
+procedure TTestBulkDispatch.GuidOfBulkPreservesOrder;
+var
+  lBus: ImaxBus;
+  lValues: TList<integer>;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lValues := TList<integer>.Create;
+  try
+    maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
+      procedure(const aValue: IIntEvent)
+      begin
+        lValues.Add(aValue.GetValue);
+      end,
+      TmaxDelivery.Posting);
+    maxBusObj(lBus).PostManyGuidOf<IIntEvent>([
+      IIntEvent(TIntEvent.Create(5)),
+      IIntEvent(TIntEvent.Create(6))
+    ]);
+    CheckEquals(2, lValues.Count);
+    CheckEquals(5, lValues[0]);
+    CheckEquals(6, lValues[1]);
+  finally
+    lValues.Free;
+  end;
+end;
+
+procedure TTestBulkDispatch.BulkAggregatesAcrossItems;
+var
+  lBus: ImaxBus;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  maxBusObj(lBus).Subscribe<integer>(
+    procedure(const aValue: integer)
+    begin
+      raise Exception.Create('bulk-first');
+    end,
+    TmaxDelivery.Posting);
+  maxBusObj(lBus).Subscribe<integer>(
+    procedure(const aValue: integer)
+    begin
+      raise Exception.Create('bulk-second');
+    end,
+    TmaxDelivery.Posting);
+  try
+    maxBusObj(lBus).PostMany<integer>([10, 20]);
+    Check(False, 'Expected EmaxDispatchError from bulk post');
+  except
+    on lEx: EmaxDispatchError do
+    begin
+      CheckEquals(4, lEx.Inner.Count);
+      CheckEquals(4, Length(lEx.Details));
+      CheckEquals('bulk-first', lEx.Inner[0].Message);
+      CheckEquals('bulk-second', lEx.Inner[1].Message);
+      CheckEquals('bulk-first', lEx.Inner[2].Message);
+      CheckEquals('bulk-second', lEx.Inner[3].Message);
+    end;
+  end;
+end;
+
+{ TTestWildcardNamed }
+
+procedure TTestWildcardNamed.PrefixAndGlobalWildcardMatch;
+var
+  lBus: ImaxBus;
+  lExactHits: integer;
+  lPrefixHits: integer;
+  lGlobalHits: integer;
+  lOrder: TList<string>;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lExactHits := 0;
+  lPrefixHits := 0;
+  lGlobalHits := 0;
+  lOrder := TList<string>.Create;
+  try
+    maxBusObj(lBus).SubscribeNamed('order.created',
+      procedure
+      begin
+        Inc(lExactHits);
+        lOrder.Add('exact');
+      end,
+      TmaxDelivery.Posting);
+    maxBusObj(lBus).SubscribeNamedWildcard('order.*',
+      procedure
+      begin
+        Inc(lPrefixHits);
+        lOrder.Add('prefix');
+      end,
+      TmaxDelivery.Posting);
+    maxBusObj(lBus).SubscribeNamedWildcard('*',
+      procedure
+      begin
+        Inc(lGlobalHits);
+        lOrder.Add('global');
+      end,
+      TmaxDelivery.Posting);
+
+    maxBusObj(lBus).PostNamed('order.created');
+    maxBusObj(lBus).PostNamed('order.updated');
+    maxBusObj(lBus).PostNamed('user.created');
+
+    CheckEquals(1, lExactHits);
+    CheckEquals(2, lPrefixHits);
+    CheckEquals(3, lGlobalHits);
+    CheckEquals(6, lOrder.Count);
+    CheckEquals('exact', lOrder[0]);
+    CheckEquals('prefix', lOrder[1]);
+    CheckEquals('global', lOrder[2]);
+    CheckEquals('prefix', lOrder[3]);
+    CheckEquals('global', lOrder[4]);
+    CheckEquals('global', lOrder[5]);
+  finally
+    lOrder.Free;
+  end;
+end;
+
+procedure TTestWildcardNamed.UnsubscribeStopsWildcardDelivery;
+var
+  lBus: ImaxBus;
+  lHits: integer;
+  lSub: ImaxSubscription;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lHits := 0;
+  lSub := maxBusObj(lBus).SubscribeNamedWildcard('room.*',
+    procedure
+    begin
+      Inc(lHits);
+    end,
+    TmaxDelivery.Posting);
+
+  maxBusObj(lBus).PostNamed('room.1');
+  lSub.Unsubscribe;
+  maxBusObj(lBus).PostNamed('room.2');
+  CheckEquals(1, lHits);
+end;
+
+procedure TTestWildcardNamed.WildcardDispatchesWithoutPrecreatedNamedTopic;
+var
+  lBus: ImaxBus;
+  lHits: integer;
+  lResult: TmaxPostResult;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lHits := 0;
+  maxBusObj(lBus).SubscribeNamedWildcard('dynamic.*',
+    procedure
+    begin
+      Inc(lHits);
+    end,
+    TmaxDelivery.Posting);
+
+  lResult := maxBusObj(lBus).PostResultNamed('dynamic.alpha');
+  CheckEquals(Integer(TmaxPostResult.DispatchedInline), Integer(lResult));
+  CheckEquals(1, lHits);
 end;
 
 { TTestSchedulers }
