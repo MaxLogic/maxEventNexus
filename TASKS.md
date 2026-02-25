@@ -1,9 +1,9 @@
 # Tasks
-Next task ID: T-1058
+Next task ID: T-1071
 
 ## Summary
 Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
-Done tasks: 80
+Done tasks: 93
 
 ## In Progress
 
@@ -25,6 +25,122 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1070 [CORE] Fix Delphi AutoSubscribe binding for one-parameter handlers
+Summary: Replaced Delphi AutoSubscribe one-parameter binding with an internal bridge that no longer depends on generic-method RTTI discovery, restoring typed/named/guid attributed handler support.
+
+Details:
+- Removed `InvokeGenericObjectSubscribe` from AutoSubscribe one-parameter paths and added internal bridge subscriptions keyed by typed, named+typed, and guid channels.
+- Added auto-bridge dispatch integration in `Post*`/`TryPost*` flows so attributed one-parameter handlers receive events across typed/named/guid families.
+- `UnsubscribeAllFor` now also runs `AutoUnsubscribeInstance` to keep auto-registered handlers and handle lifetimes consistent after target-wide unsubscribe.
+- Added regression coverage `TTestAutoSubscribe.GuidOneParamBindsAndUnsubscribes`.
+- Proof: `./build-and-run-tests.sh` (SUCCESS).
+- Proof: `sed -n '31,80p' tests/MaxEventNexusTests.dpr | rg -o "TTest[A-Za-z0-9_]+" | sort -u | wc -l` (output: `30`).
+
+### T-1069 [TEST] Include interface bridge coverage in legacy suite runner
+Summary: Added the previously omitted fixtures (`TTestAutoSubscribe`, `TTestMetricsConcurrent`, `TTestInterfaceGenerics`) to the legacy RTTI suite invocation so those feature slices are validated in regular unit-test runs.
+
+Details:
+- Updated `tests/MaxEventNexusTests.dpr` `RunPublishedTests` fixture list to include all previously missing fixture classes.
+- This closes the coverage gap where defined test classes existed but were not executed by the DUnitX wrapper fixture.
+- Proof: `sed -n '31,80p' tests/MaxEventNexusTests.dpr | rg -o "TTest[A-Za-z0-9_]+" | sort -u | wc -l` (output: `30`).
+- Follow-up: Full suite now surfaces `TTestAutoSubscribe` failure tracked as `T-1070`.
+
+### T-1068 [CORE] Make pre-Clear subscription handles inert
+Summary: `Clear` now invalidates pre-clear subscription state so stale handles cannot unsubscribe post-clear subscribers.
+
+Details:
+- `TTypedTopic.ResetTopic` and `TNamedTopic.ResetTopic` now deactivate all current subscription states before clearing subscriber arrays.
+- Topic token counters are no longer reset during `ResetTopic`, preventing token reuse collisions across clear cycles.
+- Added regression test `TTestSubscriptionTokens.ClearInvalidatesOldHandlesWithoutCrossUnsubscribe`.
+- Proof: `./build-and-run-tests.sh` (SUCCESS).
+
+### T-1063 [API] Add posting outcome result API
+Summary: Added additive `PostResult*` APIs that report posting outcomes without changing existing `Post*`/`TryPost*` signatures.
+
+Details:
+- Added `TmaxPostResult = (NoTopic, Dropped, Coalesced, Queued, DispatchedInline)`.
+- Added `PostResult<T>`, `PostResultNamed`, `PostResultNamedOf<T>`, and `PostResultGuidOf<T>`.
+- Added regression tests under `TTestPostResult` covering no-topic, dropped, coalesced, queued, and inline outcomes.
+- Proof: `./build-and-run-tests.sh` (SUCCESS).
+
+### T-1064 [OBS] Add dispatch tracing hooks
+Summary: Added opt-in dispatch tracing with lifecycle events and timing metadata.
+
+Details:
+- Added `TmaxDispatchTrace`, `TmaxTraceKind`, and `maxSetDispatchTrace`.
+- Emitted `TraceEnqueue` from topic enqueue path and `TraceInvokeStart/End/Error` from dispatch invoke path.
+- Added regression tests under `TTestTracingHooks` for sequence/metadata, error events, and disabled-trace no-op behavior.
+- Proof: `./build-and-run-tests.sh` (SUCCESS).
+
+### T-1065 [API] Add bulk dispatch API
+Summary: Added batch post helpers for typed, named-of, and guid-of families while preserving per-topic ordering semantics.
+
+Details:
+- Added `PostMany<T>`, `PostManyNamedOf<T>`, and `PostManyGuidOf<T>`.
+- Batch APIs merge per-item `EmaxDispatchError` failures into a single aggregate error on completion.
+- Added regression tests under `TTestBulkDispatch` for order guarantees and batch error aggregation.
+- Proof: `./build-and-run-tests.sh` (SUCCESS).
+
+### T-1066 [API] Add named wildcard subscriptions
+Summary: Added wildcard subscriptions for named topics with deterministic precedence and full token lifecycle support.
+
+Details:
+- Added `SubscribeNamedWildcard` with grammar `*` and `prefix*` (single trailing wildcard).
+- Named dispatch now evaluates exact subscribers first, then wildcard matches sorted by longer prefix then token order.
+- Added wildcard subscription handle type and clear/unsubscribe lifecycle support.
+- Added regression tests under `TTestWildcardNamed` for matching, precedence, unsubscribe correctness, and on-demand dispatch without pre-created named topic.
+- Proof: `./build-and-run-tests.sh` (SUCCESS).
+
+### T-1067 [CORE] Enrich EmaxDispatchError metadata payload
+Summary: Aggregate dispatch errors now carry structured per-failure metadata while keeping `EmaxDispatchError` as the raised type.
+
+Details:
+- Added `TmaxDispatchErrorDetail` and `EmaxDispatchError.Details`.
+- Updated synchronous and coalesced aggregate paths to collect details (class/message/topic/delivery/subscriber token/index).
+- Added regression tests under `TTestDispatchErrorDetails` covering direct posting and coalesced async-hook error flows.
+- Proof: `./build-and-run-tests.sh` (SUCCESS).
+
+### T-1062 [CORE] Fix AutoSubscribe named zero-arg method binding capture
+Summary: Fixed Delphi AutoSubscribe named zero-argument binding so each attributed method keeps its own stable invocation target.
+
+Details:
+- Added `MakeNamedAutoMethodProc` helper to bind a copied `TMethod` pointer per subscription instead of capturing loop-local RTTI method state.
+- Added explicit abstract-method rejection guard on named zero-argument auto-subscribe path.
+- Added regression test `TTestAutoSubscribe.NamedNoArgBindsCorrectMethod`.
+- Proof: `./build-and-run-tests.sh` (SUCCESS).
+
+### T-1061 [CORE] Preserve bus main-thread identity across Clear
+Summary: Stopped `Clear` from rebinding bus main-thread identity and verified strict-mode worker classification remains stable across `Clear`.
+
+Details:
+- Removed `fMainThreadId` reassignment from `TmaxBus.Clear`.
+- Added regression test `TTestMainThreadPolicy.ClearDoesNotRebindMainThreadIdentity` that compares strict-mode behavior before vs after worker-thread `Clear`.
+- Proof: `./build-and-run-tests.sh` (SUCCESS).
+
+### T-1060 [METRICS] Count first sticky TryPost call in PostsTotal
+Summary: Sticky first-call `TryPost*` paths now increment `PostsTotal`, matching regular post metrics semantics.
+
+Details:
+- Added `AddPost` in sticky-first creation branches for `TryPost<T>`, `TryPostNamed`, `TryPostNamedOf<T>`, and `TryPostGuidOf<T>`.
+- Added regression test `TTestSticky.TryPostStickyFirstCountsPost`.
+- Proof: `./build-and-run-tests.sh` (SUCCESS).
+
+### T-1059 [CORE] Make metrics index snapshot access concurrency-safe
+Summary: Eliminated unsynchronized metrics-index reads by taking the metrics read lock before snapshotting `fMetricsIndex`.
+
+Details:
+- Wrapped `fMetricsIndex` capture in `fMetricsLock.BeginRead/EndRead` for `GetStatsFor<T>`, `GetStatsGuidOf<T>`, `GetStatsNamed`, and `GetTotals`.
+- Added concurrent read/write regression test `TTestMetricsConcurrent.StatsReadsAreSafeDuringTopicPublish`.
+- Proof: `./build-and-run-tests.sh` (SUCCESS).
+
+### T-1058 [CORE] Keep topic queue draining after aggregated handler failures
+Summary: Queue processing now recovers correctly after synchronous handler exceptions so later items continue draining.
+
+Details:
+- Hardened `TmaxTopicBase.Enqueue` processing loop: when queued work raises, reset `fProcessing`, pulse waiters, and re-raise.
+- Added regression test `TTestAggregateException.QueueContinuesAfterAggregate`.
+- Proof: `./build-and-run-tests.sh` (SUCCESS).
 
 ### T-1057 [PERF] Add benchmark regression threshold gate
 Summary: Added deterministic benchmark threshold gates for scheduler CSV output, with pass/fail behavior on both Linux/WSL and Windows.
