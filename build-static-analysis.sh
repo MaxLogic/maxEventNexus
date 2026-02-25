@@ -8,6 +8,8 @@ OUT_DIR="${ROOT_DIR}/build/analysis"
 SKILL_DIR="${STATIC_ANALYSIS_SKILL_DIR:-$HOME/.codex/skills/delphi-static-analysis}"
 DOCTOR_LOG="${OUT_DIR}/doctor.txt"
 ANALYZE_LOG="${OUT_DIR}/analyze.log"
+THRESHOLD_FILE="${OUT_DIR}/analysis-thresholds.csv"
+THRESHOLD_BACKUP=""
 PAL_PATH_UNIX=""
 PAL_PATH_WIN=""
 
@@ -58,10 +60,20 @@ export DAK_OUT="${OUT_DIR}"
 export DAK_CLEAN=1
 export DAK_WRITE_SUMMARY=1
 
+if [[ -f "${THRESHOLD_FILE}" ]]; then
+  THRESHOLD_BACKUP="$(mktemp)"
+  cp "${THRESHOLD_FILE}" "${THRESHOLD_BACKUP}"
+fi
+
 set +e
 bash "${SKILL_DIR}/analyze.sh" "${PROJECT_PATH}" >"${ANALYZE_LOG}" 2>&1
 ANALYZE_EXIT=$?
 set -e
+
+if [[ -n "${THRESHOLD_BACKUP}" ]] && [[ -f "${THRESHOLD_BACKUP}" ]]; then
+  cp "${THRESHOLD_BACKUP}" "${THRESHOLD_FILE}"
+  rm -f "${THRESHOLD_BACKUP}"
+fi
 
 if [[ ! -f "${OUT_DIR}/summary.md" ]]; then
   cat "${ANALYZE_LOG}" >&2

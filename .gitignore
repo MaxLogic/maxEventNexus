@@ -80,7 +80,8 @@ reference/
 .github/
 bench/scheduler-summary.csv
 last-session.md
-build/analysis/
+build/analysis/*
+!build/analysis/analysis-thresholds.csv
 
 # Local workflow preference
 spec.md

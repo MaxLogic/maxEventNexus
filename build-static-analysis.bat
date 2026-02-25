@@ -6,6 +6,8 @@ set "PROJECT_PATH=%ROOT_DIR%tests\MaxEventNexusTests.dproj"
 set "OUT_DIR=%ROOT_DIR%build\analysis"
 set "SKILL_DIR=%STATIC_ANALYSIS_SKILL_DIR%"
 set "PAL_EXE="
+set "THRESHOLD_FILE=%OUT_DIR%\analysis-thresholds.csv"
+set "THRESHOLD_BACKUP=%TEMP%\maxeventnexus-analysis-thresholds-%RANDOM%%RANDOM%.csv"
 
 if not defined SKILL_DIR set "SKILL_DIR=%USERPROFILE%\.codex\skills\delphi-static-analysis"
 if not exist "%SKILL_DIR%\doctor.bat" (
@@ -45,6 +47,10 @@ set "DAK_OUT=%OUT_DIR%"
 set "DAK_CLEAN=1"
 set "DAK_WRITE_SUMMARY=1"
 
+if exist "%THRESHOLD_FILE%" (
+  copy /Y "%THRESHOLD_FILE%" "%THRESHOLD_BACKUP%" >nul
+)
+
 if defined PALCMD_PATH if exist "%PALCMD_PATH%" set "PAL_EXE=%PALCMD_PATH%"
 if not defined PAL_EXE if exist "C:\Program Files\Peganza\Pascal Analyzer 9\palcmd.exe" set "PAL_EXE=C:\Program Files\Peganza\Pascal Analyzer 9\palcmd.exe"
 if not defined PAL_EXE if exist "C:\Program Files\Peganza\Pascal Analyzer 9\PAL32\palcmd32.exe" set "PAL_EXE=C:\Program Files\Peganza\Pascal Analyzer 9\PAL32\palcmd32.exe"
@@ -72,6 +78,11 @@ if not defined PAL_EXE if not defined DAK_PASCAL_ANALYZER (
 
 call "%SKILL_DIR%\analyze.bat" "%PROJECT_PATH%" > "%OUT_DIR%\analyze.log" 2>&1
 set "ANALYZE_EXIT=%ERRORLEVEL%"
+
+if exist "%THRESHOLD_BACKUP%" (
+  copy /Y "%THRESHOLD_BACKUP%" "%THRESHOLD_FILE%" >nul
+  del /Q "%THRESHOLD_BACKUP%" >nul 2>&1
+)
 
 if not exist "%OUT_DIR%\summary.md" (
   type "%OUT_DIR%\analyze.log"
@@ -118,4 +129,5 @@ set "EXITCODE=0"
 
 :cleanup
 if not defined EXITCODE set "EXITCODE=1"
+if exist "%THRESHOLD_BACKUP%" del /Q "%THRESHOLD_BACKUP%" >nul 2>&1
 endlocal & exit /b %EXITCODE%
