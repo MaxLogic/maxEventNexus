@@ -81,3 +81,7 @@ reference/
 bench/scheduler-summary.csv
 last-session.md
 build/analysis/
+
+# Local workflow preference
+spec.md
+docs/decisions/ADR-0003-extension-scope-freeze.md

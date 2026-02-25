@@ -4,6 +4,7 @@
 
 - Runtime/public units are now fully Delphi-only; remaining FPC conditionals were removed from adapter/facade scheduler paths.
 - Tests run through DUnitX (`tests/MaxEventNexusTests.dpr`) with compatibility support for published-method legacy suites.
+- Delphi AutoSubscribe one-parameter attributed handlers now bind correctly for typed, named, and GUID topics.
 - Test/CI scripts enforce diagnostics policy (`build/diagnostics-policy.regex`) so untriaged warnings/hints fail the build.
 - Async benchmark profile is stabilized (bounded queue/in-flight guards + scheduler submission fallbacks), with CSV contract rows remaining `status=ok`.
 - Sample and benchmark projects now carry explicit unit search paths for shared foundation/mORMot units in group builds.

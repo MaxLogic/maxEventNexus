@@ -4,10 +4,17 @@
 
 ### Added
 - `tests/src/MaxEventNexus.Testing.pas` with a DUnitX-backed `TmaxTestCase` compatibility layer and RTTI published-method suite runner. (T-1044, T-1045)
+- Added posting outcome APIs `PostResult<T>`, `PostResultNamed`, `PostResultNamedOf<T>`, and `PostResultGuidOf<T>` returning `TmaxPostResult`. (T-1063)
+- Added dispatch tracing surface `maxSetDispatchTrace` with `TmaxDispatchTrace` events (`TraceEnqueue`, `TraceInvokeStart`, `TraceInvokeEnd`, `TraceInvokeError`). (T-1064)
+- Added bulk dispatch helpers `PostMany<T>`, `PostManyNamedOf<T>`, and `PostManyGuidOf<T>`. (T-1065)
+- Added named wildcard subscriptions via `SubscribeNamedWildcard` with deterministic precedence (`exact`, then longer-prefix wildcard, then token order). (T-1066)
+- Added structured aggregate error metadata via `EmaxDispatchError.Details` / `TmaxDispatchErrorDetail`. (T-1067)
+- Added regression suites `TTestPostResult`, `TTestTracingHooks`, `TTestBulkDispatch`, `TTestWildcardNamed`, and `TTestDispatchErrorDetails`. (T-1063..T-1067)
 
 ### Changed
 - Runtime units are now Delphi-only (FPC conditionals removed from `maxLogic.EventNexus*` public/runtime paths) and the full group project builds in Debug with updated samples/bench wiring. (T-1043)
 - Test runner switched from `TSynTests` to DUnitX (`tests/MaxEventNexusTests.dpr`), with existing behavioral coverage executed through the DUnitX fixture. (T-1044, T-1045)
+- Legacy suite runner now includes all previously omitted fixtures (`TTestAutoSubscribe`, `TTestMetricsConcurrent`, `TTestInterfaceGenerics`), expanding regular unit-test coverage. (T-1069)
 - Test build scripts now target Delphi Debug explicitly (`build-tests.sh` / `build-tests.bat`) to match the DUnitX harness path used by CI/local runs. (T-1046)
 - Rewrote README, design, migration, and spec docs for Delphi-only support and DUnitX workflows; removed stale cross-compiler guidance from active docs. (T-1047, T-1025)
 - Documented queue preset category defaults/override behavior plus high-water metric signaling in the public docs/spec. (T-1027)
@@ -23,12 +30,21 @@
 - Scheduler benchmark now has a documented output contract (clock source + nearest-rank percentiles + CSV schema/status columns) and supports contention-focused metrics-reader load profiles. (T-1019)
 - Async benchmark harness now applies bounded queue/in-flight guards, uses `TTask.Future` metrics readers, and caps `maxAsync` to one in-process async run to avoid cumulative memory-pressure failures during scheduler comparisons. (T-1053, T-1054)
 - Topic metric counters now use padded counter slots to reduce cross-counter cache-line contention under concurrent posting. (T-1007)
-- Extension backlog items (priority/bulk/wildcards/tracing/serializer/disruptor) are explicitly deferred for the current delivery via ADR-0003 to remove scope ambiguity. (T-1010..T-1015)
+- Extension backlog governance moved to explicit ADR control: initially deferred via ADR-0003, then partially unfrozen for items 1-5 by maintainer request (disruptor remains deferred). (T-1010..T-1015, T-1063..T-1067)
 - Config/metrics lock primitives are now Delphi 12 `TLightweightMREW`-based instead of monitor objects, preserving existing mutation semantics while modernizing lock infrastructure. (T-1051)
+- Clarified spec behavior for coalesced delivery exception surfacing and scoped high-water warning thresholds to unbounded queues (`MaxDepth = 0`). (T-1058..T-1062)
+- Refined spec contracts for `TryPost*`, `Clear`, AutoSubscribe, and coalescing edge behavior; extension backlog items 1-5 were unfrozen and reactivated (`T-1063..T-1067`). (T-1063..T-1068)
 
 ### Fixed
 - Sample and benchmark programs now call generic bus APIs through `maxBusObj(...)` typed bridge helpers so they compile against the current Delphi interface surface. (T-1043, T-1048)
 - `TmaxMaxAsyncScheduler` and `TmaxTTaskScheduler` now degrade to inline execution if async task submission fails, preventing benchmark-profile dispatch failures from transient thread/scheduler allocation errors. (T-1053, T-1054)
+- Topic queue processing now resets `fProcessing` and wakes waiters when synchronous handler dispatch raises, preventing stalled queues after aggregate failures. (T-1058)
+- Metrics-index snapshots are now read under the metrics read lock in `GetTotals`/`GetStats*`, removing concurrent read/write races. (T-1059)
+- Sticky first-call `TryPost*` paths now increment `PostsTotal` (`TryPost<T>`, named, named-of, guid-of), matching metrics semantics in all posting paths. (T-1060)
+- `Clear` no longer rebinds bus main-thread identity; strict main-thread policy behavior now remains stable across clear cycles. (T-1061)
+- AutoSubscribe named zero-argument handlers now bind per-method pointers safely instead of capturing loop-local RTTI method state. (T-1062)
+- Delphi AutoSubscribe one-parameter handlers now bind for typed/named/guid attributed methods without generic-method RTTI lookup, removing `SubscribeNamedOf` binding failures. (T-1070)
+- Pre-`Clear` subscription handles are now inert: `Clear` deactivates subscription states and avoids token reuse collisions across clear cycles. (T-1068)
 
 ## [1.0.0] - 2025-12-15
 
