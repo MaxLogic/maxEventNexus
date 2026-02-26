@@ -1,15 +1,39 @@
 # Tasks
-Next task ID: T-1080
+Next task ID: T-1083
 
 ## Summary
-Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
-Done tasks: 102
+Open tasks: 2 (In Progress: 0, Next Today: 0, Next This Week: 2, Next Later: 0, Blocked: 0)
+Done tasks: 103
 
 ## In Progress
 
 ## Next – Today
 
 ## Next – This Week
+
+### T-1081 [TEST] Review and expand DUnitX coverage for correctness confidence
+Outcome: Produce a focused coverage review and add/adjust DUnitX tests so core bus behavior is validated across happy-path and edge-path scenarios with stronger bug-detection confidence.
+Proof:
+- Command: `./build-and-run-tests.sh`
+- Expect: exit code `0`; full DUnitX suite passes after new/updated tests are added.
+- Command: `rg -n "TTest|RegisterTestFixture|RunPublishedTests" tests/src tests/MaxEventNexusTests.dpr`
+- Expect: coverage-related fixture additions/updates are visible and mapped to reviewed behavior slices.
+Touches: `tests/src/MaxEventNexus.Main.Tests.pas`, `tests/src/MaxEventNexus.Testing.pas`, `tests/MaxEventNexusTests.dpr`, `TASKS.md`, `CHANGELOG.md`
+Deps: `T-1080`
+Notes:
+- Prioritize gaps that could hide real regressions (ordering, coalescing windows, delayed/cancel semantics, queue overflow, async error paths, unsubscribe/clear lifecycle).
+
+### T-1082 [BENCH] Build cross-library benchmarks versus iPub and EventHorizon
+Outcome: Add benchmark harness coverage and reporting that compares EventNexus against iPub and EventHorizon on equivalent publish/subscribe workloads.
+Proof:
+- Command: `./build-delphi.sh bench/SchedulerCompare.dproj -config Release -enforce-diagnostics-policy -diagnostics-policy build/diagnostics-policy.regex`
+- Expect: exit code `0`; benchmark project builds successfully.
+- Command: `/mnt/c/Windows/System32/cmd.exe /C "cd /d F:\\projects\\MaxLogic\\maxEventNexus && bench\\SchedulerCompare.exe --events=2000 --consumers=2 --runs=3 --delivery=async --metrics-readers=1 --metrics-reads=5000 --csv=bench\\scheduler-summary.csv"`
+- Expect: exit code `0`; CSV output generated with comparable rows for enabled libraries/schedulers and no runtime errors.
+Touches: `bench/`, `bench/readme.md`, `TASKS.md`, `CHANGELOG.md`
+Deps: `T-1080`
+Notes:
+- Keep workload parity explicit (same payload size, consumer count, delivery mode, run count) so results are interpretable.
 
 ## Next – Later
 
@@ -25,6 +49,16 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1080 [ANALYSIS] Resolve non-noise FixInsight warnings batch
+Summary: Cleared actionable/non-noise static-analysis warnings while preserving API compatibility and keeping test/build gates green.
+
+Details:
+- Removed actionable warning patterns in test fixtures (`W519`, `W528`) without changing test intent.
+- Cleaned actionable findings in shared foundation units (`maxLogic.StrUtils`, `maxAsync`) and kept API-shape warnings compatibility-safe where signature changes were not allowed.
+- Reduced FixInsight findings from `48` to `37`; remaining findings are mostly length/variable-density style debt (`C101`/`C103`) plus known parser/tooling limitations and explicitly reviewed legacy warnings.
+- Proof: `./build-static-analysis.sh && ./build/check-analysis-thresholds.sh build/analysis/summary.md build/analysis/analysis-thresholds.csv` (exit `0`).
+- Proof: `./build-and-run-tests.sh` (exit `0`, DUnitX + analysis threshold gate pass).
 
 ### T-1079 [CORE] Evaluate C102/O804 reduction in maxlogic.strutils without API breaks
 Summary: Reduced foundation-level `C102`/`O804` debt in `maxlogic.strutils` without changing public API signatures.
