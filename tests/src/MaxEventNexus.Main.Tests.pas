@@ -367,6 +367,8 @@ type
     procedure TypedPresetAffectsGetPolicy;
     procedure NamedStatePresetUsesDropOldest;
     procedure NamedPresetsReturnDefaultPolicy;
+    procedure GuidPresetAffectsGetPolicy;
+    procedure GuidExplicitPolicyBeatsPreset;
   end;
 
   TTestHighWaterReset = class(TmaxTestCase)
@@ -3634,6 +3636,76 @@ begin
   finally
     maxSetQueuePresetNamed('actionpreset', TmaxQueuePreset.Unspecified);
     maxSetQueuePresetNamed('ctrlpreset', TmaxQueuePreset.Unspecified);
+  end;
+end;
+
+procedure TTestQueuePolicyPresets.GuidPresetAffectsGetPolicy;
+var
+  lBus: ImaxBus;
+  lQueues: ImaxBusQueues;
+  lGuid: TGuid;
+  lPolicy: TmaxQueuePolicy;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lQueues := lBus as ImaxBusQueues;
+  lGuid := GetTypeData(TypeInfo(IIntEvent))^.Guid;
+
+  maxSetQueuePresetGuid(lGuid, TmaxQueuePreset.ControlPlane);
+  try
+    {$IFDEF max_FPC}
+    lPolicy := lQueues.GetPolicyGuidOf<IIntEvent>;
+    {$ELSE}
+    lPolicy := maxBusObj(lQueues).GetPolicyGuidOf<IIntEvent>;
+    {$ENDIF}
+    CheckEquals(1, lPolicy.MaxDepth);
+    Check(Ord(lPolicy.Overflow) = Ord(TmaxOverflow.Block));
+    Check(lPolicy.DeadlineUs = 0);
+  finally
+    maxSetQueuePresetGuid(lGuid, TmaxQueuePreset.Unspecified);
+  end;
+end;
+
+procedure TTestQueuePolicyPresets.GuidExplicitPolicyBeatsPreset;
+var
+  lBus: ImaxBus;
+  lQueues: ImaxBusQueues;
+  lGuid: TGuid;
+  lExplicit: TmaxQueuePolicy;
+  lPolicy: TmaxQueuePolicy;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lQueues := lBus as ImaxBusQueues;
+  lGuid := GetTypeData(TypeInfo(IIntEvent))^.Guid;
+  lExplicit.MaxDepth := 7;
+  lExplicit.Overflow := TmaxOverflow.DropNewest;
+  lExplicit.DeadlineUs := 1234;
+
+  maxSetQueuePresetGuid(lGuid, TmaxQueuePreset.ControlPlane);
+  try
+    {$IFDEF max_FPC}
+    lQueues.SetPolicyGuidOf<IIntEvent>(lExplicit);
+    lPolicy := lQueues.GetPolicyGuidOf<IIntEvent>;
+    {$ELSE}
+    maxBusObj(lQueues).SetPolicyGuidOf<IIntEvent>(lExplicit);
+    lPolicy := maxBusObj(lQueues).GetPolicyGuidOf<IIntEvent>;
+    {$ENDIF}
+    CheckEquals(lExplicit.MaxDepth, lPolicy.MaxDepth);
+    Check(Ord(lPolicy.Overflow) = Ord(lExplicit.Overflow));
+    CheckEquals(lExplicit.DeadlineUs, lPolicy.DeadlineUs);
+
+    maxSetQueuePresetGuid(lGuid, TmaxQueuePreset.State);
+    {$IFDEF max_FPC}
+    lPolicy := lQueues.GetPolicyGuidOf<IIntEvent>;
+    {$ELSE}
+    lPolicy := maxBusObj(lQueues).GetPolicyGuidOf<IIntEvent>;
+    {$ENDIF}
+    CheckEquals(lExplicit.MaxDepth, lPolicy.MaxDepth);
+    Check(Ord(lPolicy.Overflow) = Ord(lExplicit.Overflow));
+    CheckEquals(lExplicit.DeadlineUs, lPolicy.DeadlineUs);
+  finally
+    maxSetQueuePresetGuid(lGuid, TmaxQueuePreset.Unspecified);
   end;
 end;
 
