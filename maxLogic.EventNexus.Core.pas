@@ -120,7 +120,7 @@ type
 
   TmaxSubscriptionState = class(TInterfacedObject, ImaxSubscriptionState)
   private
-    fActive: boolean;
+    fActive: integer;
     fInFlight: integer;
   public
     constructor Create;
@@ -218,6 +218,7 @@ type
     constructor Create;
     destructor Destroy; override;
     procedure SetMetricName(const aName: TmaxString); inline;
+    function MetricName: TmaxString; inline;
     function Enqueue(const aProc: TmaxProc): boolean;
     function EnqueueWithDispatchFlag(const aProc: TmaxProc; out aDispatchedInline: boolean): boolean;
     procedure RemoveByTarget(const aTarget: TObject); virtual; abstract;
@@ -429,6 +430,7 @@ type
 		    fAutoSubs: TmaxAutoSubDict;
         fAutoBridgeLock: TmaxMonitorObject;
 		    fAutoBridgeSubs: TObjectList<TmaxAutoBridgeEntry>;
+        fAutoBridgeCount: integer;
         fAutoBridgeNextToken: TmaxSubscriptionToken;
         fDelayedPostEpoch: Int64;
 			    fMainThreadId: TThreadID;
@@ -450,6 +452,7 @@ type
             const aNameKey: TmaxString; const aGuidKey: TGuid; const aMethodPtr: TMethod; aDelivery: TmaxDelivery;
             const aTarget: TObject): ImaxSubscription;
           procedure RemoveAutoBridgeByToken(aToken: TmaxSubscriptionToken);
+          function HasAutoBridgeSubscriptions: boolean;
           function SnapshotAutoBridgeTyped(const aParamType: PTypeInfo): TArray<TmaxAutoBridgeSnapshot>;
           function SnapshotAutoBridgeNamedTyped(const aNameKey: TmaxString; const aParamType: PTypeInfo): TArray<TmaxAutoBridgeSnapshot>;
           function SnapshotAutoBridgeGuid(const aGuidKey: TGuid): TArray<TmaxAutoBridgeSnapshot>;
@@ -1253,53 +1256,37 @@ end;
 constructor TmaxSubscriptionState.Create;
 begin
   inherited Create;
-  fActive := True;
+  fActive := 1;
   fInFlight := 0;
 end;
 
 function TmaxSubscriptionState.TryEnter: boolean;
 begin
-  TMonitor.Enter(self);
-  try
-    if not fActive then
-      exit(False);
-    Inc(fInFlight);
-    Result := True;
-  finally
-    TMonitor.exit(self);
+  if TInterlocked.CompareExchange(fActive, 0, 0) = 0 then
+    Exit(False);
+  TInterlocked.Increment(fInFlight);
+  if TInterlocked.CompareExchange(fActive, 0, 0) = 0 then
+  begin
+    TInterlocked.Decrement(fInFlight);
+    Exit(False);
   end;
+  Result := True;
 end;
 
 procedure TmaxSubscriptionState.Leave;
 begin
-  TMonitor.Enter(self);
-  try
-    if fInFlight > 0 then
-      Dec(fInFlight);
-  finally
-    TMonitor.exit(self);
-  end;
+  if TInterlocked.CompareExchange(fInFlight, 0, 0) > 0 then
+    TInterlocked.Decrement(fInFlight);
 end;
 
 procedure TmaxSubscriptionState.Deactivate;
 begin
-  TMonitor.Enter(self);
-  try
-    if fActive then
-      fActive := False;
-  finally
-    TMonitor.exit(self);
-  end;
+  TInterlocked.Exchange(fActive, 0);
 end;
 
 function TmaxSubscriptionState.IsActive: boolean;
 begin
-  TMonitor.Enter(self);
-  try
-    Result := fActive;
-  finally
-    TMonitor.exit(self);
-  end;
+  Result := TInterlocked.CompareExchange(fActive, 0, 0) <> 0;
 end;
 
 { TmaxTopicBase }
@@ -1335,6 +1322,11 @@ procedure TmaxTopicBase.SetMetricName(const aName: TmaxString);
 begin
   if (fMetricName = '') and (aName <> '') then
     fMetricName := aName;
+end;
+
+function TmaxTopicBase.MetricName: TmaxString;
+begin
+  Result := fMetricName;
 end;
 
 procedure TmaxTopicBase.SetPolicy(const aPolicy: TmaxQueuePolicy);
@@ -2900,6 +2892,7 @@ begin
       aDelivery, lState, aTarget);
     Inc(fAutoBridgeNextToken);
     fAutoBridgeSubs.Add(lEntry);
+    TInterlocked.Increment(fAutoBridgeCount);
     Result := TmaxAutoBridgeSubscription.Create(Self, lEntry.Token, lState);
   finally
     TMonitor.Exit(fAutoBridgeLock);
@@ -2920,11 +2913,17 @@ begin
         if Assigned(lEntry.State) then
           lEntry.State.Deactivate;
         fAutoBridgeSubs.Delete(lIdx);
+        TInterlocked.Decrement(fAutoBridgeCount);
         Break;
       end;
   finally
     TMonitor.Exit(fAutoBridgeLock);
   end;
+end;
+
+function TmaxBus.HasAutoBridgeSubscriptions: boolean;
+begin
+  Result := TInterlocked.CompareExchange(fAutoBridgeCount, 0, 0) <> 0;
 end;
 
 function TmaxBus.SnapshotAutoBridgeTyped(const aParamType: PTypeInfo): TArray<TmaxAutoBridgeSnapshot>;
@@ -2934,6 +2933,8 @@ var
   lEntry: TmaxAutoBridgeEntry;
   lResult: TArray<TmaxAutoBridgeSnapshot>;
 begin
+  if not HasAutoBridgeSubscriptions then
+    Exit(nil);
   TMonitor.Enter(fAutoBridgeLock);
   try
     SetLength(lResult, fAutoBridgeSubs.Count);
@@ -2967,6 +2968,8 @@ var
   lEntry: TmaxAutoBridgeEntry;
   lResult: TArray<TmaxAutoBridgeSnapshot>;
 begin
+  if not HasAutoBridgeSubscriptions then
+    Exit(nil);
   TMonitor.Enter(fAutoBridgeLock);
   try
     SetLength(lResult, fAutoBridgeSubs.Count);
@@ -2999,6 +3002,8 @@ var
   lEntry: TmaxAutoBridgeEntry;
   lResult: TArray<TmaxAutoBridgeSnapshot>;
 begin
+  if not HasAutoBridgeSubscriptions then
+    Exit(nil);
   TMonitor.Enter(fAutoBridgeLock);
   try
     SetLength(lResult, fAutoBridgeSubs.Count);
@@ -3472,6 +3477,7 @@ begin
   fAutoSubs := TmaxAutoSubDict.Create([doOwnsValues]);
   fAutoBridgeLock := TmaxMonitorObject.Create;
   fAutoBridgeSubs := TObjectList<TmaxAutoBridgeEntry>.Create(True);
+  fAutoBridgeCount := 0;
   fAutoBridgeNextToken := 1;
   fDelayedPostEpoch := 0;
 		fMainThreadId := TThread.CurrentThread.ThreadID;
@@ -4031,19 +4037,18 @@ begin
   lCreated := False;
 
   lKey := TypeInfo(t);
-  lMetric := TypeMetricName(lKey);
+  lMetric := '';
   lAutoSubs := SnapshotAutoBridgeTyped(lKey);
   lTopic := nil;
   TMonitor.Enter(fTypedLock);
   try
     if fTyped.TryGetValue(lKey, lObj) then
-    begin
       lTopic := TTypedTopic<t>(lObj);
-      lTopic.SetMetricName(lMetric);
-    end;
   finally
     TMonitor.Exit(fTypedLock);
   end;
+  if lTopic <> nil then
+    lMetric := lTopic.MetricName;
 
   if lTopic = nil then
   begin
@@ -4058,7 +4063,11 @@ begin
     if not lSticky then
     begin
       if Length(lAutoSubs) <> 0 then
+      begin
+        if lMetric = '' then
+          lMetric := TypeMetricName(lKey);
         DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
+      end;
       exit;
     end;
 
@@ -4066,6 +4075,8 @@ begin
     try
       if not fTyped.TryGetValue(lKey, lObj) then
       begin
+        if lMetric = '' then
+          lMetric := TypeMetricName(lKey);
         lTopic := TTypedTopic<t>.Create;
         lTopic.SetMetricName(lMetric);
         if lPreset <> TmaxQueuePreset.Unspecified then
@@ -4075,14 +4086,26 @@ begin
         lCreated := True;
       end
       else
+      begin
         lTopic := TTypedTopic<t>(lObj);
-      lTopic.SetMetricName(lMetric);
+        if lMetric = '' then
+          lMetric := lTopic.MetricName;
+      end;
     finally
       TMonitor.Exit(fTypedLock);
     end;
 
     if lCreated then
       PublishMetricTypedTopic(lKey, lTopic);
+  end;
+  if lMetric = '' then
+  begin
+    lMetric := lTopic.MetricName;
+    if lMetric = '' then
+    begin
+      lMetric := TypeMetricName(lKey);
+      lTopic.SetMetricName(lMetric);
+    end;
   end;
 
   lSubs := lTopic.Snapshot;
@@ -4220,19 +4243,18 @@ begin
 
   Result := True;
   lKey := TypeInfo(t);
-  lMetric := TypeMetricName(lKey);
+  lMetric := '';
   lAutoSubs := SnapshotAutoBridgeTyped(lKey);
   lTopic := nil;
   TMonitor.Enter(fTypedLock);
   try
     if fTyped.TryGetValue(lKey, lObj) then
-    begin
       lTopic := TTypedTopic<t>(lObj);
-      lTopic.SetMetricName(lMetric);
-    end;
   finally
     TMonitor.Exit(fTypedLock);
   end;
+  if lTopic <> nil then
+    lMetric := lTopic.MetricName;
 
   if lTopic = nil then
   begin
@@ -4247,7 +4269,11 @@ begin
     if not lSticky then
     begin
       if Length(lAutoSubs) <> 0 then
+      begin
+        if lMetric = '' then
+          lMetric := TypeMetricName(lKey);
         DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
+      end;
       exit;
     end;
 
@@ -4255,6 +4281,8 @@ begin
     try
       if not fTyped.TryGetValue(lKey, lObj) then
       begin
+        if lMetric = '' then
+          lMetric := TypeMetricName(lKey);
         lTopic := TTypedTopic<t>.Create;
         lTopic.SetMetricName(lMetric);
         if lPreset <> TmaxQueuePreset.Unspecified then
@@ -4264,8 +4292,11 @@ begin
         lCreated := True;
       end
       else
+      begin
         lTopic := TTypedTopic<t>(lObj);
-      lTopic.SetMetricName(lMetric);
+        if lMetric = '' then
+          lMetric := lTopic.MetricName;
+      end;
     finally
       TMonitor.Exit(fTypedLock);
     end;
@@ -4278,6 +4309,15 @@ begin
     if Length(lAutoSubs) <> 0 then
       DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
     exit;
+  end;
+  if lMetric = '' then
+  begin
+    lMetric := lTopic.MetricName;
+    if lMetric = '' then
+    begin
+      lMetric := TypeMetricName(lKey);
+      lTopic.SetMetricName(lMetric);
+    end;
   end;
 
   lSubs := lTopic.Snapshot;
@@ -4604,20 +4644,19 @@ var
   lCreated: boolean;
 begin
   lNameKey := aName;
-  lMetric := NamedMetricName(lNameKey);
+  lMetric := '';
   lWildcardSubs := SnapshotNamedWildcardMatches(lNameKey);
   lCreated := False;
   lTopic := nil;
   TMonitor.Enter(fNamedLock);
   try
     if fNamed.TryGetValue(lNameKey, lObj) then
-    begin
       lTopic := lObj as TNamedTopic;
-      lTopic.SetMetricName(lMetric);
-    end;
   finally
     TMonitor.Exit(fNamedLock);
   end;
+  if lTopic <> nil then
+    lMetric := lTopic.MetricName;
 
   if lTopic = nil then
   begin
@@ -4636,6 +4675,8 @@ begin
 	    try
 	      if not fNamed.TryGetValue(lNameKey, lObj) then
 	      begin
+          if lMetric = '' then
+            lMetric := NamedMetricName(lNameKey);
 	        lTopic := TNamedTopic.Create;
 	        lTopic.SetMetricName(lMetric);
 	        if lPreset <> TmaxQueuePreset.Unspecified then
@@ -4646,8 +4687,11 @@ begin
 	        lCreated := True;
 	      end
 	      else
-		        lTopic := lObj as TNamedTopic;
-	      lTopic.SetMetricName(lMetric);
+        begin
+          lTopic := lObj as TNamedTopic;
+          if lMetric = '' then
+            lMetric := lTopic.MetricName;
+        end;
 	    finally
 	      TMonitor.Exit(fNamedLock);
 	    end;
@@ -4655,6 +4699,15 @@ begin
 	    if lCreated then
 	      PublishMetricNamedTopic(lNameKey, lTopic);
 	  end;
+  if lMetric = '' then
+  begin
+    lMetric := lTopic.MetricName;
+    if lMetric = '' then
+    begin
+      lMetric := NamedMetricName(lNameKey);
+      lTopic.SetMetricName(lMetric);
+    end;
+  end;
 
   lSubs := lTopic.Snapshot;
   lTopic.Cache;
@@ -4809,20 +4862,19 @@ var
 begin
   Result := True;
   lNameKey := aName;
-  lMetric := NamedMetricName(lNameKey);
+  lMetric := '';
   lWildcardSubs := SnapshotNamedWildcardMatches(lNameKey);
   lCreated := False;
   lTopic := nil;
   TMonitor.Enter(fNamedLock);
   try
     if fNamed.TryGetValue(lNameKey, lObj) then
-    begin
       lTopic := lObj as TNamedTopic;
-      lTopic.SetMetricName(lMetric);
-    end;
   finally
     TMonitor.Exit(fNamedLock);
   end;
+  if lTopic <> nil then
+    lMetric := lTopic.MetricName;
 
   if lTopic = nil then
   begin
@@ -4841,6 +4893,8 @@ begin
 	    try
 	      if not fNamed.TryGetValue(lNameKey, lObj) then
 	      begin
+          if lMetric = '' then
+            lMetric := NamedMetricName(lNameKey);
 	        lTopic := TNamedTopic.Create;
 	        lTopic.SetMetricName(lMetric);
 	        if lPreset <> TmaxQueuePreset.Unspecified then
@@ -4851,8 +4905,11 @@ begin
 	        lCreated := True;
 	      end
 	      else
-		        lTopic := lObj as TNamedTopic;
-	      lTopic.SetMetricName(lMetric);
+        begin
+          lTopic := lObj as TNamedTopic;
+          if lMetric = '' then
+            lMetric := lTopic.MetricName;
+        end;
 	    finally
 	      TMonitor.Exit(fNamedLock);
 	    end;
@@ -4867,6 +4924,15 @@ begin
       exit;
     end;
 	  end;
+  if lMetric = '' then
+  begin
+    lMetric := lTopic.MetricName;
+    if lMetric = '' then
+    begin
+      lMetric := NamedMetricName(lNameKey);
+      lTopic.SetMetricName(lMetric);
+    end;
+  end;
 
   lSubs := lTopic.Snapshot;
   lTopic.Cache;
@@ -5357,7 +5423,7 @@ begin
 
   lKey := TypeInfo(t);
   lNameKey := aName;
-  lMetric := NamedTypeMetricName(lNameKey, lKey);
+  lMetric := '';
   lAutoSubs := SnapshotAutoBridgeNamedTyped(lNameKey, lKey);
   fConfigLock.BeginWrite;
   try
@@ -5392,25 +5458,32 @@ begin
       if not lSticky then
       begin
         if Length(lAutoSubs) <> 0 then
+        begin
+          if lMetric = '' then
+            lMetric := NamedTypeMetricName(lNameKey, lKey);
           DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
+        end;
         exit;
       end;
       lTypeDict := TmaxTypeTopicDict.Create([doOwnsValues]);
       fNamedTyped.Add(lNameKey, lTypeDict);
     end;
     if lTypeDict.TryGetValue(lKey, lObj) then
-    begin
-      lTopic := TTypedTopic<t>(lObj);
-      lTopic.SetMetricName(lMetric);
-    end
+      lTopic := TTypedTopic<t>(lObj)
     else
     begin
       if not lSticky then
       begin
         if Length(lAutoSubs) <> 0 then
+        begin
+          if lMetric = '' then
+            lMetric := NamedTypeMetricName(lNameKey, lKey);
           DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
+        end;
         exit;
       end;
+      if lMetric = '' then
+        lMetric := NamedTypeMetricName(lNameKey, lKey);
       lTopic := TTypedTopic<t>.Create;
       lTopic.SetMetricName(lMetric);
       if lHasBasePolicy then
@@ -5421,12 +5494,23 @@ begin
       lTypeDict.Add(lKey, lTopic);
       lCreated := True;
     end;
+    if lMetric = '' then
+      lMetric := lTopic.MetricName;
   finally
     TMonitor.Exit(fNamedTypedLock);
   end;
 
   if lCreated then
     PublishMetricNamedTypedTopic(lNameKey, lKey, lTopic);
+  if lMetric = '' then
+  begin
+    lMetric := lTopic.MetricName;
+    if lMetric = '' then
+    begin
+      lMetric := NamedTypeMetricName(lNameKey, lKey);
+      lTopic.SetMetricName(lMetric);
+    end;
+  end;
 
   lSubs := lTopic.Snapshot;
   lTopic.Cache(aEvent);
@@ -5566,7 +5650,7 @@ begin
   Result := True;
   lKey := TypeInfo(t);
   lNameKey := aName;
-  lMetric := NamedTypeMetricName(lNameKey, lKey);
+  lMetric := '';
   lAutoSubs := SnapshotAutoBridgeNamedTyped(lNameKey, lKey);
   fConfigLock.BeginWrite;
   try
@@ -5602,25 +5686,32 @@ begin
       if not lSticky then
       begin
         if Length(lAutoSubs) <> 0 then
+        begin
+          if lMetric = '' then
+            lMetric := NamedTypeMetricName(lNameKey, lKey);
           DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
+        end;
         exit;
       end;
       lTypeDict := TmaxTypeTopicDict.Create([doOwnsValues]);
       fNamedTyped.Add(lNameKey, lTypeDict);
     end;
     if lTypeDict.TryGetValue(lKey, lObj) then
-    begin
-      lTopic := TTypedTopic<t>(lObj);
-      lTopic.SetMetricName(lMetric);
-    end
+      lTopic := TTypedTopic<t>(lObj)
     else
     begin
       if not lSticky then
       begin
         if Length(lAutoSubs) <> 0 then
+        begin
+          if lMetric = '' then
+            lMetric := NamedTypeMetricName(lNameKey, lKey);
           DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
+        end;
         exit;
       end;
+      if lMetric = '' then
+        lMetric := NamedTypeMetricName(lNameKey, lKey);
       lTopic := TTypedTopic<t>.Create;
       lTopic.SetMetricName(lMetric);
       if lHasBasePolicy then
@@ -5631,6 +5722,8 @@ begin
       lTypeDict.Add(lKey, lTopic);
       lCreated := True;
     end;
+    if lMetric = '' then
+      lMetric := lTopic.MetricName;
   finally
     TMonitor.Exit(fNamedTypedLock);
   end;
@@ -5643,6 +5736,15 @@ begin
     if Length(lAutoSubs) <> 0 then
       DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
     exit;
+  end;
+  if lMetric = '' then
+  begin
+    lMetric := lTopic.MetricName;
+    if lMetric = '' then
+    begin
+      lMetric := NamedTypeMetricName(lNameKey, lKey);
+      lTopic.SetMetricName(lMetric);
+    end;
   end;
 
   lSubs := lTopic.Snapshot;
@@ -6079,19 +6181,18 @@ begin
 
   lTypeKey := TypeInfo(t);
   lKey := GetTypeData(lTypeKey)^.Guid;
-  lMetric := GuidMetricName(lKey);
+  lMetric := '';
   lAutoSubs := SnapshotAutoBridgeGuid(lKey);
   lTopic := nil;
   TMonitor.Enter(fGuidLock);
   try
     if fGuid.TryGetValue(lKey, lObj) then
-    begin
       lTopic := TTypedTopic<t>(lObj);
-      lTopic.SetMetricName(lMetric);
-    end;
   finally
     TMonitor.Exit(fGuidLock);
   end;
+  if lTopic <> nil then
+    lMetric := lTopic.MetricName;
 
   if lTopic = nil then
   begin
@@ -6106,7 +6207,11 @@ begin
     if not lSticky then
     begin
       if Length(lAutoSubs) <> 0 then
+      begin
+        if lMetric = '' then
+          lMetric := GuidMetricName(lKey);
         DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
+      end;
       exit;
     end;
 
@@ -6114,6 +6219,8 @@ begin
 	    try
 	      if not fGuid.TryGetValue(lKey, lObj) then
 	      begin
+          if lMetric = '' then
+            lMetric := GuidMetricName(lKey);
 	        lTopic := TTypedTopic<t>.Create;
 	        lTopic.SetMetricName(lMetric);
 	        if lPreset <> TmaxQueuePreset.Unspecified then
@@ -6123,8 +6230,11 @@ begin
 	        lCreated := True;
 	      end
 	      else
+        begin
 	        lTopic := TTypedTopic<t>(lObj);
-	      lTopic.SetMetricName(lMetric);
+          if lMetric = '' then
+            lMetric := lTopic.MetricName;
+        end;
 	    finally
 	      TMonitor.Exit(fGuidLock);
 	    end;
@@ -6132,6 +6242,15 @@ begin
 	    if lCreated then
 	      PublishMetricGuidTopic(lKey, lTopic);
 	  end;
+  if lMetric = '' then
+  begin
+    lMetric := lTopic.MetricName;
+    if lMetric = '' then
+    begin
+      lMetric := GuidMetricName(lKey);
+      lTopic.SetMetricName(lMetric);
+    end;
+  end;
 
   lSubs := lTopic.Snapshot;
   lTopic.Cache(aEvent);
@@ -6267,20 +6386,19 @@ begin
   Result := True;
   lTypeKey := TypeInfo(t);
   lKey := GetTypeData(lTypeKey)^.Guid;
-  lMetric := GuidMetricName(lKey);
+  lMetric := '';
   lAutoSubs := SnapshotAutoBridgeGuid(lKey);
 
   lTopic := nil;
   TMonitor.Enter(fGuidLock);
   try
     if fGuid.TryGetValue(lKey, lObj) then
-    begin
       lTopic := TTypedTopic<t>(lObj);
-      lTopic.SetMetricName(lMetric);
-    end;
   finally
     TMonitor.Exit(fGuidLock);
   end;
+  if lTopic <> nil then
+    lMetric := lTopic.MetricName;
 
   if lTopic = nil then
   begin
@@ -6295,7 +6413,11 @@ begin
     if not lSticky then
     begin
       if Length(lAutoSubs) <> 0 then
+      begin
+        if lMetric = '' then
+          lMetric := GuidMetricName(lKey);
         DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
+      end;
       exit;
     end;
 
@@ -6303,6 +6425,8 @@ begin
 	    try
 	      if not fGuid.TryGetValue(lKey, lObj) then
 	      begin
+          if lMetric = '' then
+            lMetric := GuidMetricName(lKey);
 	        lTopic := TTypedTopic<t>.Create;
 	        lTopic.SetMetricName(lMetric);
 	        if lPreset <> TmaxQueuePreset.Unspecified then
@@ -6312,8 +6436,11 @@ begin
 	        lCreated := True;
 	      end
 	      else
+        begin
 	        lTopic := TTypedTopic<t>(lObj);
-	      lTopic.SetMetricName(lMetric);
+          if lMetric = '' then
+            lMetric := lTopic.MetricName;
+        end;
 	    finally
 	      TMonitor.Exit(fGuidLock);
 	    end;
@@ -6327,6 +6454,15 @@ begin
         DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
 	    exit;
 	  end;
+  if lMetric = '' then
+  begin
+    lMetric := lTopic.MetricName;
+    if lMetric = '' then
+    begin
+      lMetric := GuidMetricName(lKey);
+      lTopic.SetMetricName(lMetric);
+    end;
+  end;
 
   lSubs := lTopic.Snapshot;
   lTopic.Cache(aEvent);
