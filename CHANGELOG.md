@@ -33,7 +33,7 @@
 - Scheduler benchmark now has a documented output contract (clock source + nearest-rank percentiles + CSV schema/status columns) and supports contention-focused metrics-reader load profiles. (T-1019)
 - Async benchmark harness now applies bounded queue/in-flight guards, uses `TTask.Future` metrics readers, and caps `maxAsync` to one in-process async run to avoid cumulative memory-pressure failures during scheduler comparisons. (T-1053, T-1054)
 - Topic metric counters now use padded counter slots to reduce cross-counter cache-line contention under concurrent posting. (T-1007)
-- Extension backlog governance moved to explicit ADR control: initially deferred via ADR-0003, then partially unfrozen for items 1-5 by maintainer request (disruptor remains deferred). (T-1010..T-1015, T-1063..T-1067)
+- Extension backlog governance moved to explicit ADR control: initial freeze via ADR-0003, partial unfreeze for delivered items (`T-1063..T-1067`), and roadmap drop for serializer/disruptor legacy tasks (`T-1014`, `T-1015`). (T-1010..T-1015, T-1063..T-1067)
 - Config/metrics lock primitives are now Delphi 12 `TLightweightMREW`-based instead of monitor objects, preserving existing mutation semantics while modernizing lock infrastructure. (T-1051)
 - Clarified spec behavior for coalesced delivery exception surfacing and scoped high-water warning thresholds to unbounded queues (`MaxDepth = 0`). (T-1058..T-1062)
 - Refined spec contracts for `TryPost*`, `Clear`, AutoSubscribe, and coalescing edge behavior; extension backlog items 1-5 were unfrozen and reactivated (`T-1063..T-1067`). (T-1063..T-1068)
