@@ -221,6 +221,8 @@ type
     function MetricName: TmaxString; inline;
     function Enqueue(const aProc: TmaxProc): boolean;
     function EnqueueWithDispatchFlag(const aProc: TmaxProc; out aDispatchedInline: boolean): boolean;
+    function TryBeginDirectDispatch: boolean;
+    procedure EndDirectDispatch;
     procedure RemoveByTarget(const aTarget: TObject); virtual; abstract;
     procedure SetSticky(aEnable: boolean); virtual;
     procedure SetPolicy(const aPolicy: TmaxQueuePolicy);
@@ -361,7 +363,9 @@ type
     fSnapshotCache: TArray<TTypedSubscriber<t>>;
     fLast: t;
     fHasLast: boolean;
+    fStickyFast: integer;
     fCoalesce: boolean;
+    fCoalesceFast: integer;
     fKeyFunc: TmaxKeyFunc<t>;
     fWindowUs: integer;
     fPending: TDictionary<TmaxString, t>;
@@ -458,6 +462,8 @@ type
           function SnapshotAutoBridgeGuid(const aGuidKey: TGuid): TArray<TmaxAutoBridgeSnapshot>;
           procedure DispatchAutoBridge<t>(const aTopic: TmaxString; const aSnapshots: TArray<TmaxAutoBridgeSnapshot>;
             const aEvent: t);
+          procedure DispatchTypedSubscribers<t>(const aTopicName: TmaxString; const aTopic: TTypedTopic<t>;
+            const aSubs: TArray<TTypedSubscriber<t>>; const aValue: t; aRaiseMainThreadRequired: boolean);
           class function DelayMsToUs(aDelayMs: Cardinal): integer; static;
           function ScheduleDelayedPost(const aPostProc: TmaxProc; aDelayMs: Cardinal): ImaxDelayedPost;
 			    procedure SetAsyncScheduler(const aAsync: IEventNexusScheduler);
@@ -1483,6 +1489,79 @@ begin
   Result := EnqueueWithDispatchFlag(aProc, lDispatchedInline);
 end;
 
+function TmaxTopicBase.TryBeginDirectDispatch: boolean;
+var
+  lEmitTrace: boolean;
+  lTrace: TmaxDispatchTrace;
+begin
+  lEmitTrace := False;
+  TMonitor.Enter(Self);
+  try
+    Result := (fPolicy.MaxDepth = 0) and (not fProcessing) and (fQueue.Count = 0);
+    if Result then
+    begin
+      fProcessing := True;
+      if Assigned(gDispatchTrace) then
+      begin
+        lTrace.Kind := TmaxTraceKind.TraceEnqueue;
+        lTrace.Topic := fMetricName;
+        lTrace.Delivery := TmaxDelivery.Posting;
+        lTrace.QueueDepth := fCurrentQueueDepth;
+        lTrace.DurationUs := 0;
+        lTrace.SubscriberToken := 0;
+        lTrace.SubscriberIndex := -1;
+        lTrace.ExceptionClassName := '';
+        lTrace.ExceptionMessage := '';
+        lEmitTrace := True;
+      end;
+    end;
+  finally
+    TMonitor.Exit(Self);
+  end;
+  if lEmitTrace and Assigned(gDispatchTrace) then
+    gDispatchTrace(lTrace);
+end;
+
+procedure TmaxTopicBase.EndDirectDispatch;
+var
+  lProc: TmaxProc;
+begin
+  while True do
+  begin
+    TMonitor.Enter(Self);
+    try
+      if fQueue.Count = 0 then
+      begin
+        fProcessing := False;
+        TMonitor.PulseAll(Self);
+        TouchMetrics;
+        Exit;
+      end;
+      lProc := fQueue.Dequeue();
+      if fCurrentQueueDepth > 0 then
+        Dec(fCurrentQueueDepth);
+      CheckHighWater;
+      TouchMetrics;
+      TMonitor.Pulse(Self);
+    finally
+      TMonitor.Exit(Self);
+    end;
+    try
+      lProc();
+    except
+      TMonitor.Enter(Self);
+      try
+        fProcessing := False;
+        TMonitor.PulseAll(Self);
+        TouchMetrics;
+      finally
+        TMonitor.Exit(Self);
+      end;
+      raise;
+    end;
+  end;
+end;
+
 function TmaxTopicBase.EnqueueWithDispatchFlag(const aProc: TmaxProc; out aDispatchedInline: boolean): boolean;
 var
   lProc: TmaxProc;
@@ -1931,6 +2010,8 @@ begin
   inherited Create;
   fPendingLock := TmaxMonitorObject.Create;
   fNextToken := 1;
+  fStickyFast := 0;
+  fCoalesceFast := 0;
   SetLength(fSubs, 0);
   SetLength(fSnapshotCache, 0);
   fSubsVersion := 1;
@@ -2044,7 +2125,6 @@ function TTypedTopic<t>.Snapshot: TArray<TTypedSubscriber<t>>;
 begin
   TMonitor.Enter(Self);
   try
-    PruneDeadLocked;
     if fSnapshotVersion <> fSubsVersion then
     begin
       fSnapshotCache := fSubs;
@@ -2098,6 +2178,7 @@ begin
     inherited SetSticky(aEnable);
     if not aEnable then
       fHasLast := False;
+    TInterlocked.Exchange(fStickyFast, Ord(aEnable));
   finally
     TMonitor.Exit(Self);
   end;
@@ -2120,6 +2201,7 @@ begin
     SetLength(fSnapshotCache, 0);
     fSnapshotVersion := 0;
     fHasLast := False;
+    TInterlocked.Exchange(fStickyFast, 0);
   finally
     TMonitor.Exit(Self);
   end;
@@ -2130,6 +2212,7 @@ begin
     fKeyFunc := nil;
     fWindowUs := 0;
     fFlushScheduled := False;
+    TInterlocked.Exchange(fCoalesceFast, 0);
     if fPending <> nil then
     begin
       fPending.Free;
@@ -2142,6 +2225,8 @@ end;
 
 procedure TTypedTopic<t>.Cache(const aEvent: t);
 begin
+  if TInterlocked.CompareExchange(fStickyFast, 0, 0) = 0 then
+    Exit;
   TMonitor.Enter(Self);
   try
     if fSticky then
@@ -2156,6 +2241,8 @@ end;
 
 function TTypedTopic<t>.TryGetCached(out aEvent: t): boolean;
 begin
+  if TInterlocked.CompareExchange(fStickyFast, 0, 0) = 0 then
+    Exit(False);
   TMonitor.Enter(Self);
   try
     Result := fSticky and fHasLast;
@@ -2171,6 +2258,7 @@ begin
   TMonitor.Enter(fPendingLock);
   try
     fCoalesce := assigned(aKeyOf);
+    TInterlocked.Exchange(fCoalesceFast, Ord(fCoalesce));
     fKeyFunc := aKeyOf;
     if aWindowUs < 0 then
       fWindowUs := 0
@@ -2199,18 +2287,15 @@ end;
 
 function TTypedTopic<t>.HasCoalesce: boolean;
 begin
-  TMonitor.Enter(fPendingLock);
-  try
-    Result := fCoalesce;
-  finally
-    TMonitor.Exit(fPendingLock);
-  end;
+  Result := TInterlocked.CompareExchange(fCoalesceFast, 0, 0) <> 0;
 end;
 
 function TTypedTopic<t>.CoalesceKey(const aEvent: t): TmaxString;
 var
   lKeyFunc: TmaxKeyFunc<t>;
 begin
+  if TInterlocked.CompareExchange(fCoalesceFast, 0, 0) = 0 then
+    Exit('');
   TMonitor.Enter(fPendingLock);
   try
     lKeyFunc := fKeyFunc;
@@ -2429,7 +2514,6 @@ function TNamedTopic.Snapshot: TArray<TNamedSubscriber>;
 begin
   TMonitor.Enter(Self);
   try
-    PruneDeadLocked;
     if fSnapshotVersion <> fSubsVersion then
     begin
       fSnapshotCache := fSubs;
@@ -3278,8 +3362,94 @@ end;
 
 { TmaxBus }
 
-	procedure TmaxBus.ScheduleTypedCoalesce<t>(const aTopicName: TmaxString;
-	  aTopic: TTypedTopic<t>; const aSubs: TArray<TTypedSubscriber<t>>);
+procedure TmaxBus.DispatchTypedSubscribers<t>(const aTopicName: TmaxString; const aTopic: TTypedTopic<t>;
+  const aSubs: TArray<TTypedSubscriber<t>>; const aValue: t; aRaiseMainThreadRequired: boolean);
+var
+  i: Integer;
+  lHandler: TmaxProcOf<t>;
+  lMode: TmaxDelivery;
+  lToken: TmaxSubscriptionToken;
+  lState: ImaxSubscriptionState;
+  lErrs: TmaxExceptionList;
+  lErrDetails: TArray<TmaxDispatchErrorDetail>;
+  lBox: TInvokeBox<t>;
+  lDeliveredCount: integer;
+begin
+  lErrs := nil;
+  lErrDetails := nil;
+  lDeliveredCount := 0;
+  for i := 0 to High(aSubs) do
+  begin
+    lHandler := aSubs[i].Handler;
+    lMode := aSubs[i].Mode;
+    lToken := aSubs[i].Token;
+    lState := aSubs[i].State;
+
+    if (lState <> nil) and (not lState.TryEnter) then
+      Continue;
+
+    if not aSubs[i].Target.IsAlive then
+    begin
+      aTopic.RemoveByToken(lToken);
+      if lState <> nil then
+        lState.Leave;
+      Continue;
+    end;
+
+    try
+      if lMode = Posting then
+      begin
+        try
+          try
+            lHandler(aValue);
+            Inc(lDeliveredCount);
+          except
+            on e: Exception do
+            begin
+              aTopic.AddException;
+              if (e is EAccessViolation) or (e is EInvalidPointer) then
+              begin
+                aTopic.RemoveByToken(lToken);
+                Continue;
+              end;
+              raise;
+            end;
+          end;
+        finally
+          if lState <> nil then
+            lState.Leave;
+        end;
+      end else
+      begin
+        lBox := TInvokeBox<t>.Create;
+        lBox.Topic := aTopic;
+        lBox.Handler := lHandler;
+        lBox.Value := aValue;
+        lBox.Token := lToken;
+        lBox.State := lState;
+        Dispatch(aTopicName, lMode, TInvokeBox<t>.MakeProc(lBox), nil);
+      end;
+    except
+      on e: EmaxMainThreadRequired do
+      begin
+        if aRaiseMainThreadRequired then
+          raise;
+        AddDispatchError(aTopicName, lMode, lToken, i, e, lErrs, lErrDetails);
+      end;
+      on e: Exception do
+      begin
+        AddDispatchError(aTopicName, lMode, lToken, i, e, lErrs, lErrDetails);
+      end;
+    end;
+  end;
+  if lDeliveredCount > 0 then
+    aTopic.AddDelivered(lDeliveredCount);
+  if lErrs <> nil then
+    raise EmaxDispatchError.Create(lErrs, lErrDetails);
+end;
+
+procedure TmaxBus.ScheduleTypedCoalesce<t>(const aTopicName: TmaxString;
+		  aTopic: TTypedTopic<t>; const aSubs: TArray<TTypedSubscriber<t>>);
 var
   lSubsCopy: TArray<TTypedSubscriber<t>>;
   lScheduled: TmaxProc;
@@ -3293,101 +3463,28 @@ begin
       if not aTopic.PopAllPending(lEvents) then
         exit;
       
-	      aTopic.Enqueue(
-	        procedure
-		        var
-		          i: Integer;
-		          lEvtIdx: Integer;
-		          lEvt: t;
-		          lHandler: TmaxProcOf<t>;
-		          lMode: TmaxDelivery;
-		          lToken: TmaxSubscriptionToken;
-		          lState: ImaxSubscriptionState;
-		          lErrs: TmaxExceptionList;
-		          lErrDetails: TArray<TmaxDispatchErrorDetail>;
-		          lEx: EmaxDispatchError;
-		          lBox: TInvokeBox<t>;
-		        begin
-		          lErrs := nil;
-		          lErrDetails := nil;
-
+      aTopic.Enqueue(
+        procedure
+        var
+          lEvtIdx: Integer;
+          lEvt: t;
+          lEx: EmaxDispatchError;
+        begin
           for lEvtIdx := 0 to High(lEvents) do
           begin
             lEvt := lEvents[lEvtIdx];
-            for i := 0 to High(lSubsCopy) do
-            begin
-              lHandler := lSubsCopy[i].Handler;
-              lMode := lSubsCopy[i].Mode;
-              lToken := lSubsCopy[i].Token;
-              lState := lSubsCopy[i].State;
-
-              if (lState <> nil) and not lState.TryEnter then
-                continue;
-
-	              if not lSubsCopy[i].Target.IsAlive then
-	              begin
-	                aTopic.RemoveByToken(lToken);
-	                if lState <> nil then
-	                  lState.Leave;
-	                continue;
-	              end;
-	
-	              try
-	                if lMode = Posting then
-	                begin
-	                  try
-	                    try
-	                      lHandler(lEvt);
-	                      aTopic.AddDelivered(1);
-	                    except
-	                      on e: Exception do
-	                      begin
-	                        aTopic.AddException;
-	                        if (e is EAccessViolation) or (e is EInvalidPointer) then
-	                        begin
-	                          aTopic.RemoveByToken(lToken);
-	                          continue;
-	                        end;
-	                        raise;
-	                      end;
-	                    end;
-	                  finally
-	                    if lState <> nil then
-	                      lState.Leave;
-	                  end;
-	                end
-	                else
-	                begin
-	                  lBox := TInvokeBox<t>.Create;
-	                  lBox.Topic := aTopic;
-	                  lBox.Handler := lHandler;
-	                  lBox.Value := lEvt;
-	                  lBox.Token := lToken;
-	                  lBox.State := lState;
-	                    Dispatch(aTopicName, lMode, TInvokeBox<t>.MakeProc(lBox), nil);
-	                end;
-		              except
-		                on e: Exception do
-		                begin
-		                  AddDispatchError(aTopicName, lMode, lToken, i, e, lErrs, lErrDetails);
-		                end;
-		              end;
-		            end;
-		          end;
-
-          if lErrs <> nil then
-	          begin
-	            if Assigned(gAsyncError) then
-	            begin
-	              lEx := EmaxDispatchError.Create(lErrs, lErrDetails);
-	              try
-	                gAsyncError(aTopicName, lEx);
-	              finally
-	                lEx.Free;
+            try
+              DispatchTypedSubscribers<t>(aTopicName, aTopic, lSubsCopy, lEvt, False);
+            except
+              on e: EmaxDispatchError do
+              begin
+                if Assigned(gAsyncError) then
+                begin
+                  lEx := e;
+                  gAsyncError(aTopicName, lEx);
+                end;
               end;
-            end
-            else
-              lErrs.Free;
+            end;
           end;
         end);
     end;
@@ -4137,89 +4234,19 @@ begin
       DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
     exit;
   end;
-  lTopic.Enqueue(
-    procedure
-    var
-      lVal: t;
-      lErrs: TmaxExceptionList;
-      lErrDetails: TArray<TmaxDispatchErrorDetail>;
-      i: Integer;
-      lHandler: TmaxProcOf<t>;
-      lMode: TmaxDelivery;
-      lToken: TmaxSubscriptionToken;
-      lState: ImaxSubscriptionState;
-      lBox: TInvokeBox<t>;
-    begin
-      lVal := aEvent;
-      lErrs := nil;
-      lErrDetails := nil;
-
-      for i := 0 to High(lSubs) do
+  if lTopic.TryBeginDirectDispatch then
+  begin
+    try
+      DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
+    finally
+      lTopic.EndDirectDispatch;
+    end;
+  end else
+    lTopic.Enqueue(
+      procedure
       begin
-        lHandler := lSubs[i].Handler;
-        lMode := lSubs[i].Mode;
-        lToken := lSubs[i].Token;
-        lState := lSubs[i].State;
-
-        if (lState <> nil) and not lState.TryEnter then
-          continue;
-
-        if not lSubs[i].Target.IsAlive then
-        begin
-          lTopic.RemoveByToken(lToken);
-          if lState <> nil then
-            lState.Leave;
-          continue;
-        end;
-
-        try
-          if lMode = Posting then
-          begin
-            try
-              try
-                lHandler(lVal);
-                lTopic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  lTopic.AddException;
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                  begin
-                    lTopic.RemoveByToken(lToken);
-                    continue;
-                  end;
-                  raise;
-                end;
-              end;
-            finally
-              if lState <> nil then
-                lState.Leave;
-            end;
-          end
-          else
-          begin
-            lBox := TInvokeBox<t>.Create;
-            lBox.Topic := lTopic;
-            lBox.Handler := lHandler;
-            lBox.Value := lVal;
-            lBox.Token := lToken;
-            lBox.State := lState;
-
-              Dispatch(lMetric, lMode, TInvokeBox<t>.MakeProc(lBox), nil);
-          end;
-	        except
-	          on e: EmaxMainThreadRequired do
-	            raise;
-	          on e: Exception do
-	          begin
-	            AddDispatchError(lMetric, lMode, lToken, i, e, lErrs, lErrDetails);
-	          end;
-	        end;
-	      end;
-
-		      if lErrs <> nil then
-		        raise EmaxDispatchError.Create(lErrs, lErrDetails);
-		    end);
+        DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
+      end);
   if Length(lAutoSubs) <> 0 then
     DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
 end;
@@ -4349,89 +4376,20 @@ begin
       DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
     exit;
   end;
-  Result := lTopic.Enqueue(
-    procedure
-    var
-      lVal: t;
-      lErrs: TmaxExceptionList;
-      lErrDetails: TArray<TmaxDispatchErrorDetail>;
-      i: Integer;
-      lHandler: TmaxProcOf<t>;
-      lMode: TmaxDelivery;
-      lToken: TmaxSubscriptionToken;
-      lState: ImaxSubscriptionState;
-      lBox: TInvokeBox<t>;
-    begin
-      lVal := aEvent;
-      lErrs := nil;
-      lErrDetails := nil;
-
-      for i := 0 to High(lSubs) do
+  if lTopic.TryBeginDirectDispatch then
+  begin
+    try
+      DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
+      Result := True;
+    finally
+      lTopic.EndDirectDispatch;
+    end;
+  end else
+    Result := lTopic.Enqueue(
+      procedure
       begin
-        lHandler := lSubs[i].Handler;
-        lMode := lSubs[i].Mode;
-        lToken := lSubs[i].Token;
-        lState := lSubs[i].State;
-
-        if (lState <> nil) and not lState.TryEnter then
-          continue;
-
-        if not lSubs[i].Target.IsAlive then
-        begin
-          lTopic.RemoveByToken(lToken);
-          if lState <> nil then
-            lState.Leave;
-          continue;
-        end;
-
-        try
-          if lMode = Posting then
-          begin
-            try
-              try
-                lHandler(lVal);
-                lTopic.AddDelivered(1);
-              except
-                on e: Exception do
-                begin
-                  lTopic.AddException;
-                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-                  begin
-                    lTopic.RemoveByToken(lToken);
-                    continue;
-                  end;
-                  raise;
-                end;
-              end;
-            finally
-              if lState <> nil then
-                lState.Leave;
-            end;
-          end
-          else
-          begin
-            lBox := TInvokeBox<t>.Create;
-            lBox.Topic := lTopic;
-            lBox.Handler := lHandler;
-            lBox.Value := lVal;
-            lBox.Token := lToken;
-            lBox.State := lState;
-
-              Dispatch(lMetric, lMode, TInvokeBox<t>.MakeProc(lBox), nil);
-          end;
-	        except
-	          on e: EmaxMainThreadRequired do
-	            raise;
-	          on e: Exception do
-	          begin
-	            AddDispatchError(lMetric, lMode, lToken, i, e, lErrs, lErrDetails);
-	          end;
-	        end;
-	    end;
-
-		      if lErrs <> nil then
-		        raise EmaxDispatchError.Create(lErrs, lErrDetails);
-		    end);
+        DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
+      end);
   if Result and (Length(lAutoSubs) <> 0) then
     DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
 end;
@@ -5541,87 +5499,19 @@ begin
       DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
     exit;
   end;
-	  lTopic.Enqueue(
-	    procedure
-	    var
-	      lVal: t;
-	      lErrs: TmaxExceptionList;
-	      lErrDetails: TArray<TmaxDispatchErrorDetail>;
-	      i: Integer;
-	      lHandler: TmaxProcOf<t>;
-	      lMode: TmaxDelivery;
-	      lToken: TmaxSubscriptionToken;
-	      lState: ImaxSubscriptionState;
-	      lBox: TInvokeBox<t>;
-	    begin
-	      lVal := aEvent;
-	      lErrs := nil;
-	      lErrDetails := nil;
-	      for i := 0 to High(lSubs) do
-	      begin
-	        lHandler := lSubs[i].Handler;
-	        lMode := lSubs[i].Mode;
-	        lToken := lSubs[i].Token;
-	        lState := lSubs[i].State;
-
-        if (lState <> nil) and not lState.TryEnter then
-          continue;
-
-	        if not lSubs[i].Target.IsAlive then
-	        begin
-	          lTopic.RemoveByToken(lToken);
-	          if lState <> nil then
-	            lState.Leave;
-	          continue;
-	        end;
-	
-	        try
-	          if lMode = Posting then
-	          begin
-	            try
-	              try
-	                lHandler(lVal);
-	                lTopic.AddDelivered(1);
-	              except
-	                on e: Exception do
-	                begin
-	                  lTopic.AddException;
-	                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-	                  begin
-	                    lTopic.RemoveByToken(lToken);
-	                    continue;
-	                  end;
-	                  raise;
-	                end;
-	              end;
-	            finally
-	              if lState <> nil then
-	                lState.Leave;
-	            end;
-	          end
-	          else
-	          begin
-	            lBox := TInvokeBox<t>.Create;
-	            lBox.Topic := lTopic;
-	            lBox.Handler := lHandler;
-	            lBox.Value := lVal;
-	            lBox.Token := lToken;
-	            lBox.State := lState;
-	              Dispatch(lMetric, lMode, TInvokeBox<t>.MakeProc(lBox), nil);
-	          end;
-	        except
-	          on e: EmaxMainThreadRequired do
-	            raise;
-	          on e: Exception do
-	          begin
-	            AddDispatchError(lMetric, lMode, lToken, i, e, lErrs, lErrDetails);
-	          end;
-	        end;
-	      end;
-
-		      if lErrs <> nil then
-		        raise EmaxDispatchError.Create(lErrs, lErrDetails);
-		    end);
+  if lTopic.TryBeginDirectDispatch then
+  begin
+    try
+      DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
+    finally
+      lTopic.EndDirectDispatch;
+    end;
+  end else
+    lTopic.Enqueue(
+      procedure
+      begin
+        DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
+      end);
   if Length(lAutoSubs) <> 0 then
     DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
 end;
@@ -5776,87 +5666,20 @@ begin
       DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
     exit;
   end;
-	  Result := lTopic.Enqueue(
-	    procedure
-	    var
-	      lVal: t;
-	      lErrs: TmaxExceptionList;
-	      lErrDetails: TArray<TmaxDispatchErrorDetail>;
-	      i: Integer;
-	      lHandler: TmaxProcOf<t>;
-	      lMode: TmaxDelivery;
-	      lToken: TmaxSubscriptionToken;
-	      lState: ImaxSubscriptionState;
-	      lBox: TInvokeBox<t>;
-	    begin
-	      lVal := aEvent;
-	      lErrs := nil;
-	      lErrDetails := nil;
-	      for i := 0 to High(lSubs) do
-	      begin
-	        lHandler := lSubs[i].Handler;
-	        lMode := lSubs[i].Mode;
-	        lToken := lSubs[i].Token;
-	        lState := lSubs[i].State;
-
-        if (lState <> nil) and not lState.TryEnter then
-          continue;
-
-	        if not lSubs[i].Target.IsAlive then
-	        begin
-	          lTopic.RemoveByToken(lToken);
-	          if lState <> nil then
-	            lState.Leave;
-	          continue;
-	        end;
-	
-	        try
-	          if lMode = Posting then
-	          begin
-	            try
-	              try
-	                lHandler(lVal);
-	                lTopic.AddDelivered(1);
-	              except
-	                on e: Exception do
-	                begin
-	                  lTopic.AddException;
-	                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-	                  begin
-	                    lTopic.RemoveByToken(lToken);
-	                    continue;
-	                  end;
-	                  raise;
-	                end;
-	              end;
-	            finally
-	              if lState <> nil then
-	                lState.Leave;
-	            end;
-	          end
-	          else
-	          begin
-	            lBox := TInvokeBox<t>.Create;
-	            lBox.Topic := lTopic;
-	            lBox.Handler := lHandler;
-	            lBox.Value := lVal;
-	            lBox.Token := lToken;
-	            lBox.State := lState;
-	              Dispatch(lMetric, lMode, TInvokeBox<t>.MakeProc(lBox), nil);
-	          end;
-	        except
-	          on e: EmaxMainThreadRequired do
-	            raise;
-	          on e: Exception do
-	          begin
-	            AddDispatchError(lMetric, lMode, lToken, i, e, lErrs, lErrDetails);
-	          end;
-	        end;
-	    end;
-
-		      if lErrs <> nil then
-		        raise EmaxDispatchError.Create(lErrs, lErrDetails);
-		    end);
+  if lTopic.TryBeginDirectDispatch then
+  begin
+    try
+      DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
+      Result := True;
+    finally
+      lTopic.EndDirectDispatch;
+    end;
+  end else
+    Result := lTopic.Enqueue(
+      procedure
+      begin
+        DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
+      end);
   if Result and (Length(lAutoSubs) <> 0) then
     DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
 end;
@@ -6281,89 +6104,22 @@ begin
       DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
     exit;
   end;
-  lTopic.Enqueue(
-    procedure
-    var
-      lVal: t;
-      lErrs: TmaxExceptionList;
-      lErrDetails: TArray<TmaxDispatchErrorDetail>;
-      i: Integer;
-      lHandler: TmaxProcOf<t>;
-      lMode: TmaxDelivery;
-      lToken: TmaxSubscriptionToken;
-      lState: ImaxSubscriptionState;
-      lBox: TInvokeBox<t>;
-    begin
-      lVal := aEvent;
-      lErrs := nil;
-      lErrDetails := nil;
-      for i := 0 to High(lSubs) do
+  if lTopic.TryBeginDirectDispatch then
+  begin
+    try
+      DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
+    finally
+      lTopic.EndDirectDispatch;
+    end;
+  end else
+    lTopic.Enqueue(
+      procedure
       begin
-        lHandler := lSubs[i].Handler;
-        lMode := lSubs[i].Mode;
-        lToken := lSubs[i].Token;
-        lState := lSubs[i].State;
-
-        if (lState <> nil) and not lState.TryEnter then
-          continue;
-
-	        if not lSubs[i].Target.IsAlive then
-	        begin
-	          lTopic.RemoveByToken(lToken);
-	          if lState <> nil then
-	            lState.Leave;
-	          continue;
-	        end;
-	
-	        try
-	          if lMode = Posting then
-	          begin
-	            try
-	              try
-	                lHandler(lVal);
-	                lTopic.AddDelivered(1);
-	              except
-	                on e: Exception do
-	                begin
-	                  lTopic.AddException;
-	                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-	                  begin
-	                    lTopic.RemoveByToken(lToken);
-	                    continue;
-	                  end;
-	                  raise;
-	                end;
-	              end;
-	            finally
-	              if lState <> nil then
-	                lState.Leave;
-	            end;
-	          end
-	          else
-	          begin
-	            lBox := TInvokeBox<t>.Create;
-	            lBox.Topic := lTopic;
-	            lBox.Handler := lHandler;
-	            lBox.Value := lVal;
-	            lBox.Token := lToken;
-	            lBox.State := lState;
-	              Dispatch(lMetric, lMode, TInvokeBox<t>.MakeProc(lBox), nil);
-	          end;
-	        except
-	          on e: EmaxMainThreadRequired do
-	            raise;
-	          on e: Exception do
-	          begin
-	            AddDispatchError(lMetric, lMode, lToken, i, e, lErrs, lErrDetails);
-	          end;
-	        end;
-	      end;
-	      if lErrs <> nil then
-	        raise EmaxDispatchError.Create(lErrs, lErrDetails);
-	    end);
+        DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
+      end);
   if Length(lAutoSubs) <> 0 then
     DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
-	end;
+		end;
 
 function TmaxBus.TryPostGuidOf<t>(const aEvent: t): boolean;
 var
@@ -6494,89 +6250,23 @@ begin
     exit;
   end;
 
-	  Result := lTopic.Enqueue(
-	    procedure
-	    var
-	      lVal: t;
-	      lErrs: TmaxExceptionList;
-	      lErrDetails: TArray<TmaxDispatchErrorDetail>;
-	      i: Integer;
-	      lHandler: TmaxProcOf<t>;
-	      lMode: TmaxDelivery;
-	      lToken: TmaxSubscriptionToken;
-	      lState: ImaxSubscriptionState;
-	      lBox: TInvokeBox<t>;
-	    begin
-	      lVal := aEvent;
-	      lErrs := nil;
-	      lErrDetails := nil;
-	      for i := 0 to High(lSubs) do
-	      begin
-	        lHandler := lSubs[i].Handler;
-	        lMode := lSubs[i].Mode;
-	        lToken := lSubs[i].Token;
-	        lState := lSubs[i].State;
-
-        if (lState <> nil) and not lState.TryEnter then
-          continue;
-
-	        if not lSubs[i].Target.IsAlive then
-	        begin
-	          lTopic.RemoveByToken(lToken);
-	          if lState <> nil then
-	            lState.Leave;
-	          continue;
-	        end;
-	
-	        try
-	          if lMode = Posting then
-	          begin
-	            try
-	              try
-	                lHandler(lVal);
-	                lTopic.AddDelivered(1);
-	              except
-	                on e: Exception do
-	                begin
-	                  lTopic.AddException;
-	                  if (e is EAccessViolation) or (e is EInvalidPointer) then
-	                  begin
-	                    lTopic.RemoveByToken(lToken);
-	                    continue;
-	                  end;
-	                  raise;
-	                end;
-	              end;
-	            finally
-	              if lState <> nil then
-	                lState.Leave;
-	            end;
-	          end
-	          else
-	          begin
-	            lBox := TInvokeBox<t>.Create;
-	            lBox.Topic := lTopic;
-	            lBox.Handler := lHandler;
-	            lBox.Value := lVal;
-	            lBox.Token := lToken;
-	            lBox.State := lState;
-	              Dispatch(lMetric, lMode, TInvokeBox<t>.MakeProc(lBox), nil);
-	          end;
-	        except
-	          on e: EmaxMainThreadRequired do
-	            raise;
-	          on e: Exception do
-	          begin
-	            AddDispatchError(lMetric, lMode, lToken, i, e, lErrs, lErrDetails);
-	          end;
-	        end;
-	      end;
-	      if lErrs <> nil then
-	        raise EmaxDispatchError.Create(lErrs, lErrDetails);
-	    end);
+  if lTopic.TryBeginDirectDispatch then
+  begin
+    try
+      DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
+      Result := True;
+    finally
+      lTopic.EndDirectDispatch;
+    end;
+  end else
+    Result := lTopic.Enqueue(
+      procedure
+      begin
+        DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
+      end);
   if Result and (Length(lAutoSubs) <> 0) then
     DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
-	end;
+		end;
 
 function TmaxBus.PostResultGuidOf<t>(const aEvent: t): TmaxPostResult;
 var
