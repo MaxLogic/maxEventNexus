@@ -50,7 +50,7 @@ Details:
   - report output: `build/analysis/test-api-coverage.md`
 - Integrated the target gate into default test flow via `build-and-run-tests.bat` (`report-api-test-coverage.bat -EnforceTarget`).
 - Proof: `./build-and-run-tests.sh` (exit `0`, DUnitX + analysis thresholds + API coverage proxy target pass).
-- Proof: `./build/report-api-test-coverage.sh --enforce-target` (exit `0`, currently `48/51`, `94%`, target `92%`).
+- Proof: `./build/report-api-test-coverage.sh --enforce-target` (exit `0`, currently `50/51`, `98%`, target `92%`).
 
 ### T-1083 [ANALYSIS] Resolve remaining actionable FixInsight warnings
 Summary: Cleared remaining actionable FixInsight warnings (`C110`, `W515`, `W524`) from the active analysis baseline.
