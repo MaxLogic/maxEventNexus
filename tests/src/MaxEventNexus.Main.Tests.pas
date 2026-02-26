@@ -306,6 +306,7 @@ type
     procedure NamedOfDropNewestReturnsDropped;
     procedure CoalescedReturnsCoalesced;
     procedure AcceptedReturnsInlineOrQueued;
+    procedure GuidOfQueuePressureReturnsQueuedThenDropped;
     procedure GuidOfAcceptedReturnsInline;
   end;
 
@@ -4570,6 +4571,63 @@ begin
     Check(lStarted.WaitFor(2000) = wrSignaled, 'First dispatch did not start');
     lQueuedResult := maxBusObj(lBus).PostResult<integer>(22);
     CheckEquals(Integer(TmaxPostResult.Queued), Integer(lQueuedResult));
+  finally
+    lRelease.SetEvent;
+    if lThread <> nil then
+    begin
+      lThread.WaitFor;
+      lThread.Free;
+    end;
+    lRelease.Free;
+    lStarted.Free;
+  end;
+end;
+
+procedure TTestPostResult.GuidOfQueuePressureReturnsQueuedThenDropped;
+var
+  lBus: ImaxBus;
+  lPolicy: TmaxQueuePolicy;
+  lStarted: TEvent;
+  lRelease: TEvent;
+  lThread: TThread;
+  lQueuedResult: TmaxPostResult;
+  lDroppedResult: TmaxPostResult;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lStarted := TEvent.Create(nil, True, False, '');
+  lRelease := TEvent.Create(nil, True, False, '');
+  lThread := nil;
+  try
+    lPolicy.MaxDepth := 1;
+    lPolicy.Overflow := TmaxOverflow.DropNewest;
+    lPolicy.DeadlineUs := 0;
+    maxBusObj(lBus).SetPolicyGuidOf<IIntEvent>(lPolicy);
+
+    maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
+      procedure(const aValue: IIntEvent)
+      begin
+        if (aValue <> nil) and (aValue.GetValue = 1) then
+        begin
+          lStarted.SetEvent;
+          lRelease.WaitFor(5000);
+        end;
+      end,
+      TmaxDelivery.Posting);
+
+    lThread := TThread.CreateAnonymousThread(
+      procedure
+      begin
+        maxBusObj(lBus).PostResultGuidOf<IIntEvent>(TIntEvent.Create(1));
+      end);
+    lThread.FreeOnTerminate := False;
+    lThread.Start;
+
+    Check(lStarted.WaitFor(2000) = wrSignaled, 'First guid dispatch did not start');
+    lQueuedResult := maxBusObj(lBus).PostResultGuidOf<IIntEvent>(TIntEvent.Create(2));
+    lDroppedResult := maxBusObj(lBus).PostResultGuidOf<IIntEvent>(TIntEvent.Create(3));
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(lQueuedResult));
+    CheckEquals(Integer(TmaxPostResult.Dropped), Integer(lDroppedResult));
   finally
     lRelease.SetEvent;
     if lThread <> nil then
