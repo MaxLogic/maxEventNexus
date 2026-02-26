@@ -1,6 +1,6 @@
 # EventNexus
 
-## What's New (2026-02-23)
+## What's New (2026-02-26)
 
 - Runtime/public units are now fully Delphi-only; remaining FPC conditionals were removed from adapter/facade scheduler paths.
 - Tests run through DUnitX (`tests/MaxEventNexusTests.dpr`) with compatibility support for published-method legacy suites.
@@ -10,6 +10,8 @@
 - Sample and benchmark projects now carry explicit unit search paths for shared foundation/mORMot units in group builds.
 - Queue policy preset defaults/overrides and lock-free posting behavior are documented for typed, named, and GUID topics.
 - Added delayed posting APIs (`PostDelayed*`) with cancel/pending handle semantics.
+- Reduced static-analysis top debt again (`C101=20`, `C103=14`) with test-fixture refactors and no public API changes.
+- Hardened delayed-posting edge coverage: zero-delay dispatch/metrics/cancel semantics and deterministic long-delay pending/cancel behavior.
 
 EventNexus is a type-safe event bus for Delphi 12+ with typed, named, and GUID topic routing, delivery-mode control, sticky cache, coalescing, and queue policies.
 

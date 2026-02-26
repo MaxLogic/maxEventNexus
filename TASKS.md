@@ -1,8 +1,8 @@
 # Tasks
-Next task ID: T-1078
+Next task ID: T-1079
 
 ## Summary
-Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
+Open tasks: 1 (In Progress: 0, Next Today: 0, Next This Week: 1, Next Later: 0, Blocked: 0)
 Done tasks: 100
 
 ## In Progress
@@ -10,6 +10,18 @@ Done tasks: 100
 ## Next – Today
 
 ## Next – This Week
+
+### T-1078 [CORE] Continue FixInsight reduction on C102/O804 hotspots
+Outcome: Reduce the next highest FixInsight hotspot codes (`C102`, `O804`) in high-density test fixtures while preserving behavior and public APIs.
+Proof:
+- Command: `./build-static-analysis.sh && ./build/check-analysis-thresholds.sh build/analysis/summary.md build/analysis/analysis-thresholds.csv`
+- Expect: exit code `0`; thresholds remain green and summary shows no regressions on tracked top codes.
+- Command: `./build-and-run-tests.sh`
+- Expect: exit code `0`; DUnitX suite passes under the default build+analysis flow.
+Touches: `tests/src/MaxEventNexus.Main.Tests.pas`, `build/analysis/summary.md`, `TASKS.md`, `CHANGELOG.md`
+Deps: `T-1075`
+Notes:
+- Prioritize methods reported by `build/analysis/fixinsight.txt` for `C102`/`O804` and keep each batch small enough to validate with one green gate run.
 
 ## Next – Later
 
