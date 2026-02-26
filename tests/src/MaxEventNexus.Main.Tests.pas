@@ -507,6 +507,9 @@ begin
   finally
     glLogCs.Leave;
   end;
+  {$ELSE}
+  if (aTestName = '') and (aLine = '') then
+    Exit;
   {$ENDIF}
 end;
 {$ENDIF}
@@ -1197,7 +1200,7 @@ begin
       maxBusObj(fBus).GetStatsFor<TMetricEvent>;
       maxBusObj(fBus).GetStatsNamed('N1');
       {$ENDIF}
-      if (lTotals.PostsTotal and $FF) = 0 then
+      if ((i and $FF) = 0) and ((lTotals.PostsTotal and $FF) = 0) then
         Sleep(0);
     end;
   finally
@@ -1526,11 +1529,13 @@ begin
     end;
 
     {$IFDEF max_DELPHI}
-    for lTry := 0 to 200 do
+    lTry := 0;
+    while lTry <= 200 do
     begin
       if lEvents[cTopicMain].WaitFor(0) = wrSignaled then
         Break;
       CheckSynchronize(25);
+      Inc(lTry);
     end;
     {$ENDIF}
 
