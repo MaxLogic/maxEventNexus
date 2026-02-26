@@ -31,6 +31,7 @@
 - Reduced FixInsight top-code debt in the core test suite by refactoring long/variable-heavy coverage paths (`C101/C103` baseline `24/20` to `21/17`) without public API changes. (T-1072)
 - Continued FixInsight debt reduction in high-density test fixtures and tightened tracked thresholds to `C101=20`, `C103=14`. (T-1075)
 - Reduced test-local `O804` static-analysis debt in high-density fixtures; remaining `C102/O804` findings are now isolated to shared foundation `maxlogic.strutils`. (T-1078)
+- Reduced shared foundation `C102/O804` static-analysis debt in `maxlogic.strutils` using compatibility-safe suppressions and cleanup, without public API signature changes. (T-1079)
 - Added analyzer-threshold gate scripts (`build/check-analysis-thresholds.sh` + `.bat`) with tracked FixInsight limits (`build/analysis/analysis-thresholds.csv`) to fail on `C101`/`C103` regressions. (T-1073)
 - Default test-run entrypoints now include analyzer gating (`build-and-run-tests.bat` runs static analysis + `check-analysis-thresholds` after DUnitX execution). (T-1074)
 - Added ADR-0004 with Delphi 12 API-polish accept/reject decisions and explicit public-signature impact guardrails for Phase 2 work. (T-1056)

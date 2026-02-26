@@ -2,26 +2,14 @@
 Next task ID: T-1080
 
 ## Summary
-Open tasks: 1 (In Progress: 0, Next Today: 0, Next This Week: 1, Next Later: 0, Blocked: 0)
-Done tasks: 101
+Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
+Done tasks: 102
 
 ## In Progress
 
 ## Next – Today
 
 ## Next – This Week
-
-### T-1079 [CORE] Evaluate C102/O804 reduction in maxlogic.strutils without API breaks
-Outcome: Reduce `C102`/`O804` debt in `lib/maxlogicfoundation/maxlogic.strutils.pas` without changing existing public API signatures.
-Proof:
-- Command: `./build-static-analysis.sh && ./build/check-analysis-thresholds.sh build/analysis/summary.md build/analysis/analysis-thresholds.csv`
-- Expect: exit code `0`; thresholds remain green and summary shows no regressions on tracked top codes while foundation-level `C102`/`O804` findings are reduced.
-- Command: `./build-and-run-tests.sh`
-- Expect: exit code `0`; DUnitX suite passes under the default build+analysis flow.
-Touches: `lib/maxlogicfoundation/maxlogic.strutils.pas`, `build/analysis/summary.md`, `TASKS.md`, `CHANGELOG.md`
-Deps: `T-1078`
-Notes:
-- Preserve existing public signatures (`ExtractString`, `ReplacePlaceholder`) and prefer internal/helper refactors or analyzer-safe annotations where needed.
 
 ## Next – Later
 
@@ -37,6 +25,15 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1079 [CORE] Evaluate C102/O804 reduction in maxlogic.strutils without API breaks
+Summary: Reduced foundation-level `C102`/`O804` debt in `maxlogic.strutils` without changing public API signatures.
+
+Details:
+- Kept existing public signatures and added function-line analyzer suppressions for legacy multi-parameter compatibility entry points (`ExtractString` overloads, `ReplacePlaceholder`).
+- Removed remaining `O804` in `fStr` by consuming the `vs` parameter without changing API surface.
+- Proof: `./build-static-analysis.sh && ./build/check-analysis-thresholds.sh build/analysis/summary.md build/analysis/analysis-thresholds.csv` (exit `0`, `C102/O804` no longer reported; threshold gate passes).
+- Proof: `./build-and-run-tests.sh` (exit `0`, DUnitX suite and default build+analysis flow pass).
 
 ### T-1078 [CORE] Continue FixInsight reduction on C102/O804 hotspots
 Summary: Removed test-local `O804` hotspots and confirmed `C102`/`O804` debt now remains only in shared foundation code.
