@@ -37,9 +37,9 @@ GetPolicyGuidOf<
 GetStatsFor<
 GetStatsNamed(
 GetStatsGuidOf<
-GetTotals(
+GetTotals
 UnsubscribeAllFor(
-Clear(
+lBus.Clear
 AutoSubscribe(
 AutoUnsubscribe(
 maxSetQueuePresetForType(
