@@ -1,9 +1,9 @@
 # Tasks
-Next task ID: T-1079
+Next task ID: T-1080
 
 ## Summary
 Open tasks: 1 (In Progress: 0, Next Today: 0, Next This Week: 1, Next Later: 0, Blocked: 0)
-Done tasks: 100
+Done tasks: 101
 
 ## In Progress
 
@@ -11,17 +11,17 @@ Done tasks: 100
 
 ## Next – This Week
 
-### T-1078 [CORE] Continue FixInsight reduction on C102/O804 hotspots
-Outcome: Reduce the next highest FixInsight hotspot codes (`C102`, `O804`) in high-density test fixtures while preserving behavior and public APIs.
+### T-1079 [CORE] Evaluate C102/O804 reduction in maxlogic.strutils without API breaks
+Outcome: Reduce `C102`/`O804` debt in `lib/maxlogicfoundation/maxlogic.strutils.pas` without changing existing public API signatures.
 Proof:
 - Command: `./build-static-analysis.sh && ./build/check-analysis-thresholds.sh build/analysis/summary.md build/analysis/analysis-thresholds.csv`
-- Expect: exit code `0`; thresholds remain green and summary shows no regressions on tracked top codes.
+- Expect: exit code `0`; thresholds remain green and summary shows no regressions on tracked top codes while foundation-level `C102`/`O804` findings are reduced.
 - Command: `./build-and-run-tests.sh`
 - Expect: exit code `0`; DUnitX suite passes under the default build+analysis flow.
-Touches: `tests/src/MaxEventNexus.Main.Tests.pas`, `build/analysis/summary.md`, `TASKS.md`, `CHANGELOG.md`
-Deps: `T-1075`
+Touches: `lib/maxlogicfoundation/maxlogic.strutils.pas`, `build/analysis/summary.md`, `TASKS.md`, `CHANGELOG.md`
+Deps: `T-1078`
 Notes:
-- Prioritize methods reported by `build/analysis/fixinsight.txt` for `C102`/`O804` and keep each batch small enough to validate with one green gate run.
+- Preserve existing public signatures (`ExtractString`, `ReplacePlaceholder`) and prefer internal/helper refactors or analyzer-safe annotations where needed.
 
 ## Next – Later
 
@@ -37,6 +37,15 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1078 [CORE] Continue FixInsight reduction on C102/O804 hotspots
+Summary: Removed test-local `O804` hotspots and confirmed `C102`/`O804` debt now remains only in shared foundation code.
+
+Details:
+- Updated test callback targets to consume parameters without behavior changes (`TTarget.Handle`, `TWeakTargetProbe.OnInt`, `TWeakTargetProbe.OnIntf`).
+- Used `aBus` explicitly in `TTestInterfaceGenerics.VerifyPostAndTryPost` to remove Delphi-only unused-parameter debt in shared helper logic.
+- Post-batch summary now reports `O804=1` (remaining entry is `maxlogic.strutils`) with no `O804` entries left in `src/MaxEventNexus.Main.Tests.pas`.
+- Proof: `./build-and-run-tests.sh` (exit `0`, DUnitX + static analysis + threshold gate pass).
 
 ### T-1077 [TEST] Harden delayed posting edge-case coverage
 Summary: Added deterministic delayed-posting edge-case tests for zero-delay metrics behavior and long-delay pending/cancel lifecycle.
