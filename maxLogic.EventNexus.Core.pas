@@ -378,6 +378,7 @@ type
     function Add(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery; out aState: ImaxSubscriptionState; const aTarget: TObject = nil): TmaxSubscriptionToken;
     procedure RemoveByToken(aToken: TmaxSubscriptionToken);
     function Snapshot: TArray<TTypedSubscriber<t>>;
+    function SnapshotAndTryBeginDirectDispatch(out aSubs: TArray<TTypedSubscriber<t>>): boolean;
     procedure RemoveByTarget(const aTarget: TObject); override;
     procedure SetSticky(aEnable: boolean); override;
     procedure ResetTopic; override;
@@ -2134,6 +2135,45 @@ begin
   finally
     TMonitor.Exit(Self);
   end;
+end;
+
+function TTypedTopic<t>.SnapshotAndTryBeginDirectDispatch(out aSubs: TArray<TTypedSubscriber<t>>): boolean;
+var
+  lEmitTrace: boolean;
+  lTrace: TmaxDispatchTrace;
+begin
+  lEmitTrace := False;
+  TMonitor.Enter(Self);
+  try
+    if fSnapshotVersion <> fSubsVersion then
+    begin
+      fSnapshotCache := fSubs;
+      fSnapshotVersion := fSubsVersion;
+    end;
+    aSubs := fSnapshotCache;
+    Result := (Length(aSubs) <> 0) and (fPolicy.MaxDepth = 0) and (not fProcessing) and (fQueue.Count = 0);
+    if Result then
+    begin
+      fProcessing := True;
+      if Assigned(gDispatchTrace) then
+      begin
+        lTrace.Kind := TmaxTraceKind.TraceEnqueue;
+        lTrace.Topic := fMetricName;
+        lTrace.Delivery := TmaxDelivery.Posting;
+        lTrace.QueueDepth := fCurrentQueueDepth;
+        lTrace.DurationUs := 0;
+        lTrace.SubscriberToken := 0;
+        lTrace.SubscriberIndex := -1;
+        lTrace.ExceptionClassName := '';
+        lTrace.ExceptionMessage := '';
+        lEmitTrace := True;
+      end;
+    end;
+  finally
+    TMonitor.Exit(Self);
+  end;
+  if lEmitTrace and Assigned(gDispatchTrace) then
+    gDispatchTrace(lTrace);
 end;
 
 procedure TTypedTopic<t>.RemoveByTarget(const aTarget: TObject);
@@ -4124,13 +4164,13 @@ var
   lSubs: TArray<TTypedSubscriber<t>>;
   lAutoSubs: TArray<TmaxAutoBridgeSnapshot>;
   lNeedSchedule: boolean;
+  lHasCoalesce: boolean;
   lKeyStr: TmaxString;
   lMetric: TmaxString;
   lSticky: boolean;
   lPreset: TmaxQueuePreset;
   lCreated: boolean;
 begin
-  lNeedSchedule := False; // prevent compiler warning: variable might not have been initialized
   lCreated := False;
 
   lKey := TypeInfo(t);
@@ -4205,48 +4245,55 @@ begin
     end;
   end;
 
-  lSubs := lTopic.Snapshot;
   lTopic.Cache(aEvent);
-  if lTopic.HasCoalesce then
+  lHasCoalesce := lTopic.HasCoalesce;
+  if lHasCoalesce then
   begin
+    lSubs := lTopic.Snapshot;
     lKeyStr := lTopic.CoalesceKey(aEvent);
     lNeedSchedule := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
-  end;
-  lTopic.AddPost;
-  if length(lSubs) = 0 then
-  begin
-    if lTopic.HasCoalesce then
+    lTopic.AddPost;
+    if Length(lSubs) = 0 then
+    begin
       lTopic.ClearPending;
-    if Length(lAutoSubs) <> 0 then
-      DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
-    exit;
-  end;
-  if lTopic.HasCoalesce then
-  begin
+      if Length(lAutoSubs) <> 0 then
+        DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
+      Exit;
+    end;
     if not lNeedSchedule then
     begin
       if Length(lAutoSubs) <> 0 then
         DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
-      exit;
+      Exit;
     end;
     ScheduleTypedCoalesce<t>(lMetric, lTopic, lSubs);
     if Length(lAutoSubs) <> 0 then
       DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
-    exit;
+    Exit;
   end;
-  if lTopic.TryBeginDirectDispatch then
+  lTopic.AddPost;
+  if lTopic.SnapshotAndTryBeginDirectDispatch(lSubs) then
   begin
     try
       DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
     finally
       lTopic.EndDirectDispatch;
     end;
-  end else
+  end
+  else
+  begin
+    if Length(lSubs) = 0 then
+    begin
+      if Length(lAutoSubs) <> 0 then
+        DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
+      Exit;
+    end;
     lTopic.Enqueue(
       procedure
       begin
         DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
       end);
+  end;
   if Length(lAutoSubs) <> 0 then
     DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
 end;
@@ -4259,13 +4306,13 @@ var
   lSubs: TArray<TTypedSubscriber<t>>;
   lAutoSubs: TArray<TmaxAutoBridgeSnapshot>;
   lNeedSchedule: boolean;
+  lHasCoalesce: boolean;
   lKeyStr: TmaxString;
   lMetric: TmaxString;
   lSticky: boolean;
   lPreset: TmaxQueuePreset;
   lCreated: boolean;
 begin
-  lNeedSchedule := False; // prevent compiler warning: variable might not have been initialized
   lCreated := False;
 
   Result := True;
@@ -4347,36 +4394,34 @@ begin
     end;
   end;
 
-  lSubs := lTopic.Snapshot;
   lTopic.Cache(aEvent);
-  if lTopic.HasCoalesce then
+  lHasCoalesce := lTopic.HasCoalesce;
+  if lHasCoalesce then
   begin
+    lSubs := lTopic.Snapshot;
     lKeyStr := lTopic.CoalesceKey(aEvent);
     lNeedSchedule := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
-  end;
-  lTopic.AddPost;
-  if length(lSubs) = 0 then
-  begin
-    if lTopic.HasCoalesce then
+    lTopic.AddPost;
+    if Length(lSubs) = 0 then
+    begin
       lTopic.ClearPending;
-    if Length(lAutoSubs) <> 0 then
-      DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
-    exit;
-  end;
-  if lTopic.HasCoalesce then
-  begin
+      if Length(lAutoSubs) <> 0 then
+        DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
+      Exit;
+    end;
     if not lNeedSchedule then
     begin
       if Length(lAutoSubs) <> 0 then
         DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
-      exit;
+      Exit;
     end;
     ScheduleTypedCoalesce<t>(lMetric, lTopic, lSubs);
     if Length(lAutoSubs) <> 0 then
       DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
-    exit;
+    Exit;
   end;
-  if lTopic.TryBeginDirectDispatch then
+  lTopic.AddPost;
+  if lTopic.SnapshotAndTryBeginDirectDispatch(lSubs) then
   begin
     try
       DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
@@ -4384,12 +4429,18 @@ begin
     finally
       lTopic.EndDirectDispatch;
     end;
-  end else
-    Result := lTopic.Enqueue(
-      procedure
-      begin
-        DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
-      end);
+  end
+  else
+  begin
+    if Length(lSubs) = 0 then
+      Result := True
+    else
+      Result := lTopic.Enqueue(
+        procedure
+        begin
+          DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
+        end);
+  end;
   if Result and (Length(lAutoSubs) <> 0) then
     DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
 end;
@@ -5365,6 +5416,7 @@ var
   lSubs: TArray<TTypedSubscriber<t>>;
   lAutoSubs: TArray<TmaxAutoBridgeSnapshot>;
   lNeedSchedule: boolean;
+  lHasCoalesce: boolean;
   lKeyStr: TmaxString;
   lNameKey: TmaxString;
   lMetric: TmaxString;
@@ -5376,7 +5428,6 @@ var
   lHasBasePolicy: boolean;
   lCreated: boolean;
 begin
-  lNeedSchedule := False; // prevent compiler warning: variable might not have been initialized
   lCreated := False;
 
   lKey := TypeInfo(t);
@@ -5470,48 +5521,55 @@ begin
     end;
   end;
 
-  lSubs := lTopic.Snapshot;
   lTopic.Cache(aEvent);
-  if lTopic.HasCoalesce then
+  lHasCoalesce := lTopic.HasCoalesce;
+  if lHasCoalesce then
   begin
+    lSubs := lTopic.Snapshot;
     lKeyStr := lTopic.CoalesceKey(aEvent);
     lNeedSchedule := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
-  end;
-  lTopic.AddPost;
-  if length(lSubs) = 0 then
-  begin
-    if lTopic.HasCoalesce then
+    lTopic.AddPost;
+    if Length(lSubs) = 0 then
+    begin
       lTopic.ClearPending;
-    if Length(lAutoSubs) <> 0 then
-      DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
-    exit;
-  end;
-  if lTopic.HasCoalesce then
-  begin
+      if Length(lAutoSubs) <> 0 then
+        DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
+      Exit;
+    end;
     if not lNeedSchedule then
     begin
       if Length(lAutoSubs) <> 0 then
         DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
-      exit;
+      Exit;
     end;
     ScheduleTypedCoalesce<t>(lMetric, lTopic, lSubs);
     if Length(lAutoSubs) <> 0 then
       DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
-    exit;
+    Exit;
   end;
-  if lTopic.TryBeginDirectDispatch then
+  lTopic.AddPost;
+  if lTopic.SnapshotAndTryBeginDirectDispatch(lSubs) then
   begin
     try
       DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
     finally
       lTopic.EndDirectDispatch;
     end;
-  end else
+  end
+  else
+  begin
+    if Length(lSubs) = 0 then
+    begin
+      if Length(lAutoSubs) <> 0 then
+        DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
+      Exit;
+    end;
     lTopic.Enqueue(
       procedure
       begin
         DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
       end);
+  end;
   if Length(lAutoSubs) <> 0 then
     DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
 end;
@@ -5524,6 +5582,7 @@ var
   lSubs: TArray<TTypedSubscriber<t>>;
   lAutoSubs: TArray<TmaxAutoBridgeSnapshot>;
   lNeedSchedule: boolean;
+  lHasCoalesce: boolean;
   lKeyStr: TmaxString;
   lNameKey: TmaxString;
   lMetric: TmaxString;
@@ -5535,8 +5594,6 @@ var
   lHasBasePolicy: boolean;
   lCreated: boolean;
 begin
-  lNeedSchedule := False; // prevent compiler warning: variable might not have been initialized
-
   Result := True;
   lKey := TypeInfo(t);
   lNameKey := aName;
@@ -5637,36 +5694,34 @@ begin
     end;
   end;
 
-  lSubs := lTopic.Snapshot;
   lTopic.Cache(aEvent);
-  if lTopic.HasCoalesce then
+  lHasCoalesce := lTopic.HasCoalesce;
+  if lHasCoalesce then
   begin
+    lSubs := lTopic.Snapshot;
     lKeyStr := lTopic.CoalesceKey(aEvent);
     lNeedSchedule := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
-  end;
-  lTopic.AddPost;
-  if length(lSubs) = 0 then
-  begin
-    if lTopic.HasCoalesce then
+    lTopic.AddPost;
+    if Length(lSubs) = 0 then
+    begin
       lTopic.ClearPending;
-    if Length(lAutoSubs) <> 0 then
-      DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
-    exit;
-  end;
-  if lTopic.HasCoalesce then
-  begin
+      if Length(lAutoSubs) <> 0 then
+        DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
+      Exit;
+    end;
     if not lNeedSchedule then
     begin
       if Length(lAutoSubs) <> 0 then
         DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
-      exit;
+      Exit;
     end;
     ScheduleTypedCoalesce<t>(lMetric, lTopic, lSubs);
     if Length(lAutoSubs) <> 0 then
       DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
-    exit;
+    Exit;
   end;
-  if lTopic.TryBeginDirectDispatch then
+  lTopic.AddPost;
+  if lTopic.SnapshotAndTryBeginDirectDispatch(lSubs) then
   begin
     try
       DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
@@ -5674,12 +5729,18 @@ begin
     finally
       lTopic.EndDirectDispatch;
     end;
-  end else
-    Result := lTopic.Enqueue(
-      procedure
-      begin
-        DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
-      end);
+  end
+  else
+  begin
+    if Length(lSubs) = 0 then
+      Result := True
+    else
+      Result := lTopic.Enqueue(
+        procedure
+        begin
+          DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
+        end);
+  end;
   if Result and (Length(lAutoSubs) <> 0) then
     DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
 end;
@@ -5992,6 +6053,7 @@ var
   lSubs: TArray<TTypedSubscriber<t>>;
   lAutoSubs: TArray<TmaxAutoBridgeSnapshot>;
   lNeedSchedule: boolean;
+  lHasCoalesce: boolean;
   lKeyStr: TmaxString;
   lMetric: TmaxString;
   lSticky: boolean;
@@ -5999,7 +6061,6 @@ var
   lTypeKey: PTypeInfo;
   lCreated: boolean;
 begin
-  lNeedSchedule := False; // prevent compiler warning: variable might not have been initialized
   lCreated := False;
 
   lTypeKey := TypeInfo(t);
@@ -6075,48 +6136,55 @@ begin
     end;
   end;
 
-  lSubs := lTopic.Snapshot;
   lTopic.Cache(aEvent);
-  if lTopic.HasCoalesce then
+  lHasCoalesce := lTopic.HasCoalesce;
+  if lHasCoalesce then
   begin
+    lSubs := lTopic.Snapshot;
     lKeyStr := lTopic.CoalesceKey(aEvent);
     lNeedSchedule := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
-  end;
-  lTopic.AddPost;
-  if length(lSubs) = 0 then
-  begin
-    if lTopic.HasCoalesce then
+    lTopic.AddPost;
+    if Length(lSubs) = 0 then
+    begin
       lTopic.ClearPending;
-    if Length(lAutoSubs) <> 0 then
-      DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
-    exit;
-  end;
-  if lTopic.HasCoalesce then
-  begin
+      if Length(lAutoSubs) <> 0 then
+        DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
+      Exit;
+    end;
     if not lNeedSchedule then
     begin
       if Length(lAutoSubs) <> 0 then
         DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
-      exit;
+      Exit;
     end;
     ScheduleTypedCoalesce<t>(lMetric, lTopic, lSubs);
     if Length(lAutoSubs) <> 0 then
       DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
-    exit;
+    Exit;
   end;
-  if lTopic.TryBeginDirectDispatch then
+  lTopic.AddPost;
+  if lTopic.SnapshotAndTryBeginDirectDispatch(lSubs) then
   begin
     try
       DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
     finally
       lTopic.EndDirectDispatch;
     end;
-  end else
+  end
+  else
+  begin
+    if Length(lSubs) = 0 then
+    begin
+      if Length(lAutoSubs) <> 0 then
+        DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
+      Exit;
+    end;
     lTopic.Enqueue(
       procedure
       begin
         DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
       end);
+  end;
   if Length(lAutoSubs) <> 0 then
     DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
 		end;
@@ -6129,6 +6197,7 @@ var
   lSubs: TArray<TTypedSubscriber<t>>;
   lAutoSubs: TArray<TmaxAutoBridgeSnapshot>;
   lNeedSchedule: boolean;
+  lHasCoalesce: boolean;
   lKeyStr: TmaxString;
   lMetric: TmaxString;
   lSticky: boolean;
@@ -6136,7 +6205,6 @@ var
   lTypeKey: PTypeInfo;
   lCreated: boolean;
 begin
-  lNeedSchedule := False; // prevent compiler warning: variable might not have been initialized
   lCreated := False;
 
   Result := True;
@@ -6220,37 +6288,35 @@ begin
     end;
   end;
 
-  lSubs := lTopic.Snapshot;
   lTopic.Cache(aEvent);
-  if lTopic.HasCoalesce then
+  lHasCoalesce := lTopic.HasCoalesce;
+  if lHasCoalesce then
   begin
+    lSubs := lTopic.Snapshot;
     lKeyStr := lTopic.CoalesceKey(aEvent);
     lNeedSchedule := lTopic.AddOrUpdatePending(lKeyStr, aEvent);
-  end;
-  lTopic.AddPost;
-  if length(lSubs) = 0 then
-  begin
-    if lTopic.HasCoalesce then
+    lTopic.AddPost;
+    if Length(lSubs) = 0 then
+    begin
       lTopic.ClearPending;
-    if Length(lAutoSubs) <> 0 then
-      DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
-    exit;
-  end;
-  if lTopic.HasCoalesce then
-  begin
+      if Length(lAutoSubs) <> 0 then
+        DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
+      Exit;
+    end;
     if not lNeedSchedule then
     begin
       if Length(lAutoSubs) <> 0 then
         DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
-      exit;
+      Exit;
     end;
     ScheduleTypedCoalesce<t>(lMetric, lTopic, lSubs);
     if Length(lAutoSubs) <> 0 then
       DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
-    exit;
+    Exit;
   end;
 
-  if lTopic.TryBeginDirectDispatch then
+  lTopic.AddPost;
+  if lTopic.SnapshotAndTryBeginDirectDispatch(lSubs) then
   begin
     try
       DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
@@ -6258,12 +6324,18 @@ begin
     finally
       lTopic.EndDirectDispatch;
     end;
-  end else
-    Result := lTopic.Enqueue(
-      procedure
-      begin
-        DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
-      end);
+  end
+  else
+  begin
+    if Length(lSubs) = 0 then
+      Result := True
+    else
+      Result := lTopic.Enqueue(
+        procedure
+        begin
+          DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
+        end);
+  end;
   if Result and (Length(lAutoSubs) <> 0) then
     DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
 		end;
