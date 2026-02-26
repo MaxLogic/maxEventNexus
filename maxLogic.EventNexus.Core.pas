@@ -397,12 +397,22 @@ type
 
   type
     TInvokeBox<T> = class
+    private
+      class var fPoolLock: TObject;
+      class var fPool: TArray<TInvokeBox<T>>;
+      class var fPoolCount: integer;
+      class function PopPool: TInvokeBox<T>; static;
+      class procedure PushPool(aBox: TInvokeBox<T>); static;
     public
       Topic: TTypedTopic<T>;
       Handler: TmaxProcOf<T>;
       Value: T;
       Token: TmaxSubscriptionToken;
       State: ImaxSubscriptionState;
+      class constructor Create;
+      class destructor Destroy;
+      class function Acquire: TInvokeBox<T>; static;
+      procedure ReleaseToPool;
       class function MakeProc(const aBox: TInvokeBox<T>): TmaxProc; static;
     end;
 
@@ -438,6 +448,12 @@ type
         fAutoBridgeCount: integer;
         fAutoBridgeNextToken: TmaxSubscriptionToken;
         fDelayedPostEpoch: Int64;
+        fTypedHotStamp: integer;
+        fTypedHotKey: PTypeInfo;
+        fTypedHotTopic: TmaxTopicBase;
+        fGuidHotStamp: integer;
+        fGuidHotKey: TGuid;
+        fGuidHotTopic: TmaxTopicBase;
 			    fMainThreadId: TThreadID;
 			    class procedure AddDispatchError(const aTopic: TmaxString; aMode: TmaxDelivery; aToken: TmaxSubscriptionToken;
 			      aSubscriberIndex: integer; const aException: Exception; var aErrors: TmaxExceptionList;
@@ -447,8 +463,12 @@ type
 			    class procedure InvokeWithTrace(const aTopic: TmaxString; aDelivery: TmaxDelivery; const aHandler: TmaxProc); static;
 			    class function WildcardPrefixMatches(const aPrefix: TmaxString; const aName: TmaxString): boolean; static;
 			    class function TryParseWildcardPattern(const aPattern: TmaxString; out aPrefix: TmaxString): boolean; static;
-			    class procedure MergeDispatchError(const aSource: EmaxDispatchError; var aErrors: TmaxExceptionList;
+          class procedure MergeDispatchError(const aSource: EmaxDispatchError; var aErrors: TmaxExceptionList;
 			      var aDetails: TArray<TmaxDispatchErrorDetail>); static;
+          function TryGetTypedHotTopic(const aKey: PTypeInfo; out aTopic: TmaxTopicBase): boolean;
+          procedure UpdateTypedHotTopic(const aKey: PTypeInfo; const aTopic: TmaxTopicBase);
+          function TryGetGuidHotTopic(const aKey: TGuid; out aTopic: TmaxTopicBase): boolean;
+          procedure UpdateGuidHotTopic(const aKey: TGuid; const aTopic: TmaxTopicBase);
 			    function AddNamedWildcard(const aPattern: TmaxString; const aPrefix: TmaxString; const aHandler: TmaxProc;
 			      aMode: TmaxDelivery; out aState: ImaxSubscriptionState): TmaxSubscriptionToken;
 			    procedure RemoveNamedWildcardByToken(aToken: TmaxSubscriptionToken);
@@ -1215,6 +1235,66 @@ begin
   SetLength(aDetails, lBase + lDetailCount);
   for lIdx := 0 to lDetailCount - 1 do
     aDetails[lBase + lIdx] := aSource.Details[lIdx];
+end;
+
+function TmaxBus.TryGetTypedHotTopic(const aKey: PTypeInfo; out aTopic: TmaxTopicBase): boolean;
+var
+  lStampBefore: integer;
+  lStampAfter: integer;
+  lKey: PTypeInfo;
+  lTopic: TmaxTopicBase;
+begin
+  aTopic := nil;
+  lStampBefore := TInterlocked.CompareExchange(fTypedHotStamp, 0, 0);
+  if (lStampBefore and 1) <> 0 then
+    Exit(False);
+  lKey := fTypedHotKey;
+  lTopic := fTypedHotTopic;
+  lStampAfter := TInterlocked.CompareExchange(fTypedHotStamp, 0, 0);
+  if lStampAfter <> lStampBefore then
+    Exit(False);
+  if (lTopic = nil) or (lKey <> aKey) then
+    Exit(False);
+  aTopic := lTopic;
+  Result := True;
+end;
+
+procedure TmaxBus.UpdateTypedHotTopic(const aKey: PTypeInfo; const aTopic: TmaxTopicBase);
+begin
+  TInterlocked.Increment(fTypedHotStamp);
+  fTypedHotKey := aKey;
+  fTypedHotTopic := aTopic;
+  TInterlocked.Increment(fTypedHotStamp);
+end;
+
+function TmaxBus.TryGetGuidHotTopic(const aKey: TGuid; out aTopic: TmaxTopicBase): boolean;
+var
+  lStampBefore: integer;
+  lStampAfter: integer;
+  lKey: TGuid;
+  lTopic: TmaxTopicBase;
+begin
+  aTopic := nil;
+  lStampBefore := TInterlocked.CompareExchange(fGuidHotStamp, 0, 0);
+  if (lStampBefore and 1) <> 0 then
+    Exit(False);
+  lKey := fGuidHotKey;
+  lTopic := fGuidHotTopic;
+  lStampAfter := TInterlocked.CompareExchange(fGuidHotStamp, 0, 0);
+  if lStampAfter <> lStampBefore then
+    Exit(False);
+  if (lTopic = nil) or (not IsEqualGUID(lKey, aKey)) then
+    Exit(False);
+  aTopic := lTopic;
+  Result := True;
+end;
+
+procedure TmaxBus.UpdateGuidHotTopic(const aKey: TGuid; const aTopic: TmaxTopicBase);
+begin
+  TInterlocked.Increment(fGuidHotStamp);
+  fGuidHotKey := aKey;
+  fGuidHotTopic := aTopic;
+  TInterlocked.Increment(fGuidHotStamp);
 end;
 
 { TmaxAutoBridgeEntry }
@@ -2898,25 +2978,119 @@ end;
 
  // Stable-capture invoke helpers (avoid capturing loop locals by reference)
 
+class constructor TInvokeBox<T>.Create;
+begin
+  fPoolLock := TObject.Create;
+  fPoolCount := 0;
+  SetLength(fPool, 0);
+end;
+
+class destructor TInvokeBox<T>.Destroy;
+var
+  lIdx: integer;
+  lItems: TArray<TInvokeBox<T>>;
+begin
+  lItems := nil;
+  TMonitor.Enter(fPoolLock);
+  try
+    if fPoolCount > 0 then
+    begin
+      SetLength(lItems, fPoolCount);
+      for lIdx := 0 to fPoolCount - 1 do
+      begin
+        lItems[lIdx] := fPool[lIdx];
+        fPool[lIdx] := nil;
+      end;
+      fPoolCount := 0;
+      SetLength(fPool, 0);
+    end;
+  finally
+    TMonitor.Exit(fPoolLock);
+  end;
+  for lIdx := 0 to High(lItems) do
+    lItems[lIdx].Free;
+  fPoolLock.Free;
+  fPoolLock := nil;
+end;
+
+class function TInvokeBox<T>.PopPool: TInvokeBox<T>;
+begin
+  Result := nil;
+  TMonitor.Enter(fPoolLock);
+  try
+    if fPoolCount = 0 then
+      Exit;
+    Dec(fPoolCount);
+    Result := fPool[fPoolCount];
+    fPool[fPoolCount] := nil;
+  finally
+    TMonitor.Exit(fPoolLock);
+  end;
+end;
+
+class procedure TInvokeBox<T>.PushPool(aBox: TInvokeBox<T>);
+const
+  cPoolChunk = 64;
+  cPoolMax = 4096;
+var
+  lPooled: boolean;
+begin
+  if aBox = nil then
+    Exit;
+  aBox.Topic := nil;
+  aBox.Handler := nil;
+  aBox.Value := Default(T);
+  aBox.Token := 0;
+  aBox.State := nil;
+  lPooled := False;
+  TMonitor.Enter(fPoolLock);
+  try
+    if fPoolCount < cPoolMax then
+    begin
+      if fPoolCount = Length(fPool) then
+        SetLength(fPool, fPoolCount + cPoolChunk);
+      fPool[fPoolCount] := aBox;
+      Inc(fPoolCount);
+      lPooled := True;
+    end;
+  finally
+    TMonitor.Exit(fPoolLock);
+  end;
+  if not lPooled then
+    aBox.Free;
+end;
+
+class function TInvokeBox<T>.Acquire: TInvokeBox<T>;
+begin
+  Result := PopPool;
+  if Result = nil then
+    Result := TInvokeBox<T>.Create;
+end;
+
+procedure TInvokeBox<T>.ReleaseToPool;
+begin
+  PushPool(Self);
+end;
+
 class function TInvokeBox<T>.MakeProc(const aBox: TInvokeBox<T>): TmaxProc;
 begin
   Result :=
     procedure
     var
-      h: TmaxProcOf<T>;
-      v: T;
+      lHandler: TmaxProcOf<T>;
+      lValue: T;
       lTopic: TTypedTopic<T>;
-      st: ImaxSubscriptionState;
-      tok: TmaxSubscriptionToken;
+      lState: ImaxSubscriptionState;
+      lToken: TmaxSubscriptionToken;
     begin
-      h := aBox.Handler;
-      v := aBox.Value;
+      lHandler := aBox.Handler;
+      lValue := aBox.Value;
       lTopic := aBox.Topic;
-      st := aBox.State;
-      tok := aBox.Token;
+      lState := aBox.State;
+      lToken := aBox.Token;
       try
         try
-          h(v);
+          lHandler(lValue);
           lTopic.AddDelivered(1);
         except
           on e: Exception do
@@ -2924,16 +3098,16 @@ begin
             lTopic.AddException;
             if (e is EAccessViolation) or (e is EInvalidPointer) then
             begin
-              lTopic.RemoveByToken(tok);
+              lTopic.RemoveByToken(lToken);
               Exit;
             end;
             raise;
           end;
         end;
       finally
-        if st <> nil then
-          st.Leave;
-        aBox.Free;
+        if lState <> nil then
+          lState.Leave;
+        aBox.ReleaseToPool;
       end;
     end;
 end;
@@ -3461,13 +3635,20 @@ begin
         end;
       end else
       begin
-        lBox := TInvokeBox<t>.Create;
+        lBox := TInvokeBox<t>.Acquire;
         lBox.Topic := aTopic;
         lBox.Handler := lHandler;
         lBox.Value := aValue;
         lBox.Token := lToken;
         lBox.State := lState;
-        Dispatch(aTopicName, lMode, TInvokeBox<t>.MakeProc(lBox), nil);
+        try
+          Dispatch(aTopicName, lMode, TInvokeBox<t>.MakeProc(lBox), nil);
+        except
+          lBox.ReleaseToPool;
+          if lState <> nil then
+            lState.Leave;
+          raise;
+        end;
       end;
     except
       on e: EmaxMainThreadRequired do
@@ -3617,6 +3798,12 @@ begin
   fAutoBridgeCount := 0;
   fAutoBridgeNextToken := 1;
   fDelayedPostEpoch := 0;
+  fTypedHotStamp := 0;
+  fTypedHotKey := nil;
+  fTypedHotTopic := nil;
+  fGuidHotStamp := 0;
+  fGuidHotKey := cGuidNull;
+  fGuidHotTopic := nil;
 		fMainThreadId := TThread.CurrentThread.ThreadID;
 end;
 
@@ -4177,12 +4364,20 @@ begin
   lMetric := '';
   lAutoSubs := SnapshotAutoBridgeTyped(lKey);
   lTopic := nil;
-  TMonitor.Enter(fTypedLock);
-  try
-    if fTyped.TryGetValue(lKey, lObj) then
-      lTopic := TTypedTopic<t>(lObj);
-  finally
-    TMonitor.Exit(fTypedLock);
+  if TryGetTypedHotTopic(lKey, lObj) then
+    lTopic := TTypedTopic<t>(lObj)
+  else
+  begin
+    TMonitor.Enter(fTypedLock);
+    try
+      if fTyped.TryGetValue(lKey, lObj) then
+      begin
+        lTopic := TTypedTopic<t>(lObj);
+        UpdateTypedHotTopic(lKey, lObj);
+      end;
+    finally
+      TMonitor.Exit(fTypedLock);
+    end;
   end;
   if lTopic <> nil then
     lMetric := lTopic.MetricName;
@@ -4231,6 +4426,7 @@ begin
     finally
       TMonitor.Exit(fTypedLock);
     end;
+    UpdateTypedHotTopic(lKey, lTopic);
 
     if lCreated then
       PublishMetricTypedTopic(lKey, lTopic);
@@ -4320,12 +4516,20 @@ begin
   lMetric := '';
   lAutoSubs := SnapshotAutoBridgeTyped(lKey);
   lTopic := nil;
-  TMonitor.Enter(fTypedLock);
-  try
-    if fTyped.TryGetValue(lKey, lObj) then
-      lTopic := TTypedTopic<t>(lObj);
-  finally
-    TMonitor.Exit(fTypedLock);
+  if TryGetTypedHotTopic(lKey, lObj) then
+    lTopic := TTypedTopic<t>(lObj)
+  else
+  begin
+    TMonitor.Enter(fTypedLock);
+    try
+      if fTyped.TryGetValue(lKey, lObj) then
+      begin
+        lTopic := TTypedTopic<t>(lObj);
+        UpdateTypedHotTopic(lKey, lObj);
+      end;
+    finally
+      TMonitor.Exit(fTypedLock);
+    end;
   end;
   if lTopic <> nil then
     lMetric := lTopic.MetricName;
@@ -4374,6 +4578,7 @@ begin
     finally
       TMonitor.Exit(fTypedLock);
     end;
+    UpdateTypedHotTopic(lKey, lTopic);
 
     if lCreated then
       PublishMetricTypedTopic(lKey, lTopic);
@@ -6068,12 +6273,20 @@ begin
   lMetric := '';
   lAutoSubs := SnapshotAutoBridgeGuid(lKey);
   lTopic := nil;
-  TMonitor.Enter(fGuidLock);
-  try
-    if fGuid.TryGetValue(lKey, lObj) then
-      lTopic := TTypedTopic<t>(lObj);
-  finally
-    TMonitor.Exit(fGuidLock);
+  if TryGetGuidHotTopic(lKey, lObj) then
+    lTopic := TTypedTopic<t>(lObj)
+  else
+  begin
+    TMonitor.Enter(fGuidLock);
+    try
+      if fGuid.TryGetValue(lKey, lObj) then
+      begin
+        lTopic := TTypedTopic<t>(lObj);
+        UpdateGuidHotTopic(lKey, lObj);
+      end;
+    finally
+      TMonitor.Exit(fGuidLock);
+    end;
   end;
   if lTopic <> nil then
     lMetric := lTopic.MetricName;
@@ -6122,6 +6335,7 @@ begin
 	    finally
 	      TMonitor.Exit(fGuidLock);
 	    end;
+    UpdateGuidHotTopic(lKey, lTopic);
 
 	    if lCreated then
 	      PublishMetricGuidTopic(lKey, lTopic);
@@ -6214,12 +6428,20 @@ begin
   lAutoSubs := SnapshotAutoBridgeGuid(lKey);
 
   lTopic := nil;
-  TMonitor.Enter(fGuidLock);
-  try
-    if fGuid.TryGetValue(lKey, lObj) then
-      lTopic := TTypedTopic<t>(lObj);
-  finally
-    TMonitor.Exit(fGuidLock);
+  if TryGetGuidHotTopic(lKey, lObj) then
+    lTopic := TTypedTopic<t>(lObj)
+  else
+  begin
+    TMonitor.Enter(fGuidLock);
+    try
+      if fGuid.TryGetValue(lKey, lObj) then
+      begin
+        lTopic := TTypedTopic<t>(lObj);
+        UpdateGuidHotTopic(lKey, lObj);
+      end;
+    finally
+      TMonitor.Exit(fGuidLock);
+    end;
   end;
   if lTopic <> nil then
     lMetric := lTopic.MetricName;
@@ -6268,6 +6490,7 @@ begin
 	    finally
 	      TMonitor.Exit(fGuidLock);
 	    end;
+    UpdateGuidHotTopic(lKey, lTopic);
 
 	    if lCreated then
 	      PublishMetricGuidTopic(lKey, lTopic);
