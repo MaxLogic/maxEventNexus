@@ -191,9 +191,11 @@ type
   TTarget = class
   private
     fCount: integer;
+    fLastValue: integer;
   public
     procedure Handle(const aValue: integer);
     property Count: integer read fCount;
+    property LastValue: integer read fLastValue;
   end;
 
   TTestUnsubscribeAll = class(TmaxTestCase)
@@ -272,6 +274,8 @@ type
   public
     class var HitsInt: integer;
     class var HitsIntf: integer;
+    class var LastInt: integer;
+    class var LastIntfWasNil: boolean;
     procedure OnInt(const aValue: integer);
     procedure OnIntf(const aValue: IIntEvent);
   end;
@@ -3759,6 +3763,7 @@ end;
 
 procedure TTarget.Handle(const aValue: integer);
 begin
+  fLastValue := aValue;
   Inc(fCount);
 end;
 
@@ -3881,11 +3886,13 @@ end;
 
 procedure TWeakTargetProbe.OnInt(const aValue: integer);
 begin
+  LastInt := aValue;
   Inc(HitsInt);
 end;
 
 procedure TWeakTargetProbe.OnIntf(const aValue: IIntEvent);
 begin
+  LastIntfWasNil := aValue = nil;
   Inc(HitsIntf);
 end;
 
@@ -5252,6 +5259,7 @@ var
   end;
 {$ENDIF}
 begin
+  Check(aBus <> nil, 'Bus interface should be assigned');
   lReceived := 0;
   {$IFDEF max_FPC}
   aBus.Subscribe<integer>(@Handler, Posting);
