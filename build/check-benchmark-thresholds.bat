@@ -34,7 +34,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
   "$lRows = Import-Csv -Path $lCsvPath;" ^
   "if (-not $lRows) { Write-Error 'Benchmark CSV has no data rows.'; exit 2 }" ^
   "$lFailed = $false;" ^
+  "$lChecked = 0;" ^
   "foreach ($lRow in $lRows) {" ^
+  "  if ($lRow.scenario -ne 'scheduler-compare') { continue }" ^
+  "  $lChecked++;" ^
   "  $lKey = ($lRow.scheduler + '|' + $lRow.delivery).ToLowerInvariant();" ^
   "  if ($lRow.status -ne 'ok') {" ^
   "    Write-Host ('FAIL: scheduler={0} delivery={1} status={2} error={3}' -f $lRow.scheduler, $lRow.delivery, $lRow.status, $lRow.error);" ^
@@ -68,8 +71,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
   "    $lFailed = $true;" ^
   "  }" ^
   "}" ^
+  "if ($lChecked -eq 0) { Write-Error 'Benchmark CSV has no scheduler-compare rows.'; exit 2 }" ^
   "if ($lFailed) { exit 1 }" ^
-  "Write-Host ('Benchmark thresholds passed: {0} row(s) checked using {1}' -f $lRows.Count, $lThresholdPath)"
+  "Write-Host ('Benchmark thresholds passed: {0} row(s) checked using {1}' -f $lChecked, $lThresholdPath)"
 
 set "lExitCode=%ERRORLEVEL%"
 if not "%lExitCode%"=="0" exit /b %lExitCode%

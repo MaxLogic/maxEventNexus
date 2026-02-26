@@ -17,7 +17,7 @@
 
 ## CSV Schema
 
-Output file is written with `--csv=<path>` and contains one summary row per scheduler.
+Output file is written with `--csv=<path>` and contains one summary row per benchmark target.
 
 Header:
 
@@ -27,8 +27,8 @@ scenario,scheduler,delivery,consumers,events,runs,p50_us,p95_us,p99_us,avg_us,be
 
 Field notes:
 
-- `scenario`: fixed value `scheduler-compare`
-- `scheduler`: `raw-thread` | `maxAsync` | `TTask`
+- `scenario`: `scheduler-compare` | `framework-compare`
+- `scheduler`: scheduler rows use `raw-thread` | `maxAsync` | `TTask`; framework rows use `EventNexus(maxAsync)` | `iPub` | `EventHorizon`
 - `delivery`: `posting` | `main` | `async` | `background`
 - `status`: `ok` or `failed`
 - `error`: non-empty only when `status=failed`
@@ -44,4 +44,5 @@ bench\SchedulerCompare.exe --events=2000 --consumers=2 --runs=3 --delivery=async
 Success condition:
 
 - process exits `0`
-- CSV file exists and has header + 3 scheduler rows
+- CSV file exists and has header + at least 3 `scheduler-compare` rows
+- enabled framework rows (`framework-compare`) are emitted with `status=ok`

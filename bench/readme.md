@@ -29,13 +29,19 @@ Reported fields:
 - `Throughput evt/s`
 - `Posted/Delivered`
 
-## Scheduler comparison (`SchedulerCompare.dpr`)
+## Scheduler and cross-library comparison (`SchedulerCompare.dpr`)
 
 Compares internal scheduler adapters under equivalent workloads and emits percentile summaries:
 
 - `TmaxRawThreadScheduler`
 - `TmaxAsyncScheduler`
 - `TmaxTTaskScheduler`
+
+Also emits cross-library rows in the same CSV for:
+
+- `EventNexus(maxAsync)`
+- `iPub`
+- `EventHorizon`
 
 Key options:
 
@@ -57,21 +63,15 @@ Output contract (clock source, percentile method, CSV schema):
 
 - `docs/benchmarks/benchmark-output-contract.md`
 
-Threshold gate (pass/fail):
+Threshold gate (pass/fail, scheduler rows only):
 
 - `./build/check-benchmark-thresholds.sh bench/scheduler-summary.csv`
 - `build\\check-benchmark-thresholds.bat bench\\scheduler-summary.csv`
 - Optional second argument overrides threshold config path (default: `bench/scheduler-thresholds.csv`).
 
-## Cross-framework comparison (`CompareBuses.dpr`)
+## Legacy cross-framework runner (`CompareBuses.dpr`)
 
-Compares EventNexus against reference wrappers in `reference/` under shared producer/subscriber load.
-
-Example:
-
-```bash
-./bench/CompareBuses --producers=4 --consumers=4 --events=50000
-```
+`CompareBuses.dpr` remains as a standalone legacy harness, but the primary comparable output is now emitted directly by `SchedulerCompare.dpr`.
 
 ## Notes
 

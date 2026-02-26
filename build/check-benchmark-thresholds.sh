@@ -51,6 +51,7 @@ FNR == 1 {
     lColumns[lHeader] = lIdx;
   }
   lRequired["scheduler"] = 1;
+  lRequired["scenario"] = 1;
   lRequired["delivery"] = 1;
   lRequired["status"] = 1;
   lRequired["error"] = 1;
@@ -71,11 +72,16 @@ FNR == 1 {
   for (lIdx = 1; lIdx <= NF; lIdx++) {
     $lIdx = trim($lIdx);
   }
+  lScenario = $lColumns["scenario"];
   lScheduler = $lColumns["scheduler"];
   lDelivery = $lColumns["delivery"];
   lStatus = $lColumns["status"];
   lError = $lColumns["error"];
   lKey = lScheduler "|" lDelivery;
+
+  if (lScenario != "scheduler-compare") {
+    next;
+  }
 
   if (lStatus != "ok") {
     printf("FAIL: scheduler=%s delivery=%s status=%s error=%s\n", lScheduler, lDelivery, lStatus, lError) > "/dev/stderr";

@@ -2,26 +2,14 @@
 Next task ID: T-1085
 
 ## Summary
-Open tasks: 1 (In Progress: 0, Next Today: 0, Next This Week: 1, Next Later: 0, Blocked: 0)
-Done tasks: 106
+Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
+Done tasks: 107
 
 ## In Progress
 
 ## Next – Today
 
 ## Next – This Week
-
-### T-1082 [BENCH] Build cross-library benchmarks versus iPub and EventHorizon
-Outcome: Add benchmark harness coverage and reporting that compares EventNexus against iPub and EventHorizon on equivalent publish/subscribe workloads.
-Proof:
-- Command: `./build-delphi.sh bench/SchedulerCompare.dproj -config Release -enforce-diagnostics-policy -diagnostics-policy build/diagnostics-policy.regex`
-- Expect: exit code `0`; benchmark project builds successfully.
-- Command: `/mnt/c/Windows/System32/cmd.exe /C "cd /d F:\\projects\\MaxLogic\\maxEventNexus && bench\\SchedulerCompare.exe --events=2000 --consumers=2 --runs=3 --delivery=async --metrics-readers=1 --metrics-reads=5000 --csv=bench\\scheduler-summary.csv"`
-- Expect: exit code `0`; CSV output generated with comparable rows for enabled libraries/schedulers and no runtime errors.
-Touches: `bench/`, `bench/readme.md`, `TASKS.md`, `CHANGELOG.md`
-Deps: `T-1080`
-Notes:
-- Keep workload parity explicit (same payload size, consumer count, delivery mode, run count) so results are interpretable.
 
 ## Next – Later
 
@@ -37,6 +25,21 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1082 [BENCH] Build cross-library benchmarks versus iPub and EventHorizon
+Summary: Extended `SchedulerCompare` to emit cross-library comparison rows for EventNexus, iPub, and EventHorizon in the same CSV contract used for scheduler benchmarks.
+
+Details:
+- Added cross-library benchmark loop in `bench/SchedulerCompare.dpr` with wrappers for `EventNexus(TTask)`, `iPub`, and `EventHorizon`.
+- CSV now includes both `scheduler-compare` and `framework-compare` scenarios with consistent metric columns/status handling.
+- Added benchmark stability guards for async profiles (in-process run cap + tighter cross-framework in-flight cap) to prevent memory-pressure failures.
+- Updated project/doc/tooling:
+  - `bench/SchedulerCompare.dproj` unit search path includes `..\reference` for iPub/EventHorizon units.
+  - `build/check-benchmark-thresholds.(sh|bat)` now validates only `scheduler-compare` rows, so framework rows do not break scheduler threshold gating.
+  - Updated benchmark docs (`bench/readme.md`, `docs/benchmarks/benchmark-output-contract.md`) for the new scenarios and row semantics.
+- Proof: `./build-delphi.sh bench/SchedulerCompare.dproj -config Release -enforce-diagnostics-policy -diagnostics-policy build/diagnostics-policy.regex` (exit `0`).
+- Proof: `/mnt/c/Windows/System32/cmd.exe /C "cd /d F:\\projects\\MaxLogic\\maxEventNexus && bench\\SchedulerCompare.exe --events=2000 --consumers=2 --runs=3 --delivery=async --metrics-readers=1 --metrics-reads=5000 --csv=bench\\scheduler-summary.csv"` (exit `0`, CSV rows include `raw-thread`, `maxAsync`, `TTask`, `EventNexus(TTask)`, `iPub`, `EventHorizon`, all `status=ok`).
+- Proof: `./build/check-benchmark-thresholds.sh bench/scheduler-summary.csv` (exit `0`, scheduler threshold gate still passes).
 
 ### T-1084 [TEST] Extend GUID PostResult queue-pressure coverage and add API coverage proxy target
 Summary: Added missing GUID `PostResult` queue-pressure assertions and introduced a lightweight numeric API-to-tests coverage report with an enforceable target.

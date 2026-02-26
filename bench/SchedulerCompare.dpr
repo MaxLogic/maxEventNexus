@@ -5,6 +5,8 @@ program SchedulerCompare;
 uses
   Classes, SysUtils, SyncObjs,
   System.Diagnostics, System.Generics.Collections, System.Math, System.StrUtils, System.Threading,
+  iPub.Rtl.Messaging,
+  NX.Horizon,
   maxLogic.EventNexus,
   maxLogic.EventNexus.Core,
   maxLogic.EventNexus.Threading.Adapter,
@@ -18,6 +20,85 @@ type
   TSchedulerEntry = record
     Name: string;
     Factory: TSchedulerFactory;
+  end;
+
+  IBenchmarkEvent = interface
+    ['{54A9A7A4-8D5B-4BE6-8FDE-1F7A58A5CE2E}']
+    function GetValue: Integer;
+    property Value: Integer read GetValue;
+  end;
+
+  TBenchmarkEvent = class(TInterfacedObject, IBenchmarkEvent)
+  private
+    fValue: Integer;
+  public
+    constructor Create(aValue: Integer);
+    function GetValue: Integer;
+  end;
+
+  TFrameworkCallback = reference to procedure(const aEvent: IBenchmarkEvent);
+
+  IFrameworkBus = interface
+    ['{DF69FB99-703B-4A3A-BDA0-D2B3E13CB0EA}']
+    procedure Subscribe(const aCallback: TFrameworkCallback);
+    procedure Post(const aEvent: IBenchmarkEvent);
+    procedure Clear;
+  end;
+
+  TFrameworkFactory = function(aDelivery: TmaxDelivery): IFrameworkBus;
+
+  TFrameworkEntry = record
+    Name: string;
+    Factory: TFrameworkFactory;
+  end;
+
+  TFrameworkConsumer = class
+  private
+    fCallback: TFrameworkCallback;
+  public
+    constructor Create(const aCallback: TFrameworkCallback);
+    procedure Handle(const aEvent: IBenchmarkEvent);
+  end;
+
+  TEventNexusFrameworkBus = class(TInterfacedObject, IFrameworkBus)
+  private
+    fBus: TmaxBus;
+    fConsumers: TObjectList<TFrameworkConsumer>;
+    fDelivery: TmaxDelivery;
+    fSubscriptions: TList<ImaxSubscription>;
+  public
+    constructor Create(aDelivery: TmaxDelivery);
+    destructor Destroy; override;
+    procedure Subscribe(const aCallback: TFrameworkCallback);
+    procedure Post(const aEvent: IBenchmarkEvent);
+    procedure Clear;
+  end;
+
+  TiPubFrameworkBus = class(TInterfacedObject, IFrameworkBus)
+  private
+    fConsumers: TObjectList<TFrameworkConsumer>;
+    fDelivery: TipMessagingThread;
+    fManager: TipMessaging;
+  public
+    constructor Create(aDelivery: TmaxDelivery);
+    destructor Destroy; override;
+    procedure Subscribe(const aCallback: TFrameworkCallback);
+    procedure Post(const aEvent: IBenchmarkEvent);
+    procedure Clear;
+  end;
+
+  TEventHorizonFrameworkBus = class(TInterfacedObject, IFrameworkBus)
+  private
+    fConsumers: TObjectList<TFrameworkConsumer>;
+    fDelivery: TNxHorizonDelivery;
+    fHorizon: TNxHorizon;
+    fSubscriptions: TList<INxEventSubscription>;
+  public
+    constructor Create(aDelivery: TmaxDelivery);
+    destructor Destroy; override;
+    procedure Subscribe(const aCallback: TFrameworkCallback);
+    procedure Post(const aEvent: IBenchmarkEvent);
+    procedure Clear;
   end;
 
   TBenchmarkConfig = record
@@ -46,6 +127,203 @@ const
 function CreateRawThreadScheduler: IEventNexusScheduler;
 begin
   Result := TmaxRawThreadScheduler.Create;
+end;
+
+constructor TBenchmarkEvent.Create(aValue: Integer);
+begin
+  inherited Create;
+  fValue := aValue;
+end;
+
+function TBenchmarkEvent.GetValue: Integer;
+begin
+  Result := fValue;
+end;
+
+constructor TFrameworkConsumer.Create(const aCallback: TFrameworkCallback);
+begin
+  inherited Create;
+  fCallback := aCallback;
+end;
+
+procedure TFrameworkConsumer.Handle(const aEvent: IBenchmarkEvent);
+begin
+  if Assigned(fCallback) then
+  begin
+    fCallback(aEvent);
+  end;
+end;
+
+function DeliveryToIpub(aDelivery: TmaxDelivery): TipMessagingThread;
+begin
+  case aDelivery of
+    TmaxDelivery.Posting: Result := TipMessagingThread.Posting;
+    TmaxDelivery.Main: Result := TipMessagingThread.Main;
+    TmaxDelivery.Async: Result := TipMessagingThread.Async;
+    TmaxDelivery.Background: Result := TipMessagingThread.Background;
+  else
+    Result := TipMessagingThread.Posting;
+  end;
+end;
+
+function DeliveryToEventHorizon(aDelivery: TmaxDelivery): TNxHorizonDelivery;
+begin
+  case aDelivery of
+    TmaxDelivery.Posting: Result := TNxHorizonDelivery.Sync;
+    TmaxDelivery.Main: Result := TNxHorizonDelivery.MainAsync;
+    TmaxDelivery.Async: Result := TNxHorizonDelivery.Async;
+    TmaxDelivery.Background: Result := TNxHorizonDelivery.Async;
+  else
+    Result := TNxHorizonDelivery.Sync;
+  end;
+end;
+
+constructor TEventNexusFrameworkBus.Create(aDelivery: TmaxDelivery);
+begin
+  inherited Create;
+  fDelivery := aDelivery;
+  fBus := TmaxBus.Create(CreateTTaskScheduler);
+  fSubscriptions := TList<ImaxSubscription>.Create;
+  fConsumers := TObjectList<TFrameworkConsumer>.Create(True);
+end;
+
+destructor TEventNexusFrameworkBus.Destroy;
+begin
+  Clear;
+  fConsumers.Free;
+  fSubscriptions.Free;
+  inherited;
+end;
+
+procedure TEventNexusFrameworkBus.Subscribe(const aCallback: TFrameworkCallback);
+var
+  lConsumer: TFrameworkConsumer;
+  lSubscription: ImaxSubscription;
+begin
+  lConsumer := TFrameworkConsumer.Create(aCallback);
+  fConsumers.Add(lConsumer);
+  lSubscription := fBus.SubscribeGuidOf<IBenchmarkEvent>(lConsumer.Handle, fDelivery);
+  fSubscriptions.Add(lSubscription);
+end;
+
+procedure TEventNexusFrameworkBus.Post(const aEvent: IBenchmarkEvent);
+begin
+  fBus.PostGuidOf<IBenchmarkEvent>(aEvent);
+end;
+
+procedure TEventNexusFrameworkBus.Clear;
+var
+  lSubscription: ImaxSubscription;
+begin
+  for lSubscription in fSubscriptions do
+  begin
+    lSubscription.Unsubscribe;
+  end;
+  fSubscriptions.Clear;
+  fConsumers.Clear;
+end;
+
+constructor TiPubFrameworkBus.Create(aDelivery: TmaxDelivery);
+begin
+  inherited Create;
+  fDelivery := DeliveryToIpub(aDelivery);
+  fManager := TipMessaging.NewManager;
+  fConsumers := TObjectList<TFrameworkConsumer>.Create(True);
+end;
+
+destructor TiPubFrameworkBus.Destroy;
+begin
+  Clear;
+  fConsumers.Free;
+  fManager.Free;
+  inherited;
+end;
+
+procedure TiPubFrameworkBus.Subscribe(const aCallback: TFrameworkCallback);
+var
+  lConsumer: TFrameworkConsumer;
+begin
+  lConsumer := TFrameworkConsumer.Create(aCallback);
+  fConsumers.Add(lConsumer);
+  fManager.SubscribeMethod<IBenchmarkEvent>('', lConsumer.Handle, fDelivery);
+end;
+
+procedure TiPubFrameworkBus.Post(const aEvent: IBenchmarkEvent);
+begin
+  fManager.Post<IBenchmarkEvent>(aEvent);
+end;
+
+procedure TiPubFrameworkBus.Clear;
+var
+  lConsumer: TFrameworkConsumer;
+begin
+  for lConsumer in fConsumers do
+  begin
+    fManager.TryUnsubscribeMethod<IBenchmarkEvent>('', lConsumer.Handle);
+  end;
+  fConsumers.Clear;
+end;
+
+constructor TEventHorizonFrameworkBus.Create(aDelivery: TmaxDelivery);
+begin
+  inherited Create;
+  fDelivery := DeliveryToEventHorizon(aDelivery);
+  fHorizon := TNxHorizon.Create;
+  fSubscriptions := TList<INxEventSubscription>.Create;
+  fConsumers := TObjectList<TFrameworkConsumer>.Create(True);
+end;
+
+destructor TEventHorizonFrameworkBus.Destroy;
+begin
+  Clear;
+  fConsumers.Free;
+  fSubscriptions.Free;
+  fHorizon.Free;
+  inherited;
+end;
+
+procedure TEventHorizonFrameworkBus.Subscribe(const aCallback: TFrameworkCallback);
+var
+  lConsumer: TFrameworkConsumer;
+  lSubscription: INxEventSubscription;
+begin
+  lConsumer := TFrameworkConsumer.Create(aCallback);
+  fConsumers.Add(lConsumer);
+  lSubscription := fHorizon.Subscribe<IBenchmarkEvent>(fDelivery, lConsumer.Handle);
+  fSubscriptions.Add(lSubscription);
+end;
+
+procedure TEventHorizonFrameworkBus.Post(const aEvent: IBenchmarkEvent);
+begin
+  fHorizon.Post<IBenchmarkEvent>(aEvent);
+end;
+
+procedure TEventHorizonFrameworkBus.Clear;
+var
+  lSubscription: INxEventSubscription;
+begin
+  for lSubscription in fSubscriptions do
+  begin
+    fHorizon.Unsubscribe(lSubscription);
+    lSubscription.WaitFor;
+  end;
+  fSubscriptions.Clear;
+  fConsumers.Clear;
+end;
+
+function CreateEventNexusFrameworkBus(aDelivery: TmaxDelivery): IFrameworkBus;
+begin
+  Result := TEventNexusFrameworkBus.Create(aDelivery);
+end;
+
+function CreateIpubFrameworkBus(aDelivery: TmaxDelivery): IFrameworkBus;
+begin
+  Result := TiPubFrameworkBus.Create(aDelivery);
+end;
+
+function CreateEventHorizonFrameworkBus(aDelivery: TmaxDelivery): IFrameworkBus;
+begin
+  Result := TEventHorizonFrameworkBus.Create(aDelivery);
 end;
 
 function DeliveryToText(aDelivery: TmaxDelivery): string;
@@ -381,6 +659,116 @@ begin
   end;
 end;
 
+procedure BenchmarkFramework(const aEntry: TFrameworkEntry; const aCfg: TBenchmarkConfig; out aSamples: TArray<TRunSample>);
+var
+  lBus: IFrameworkBus;
+  lDone: TEvent;
+  lElapsedUs: Int64;
+  lInFlight: Int64;
+  lI: Integer;
+  lPhase: string;
+  lPostedDeliveries: Int64;
+  lRemaining: Integer;
+  lRemainingLock: TCriticalSection;
+  lRun: Integer;
+  lTotalExpected: Int64;
+  lWatch: TStopwatch;
+begin
+  SetLength(aSamples, aCfg.Runs);
+  for lRun := 0 to aCfg.Runs - 1 do
+  begin
+    lBus := aEntry.Factory(aCfg.Delivery);
+    lDone := TEvent.Create(nil, True, False, '');
+    lRemainingLock := TCriticalSection.Create;
+    lPhase := 'setup';
+    try
+      try
+        lRemaining := aCfg.Events * aCfg.Consumers;
+        lTotalExpected := Int64(aCfg.Events) * aCfg.Consumers;
+        lPostedDeliveries := 0;
+
+        lPhase := 'subscribe';
+        for lI := 1 to aCfg.Consumers do
+        begin
+          lBus.Subscribe(
+            procedure(const aEvent: IBenchmarkEvent)
+            begin
+              if aEvent <> nil then
+              begin
+                aEvent.GetValue;
+              end;
+
+              lRemainingLock.Enter;
+              try
+                Dec(lRemaining);
+                if lRemaining = 0 then
+                begin
+                  lDone.SetEvent;
+                end;
+              finally
+                lRemainingLock.Leave;
+              end;
+            end);
+        end;
+
+        lPhase := 'post';
+        lWatch := TStopwatch.StartNew;
+        for lI := 1 to aCfg.Events do
+        begin
+          if (aCfg.MaxInFlight > 0) and (aCfg.Delivery <> TmaxDelivery.Posting) then
+          begin
+            while True do
+            begin
+              lRemainingLock.Enter;
+              try
+                lInFlight := lPostedDeliveries - (lTotalExpected - lRemaining);
+              finally
+                lRemainingLock.Leave;
+              end;
+              if lInFlight < aCfg.MaxInFlight then
+              begin
+                Break;
+              end;
+              CheckSynchronize(0);
+              Sleep(1);
+            end;
+          end;
+          lBus.Post(TBenchmarkEvent.Create(lI));
+          Inc(lPostedDeliveries, aCfg.Consumers);
+        end;
+
+        lPhase := 'wait-drain';
+        if (lRemaining > 0) and (not WaitForSignal(lDone, 180000)) then
+        begin
+          raise Exception.CreateFmt('%s failed to drain queue on run %d', [aEntry.Name, lRun + 1]);
+        end;
+
+        lWatch.Stop;
+        lElapsedUs := ElapsedUs(lWatch);
+
+        aSamples[lRun].ElapsedUs := lElapsedUs;
+        aSamples[lRun].ThroughputPerSec := (lTotalExpected * 1000000) div lElapsedUs;
+        aSamples[lRun].MetricReads := 0;
+        aSamples[lRun].MetricReadsPerSec := 0;
+      except
+        on E: Exception do
+        begin
+          raise Exception.CreateFmt('%s run %d phase=%s: %s: %s',
+            [aEntry.Name, lRun + 1, lPhase, E.ClassName, E.Message]);
+        end;
+      end;
+    finally
+      if lBus <> nil then
+      begin
+        lBus.Clear;
+      end;
+      lBus := nil;
+      lRemainingLock.Free;
+      lDone.Free;
+    end;
+  end;
+end;
+
 procedure SummarizeSamples(const aSamples: TArray<TRunSample>; out aP50Us, aP95Us, aP99Us,
   aAvgUs, aBestUs, aWorstUs, aAvgThroughput, aTotalMetricReads, aAvgMetricReadsPerSec: Int64);
 var
@@ -412,12 +800,12 @@ begin
   aAvgMetricReadsPerSec := SumValues(lMetricReadsPerSec) div Length(lMetricReadsPerSec);
 end;
 
-procedure AppendCsvSummary(aLines: TStrings; const aEntry: TSchedulerEntry; const aCfg: TBenchmarkConfig;
-  aP50Us, aP95Us, aP99Us, aAvgUs, aBestUs, aWorstUs, aAvgThroughput, aTotalMetricReads,
-  aAvgMetricReadsPerSec: Int64);
+procedure AppendCsvSummaryRow(aLines: TStrings; const aScenario: string; const aName: string;
+  const aCfg: TBenchmarkConfig; aP50Us, aP95Us, aP99Us, aAvgUs, aBestUs, aWorstUs, aAvgThroughput,
+  aTotalMetricReads, aAvgMetricReadsPerSec: Int64);
 begin
-  aLines.Add('scheduler-compare,' +
-    aEntry.Name + ',' +
+  aLines.Add(aScenario + ',' +
+    aName + ',' +
     DeliveryToText(aCfg.Delivery) + ',' +
     IntToStr(aCfg.Consumers) + ',' +
     IntToStr(aCfg.Events) + ',' +
@@ -435,11 +823,11 @@ begin
     cPercentileMethod + ',ok,');
 end;
 
-procedure AppendCsvFailure(aLines: TStrings; const aEntry: TSchedulerEntry; const aCfg: TBenchmarkConfig;
-  const aError: string);
+procedure AppendCsvFailureRow(aLines: TStrings; const aScenario: string; const aName: string;
+  const aCfg: TBenchmarkConfig; const aError: string);
 begin
-  aLines.Add('scheduler-compare,' +
-    aEntry.Name + ',' +
+  aLines.Add(aScenario + ',' +
+    aName + ',' +
     DeliveryToText(aCfg.Delivery) + ',' +
     IntToStr(aCfg.Consumers) + ',' +
     IntToStr(aCfg.Events) + ',' +
@@ -453,8 +841,11 @@ end;
 procedure Run;
 var
   lCfg: TBenchmarkConfig;
+  lFrameworkCfg: TBenchmarkConfig;
+  lFrameworkEntries: array of TFrameworkEntry;
   lRunCfg: TBenchmarkConfig;
   lEntries: array of TSchedulerEntry;
+  lFrameworkIdx: Integer;
   lIdx: Integer;
   lSamples: TArray<TRunSample>;
   lP50Us, lP95Us, lP99Us: Int64;
@@ -471,6 +862,14 @@ begin
   lEntries[1].Factory := CreateMaxAsyncScheduler;
   lEntries[2].Name := 'TTask';
   lEntries[2].Factory := CreateTTaskScheduler;
+
+  SetLength(lFrameworkEntries, 3);
+  lFrameworkEntries[0].Name := 'EventNexus(TTask)';
+  lFrameworkEntries[0].Factory := CreateEventNexusFrameworkBus;
+  lFrameworkEntries[1].Name := 'iPub';
+  lFrameworkEntries[1].Factory := CreateIpubFrameworkBus;
+  lFrameworkEntries[2].Name := 'EventHorizon';
+  lFrameworkEntries[2].Factory := CreateEventHorizonFrameworkBus;
 
   lCsv := nil;
   if lCfg.CsvPath <> '' then
@@ -513,7 +912,8 @@ begin
         Writeln;
 
         if lCsv <> nil then
-          AppendCsvSummary(lCsv, lEntries[lIdx], lRunCfg, lP50Us, lP95Us, lP99Us, lAvgUs, lBestUs,
+          AppendCsvSummaryRow(lCsv, 'scheduler-compare', lEntries[lIdx].Name, lRunCfg, lP50Us, lP95Us,
+            lP99Us, lAvgUs, lBestUs,
             lWorstUs, lAvgThroughput, lTotalMetricReads, lAvgMetricReadsPerSec);
       except
         on E: Exception do
@@ -522,7 +922,54 @@ begin
           Writeln('FAILED: ', E.ClassName, ': ', E.Message);
           Writeln;
           if lCsv <> nil then
-            AppendCsvFailure(lCsv, lEntries[lIdx], lRunCfg, E.ClassName + ': ' + E.Message);
+            AppendCsvFailureRow(lCsv, 'scheduler-compare', lEntries[lIdx].Name, lRunCfg,
+              E.ClassName + ': ' + E.Message);
+        end;
+      end;
+    end;
+
+    Writeln('Cross-library comparison: EventNexus(TTask), iPub, EventHorizon');
+    Writeln;
+    lFrameworkCfg := lCfg;
+    lFrameworkCfg.MetricsReaders := 0;
+    lFrameworkCfg.MetricsReadsPerReader := 0;
+    if (lFrameworkCfg.MaxInFlight > 64) then
+    begin
+      lFrameworkCfg.MaxInFlight := 64;
+    end;
+    if (lFrameworkCfg.Delivery <> TmaxDelivery.Posting) and (lFrameworkCfg.Runs > 1) then
+    begin
+      Writeln('Note: cross-library async profile is capped to 1 run in-process to avoid cumulative memory pressure.');
+      lFrameworkCfg.Runs := 1;
+    end;
+    for lFrameworkIdx := Low(lFrameworkEntries) to High(lFrameworkEntries) do
+    begin
+      try
+        BenchmarkFramework(lFrameworkEntries[lFrameworkIdx], lFrameworkCfg, lSamples);
+        SummarizeSamples(lSamples, lP50Us, lP95Us, lP99Us, lAvgUs, lBestUs, lWorstUs,
+          lAvgThroughput, lTotalMetricReads, lAvgMetricReadsPerSec);
+
+        Writeln('--- ', lFrameworkEntries[lFrameworkIdx].Name, ' ---');
+        Writeln('p50 us: ', lP50Us);
+        Writeln('p95 us: ', lP95Us);
+        Writeln('p99 us: ', lP99Us);
+        Writeln('avg us: ', lAvgUs, '  best us: ', lBestUs, '  worst us: ', lWorstUs);
+        Writeln('avg throughput evt/s: ', lAvgThroughput);
+        Writeln;
+
+        if lCsv <> nil then
+          AppendCsvSummaryRow(lCsv, 'framework-compare', lFrameworkEntries[lFrameworkIdx].Name,
+            lFrameworkCfg, lP50Us, lP95Us, lP99Us, lAvgUs, lBestUs, lWorstUs, lAvgThroughput,
+            lTotalMetricReads, lAvgMetricReadsPerSec);
+      except
+        on E: Exception do
+        begin
+          Writeln('--- ', lFrameworkEntries[lFrameworkIdx].Name, ' ---');
+          Writeln('FAILED: ', E.ClassName, ': ', E.Message);
+          Writeln;
+          if lCsv <> nil then
+            AppendCsvFailureRow(lCsv, 'framework-compare', lFrameworkEntries[lFrameworkIdx].Name,
+              lFrameworkCfg, E.ClassName + ': ' + E.Message);
         end;
       end;
     end;
