@@ -340,6 +340,8 @@ type
   TTestDelayedPosting = class(TmaxTestCase)
   published
     procedure NamedDelayedPostWaitsBeforeDelivery;
+    procedure NamedOfDelayedPostWaitsBeforeDelivery;
+    procedure GuidDelayedPostWaitsBeforeDelivery;
     procedure CancelPreventsTypedDelayedDelivery;
     procedure ClearDropsPendingDelayedPosts;
     procedure ZeroDelayDispatchesAndUpdatesMetrics;
@@ -4967,6 +4969,85 @@ begin
     Check(lDone.WaitFor(600) = wrSignaled, 'Delayed post did not fire');
     lElapsedMs := integer(GetTickCount64 - lStartMs);
     Check(lElapsedMs >= 80, Format('Delayed post fired too quickly (%dms)', [lElapsedMs]));
+    Check(not lHandle.IsPending);
+    lSub := nil;
+  finally
+    lDone.Free;
+  end;
+end;
+
+procedure TTestDelayedPosting.NamedOfDelayedPostWaitsBeforeDelivery;
+var
+  lBus: ImaxBus;
+  lSub: ImaxSubscription;
+  lHandle: ImaxDelayedPost;
+  lDone: TEvent;
+  lStartMs: UInt64;
+  lElapsedMs: integer;
+  lReceived: integer;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lDone := TEvent.Create(nil, True, False, '');
+  lReceived := 0;
+  try
+    lSub := maxBusObj(lBus).SubscribeNamedOf<integer>('delayed.namedof',
+      procedure(const aValue: integer)
+      begin
+        lReceived := aValue;
+        lDone.SetEvent;
+      end,
+      TmaxDelivery.Posting);
+    lStartMs := GetTickCount64;
+    lHandle := maxBusObj(lBus).PostDelayedNamedOf<integer>('delayed.namedof', 73, 120);
+    Check(lHandle <> nil);
+    Check(lHandle.IsPending);
+    Check(lDone.WaitFor(40) = wrTimeout, 'Delayed named-of post fired too early');
+    Check(lDone.WaitFor(600) = wrSignaled, 'Delayed named-of post did not fire');
+    lElapsedMs := integer(GetTickCount64 - lStartMs);
+    Check(lElapsedMs >= 80, Format('Delayed named-of post fired too quickly (%dms)', [lElapsedMs]));
+    CheckEquals(73, lReceived);
+    Check(not lHandle.IsPending);
+    lSub := nil;
+  finally
+    lDone.Free;
+  end;
+end;
+
+procedure TTestDelayedPosting.GuidDelayedPostWaitsBeforeDelivery;
+var
+  lBus: ImaxBus;
+  lSub: ImaxSubscription;
+  lHandle: ImaxDelayedPost;
+  lDone: TEvent;
+  lStartMs: UInt64;
+  lElapsedMs: integer;
+  lReceived: integer;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lDone := TEvent.Create(nil, True, False, '');
+  lReceived := 0;
+  try
+    lSub := maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
+      procedure(const aValue: IIntEvent)
+      begin
+        if aValue <> nil then
+        begin
+          lReceived := aValue.GetValue;
+        end;
+        lDone.SetEvent;
+      end,
+      TmaxDelivery.Posting);
+    lStartMs := GetTickCount64;
+    lHandle := maxBusObj(lBus).PostDelayedGuidOf<IIntEvent>(TIntEvent.Create(91), 120);
+    Check(lHandle <> nil);
+    Check(lHandle.IsPending);
+    Check(lDone.WaitFor(40) = wrTimeout, 'Delayed guid post fired too early');
+    Check(lDone.WaitFor(600) = wrSignaled, 'Delayed guid post did not fire');
+    lElapsedMs := integer(GetTickCount64 - lStartMs);
+    Check(lElapsedMs >= 80, Format('Delayed guid post fired too quickly (%dms)', [lElapsedMs]));
+    CheckEquals(91, lReceived);
     Check(not lHandle.IsPending);
     lSub := nil;
   finally
