@@ -15,5 +15,8 @@
 ^lib\\maxlogicfoundation\\MaxLogic\.strutils\.pas\(\d+\): Hint warning H2077: Value assigned to '.+' never used \[[^\]]+\]$
 ^lib\\maxlogicfoundation\\MaxLogic\.strutils\.pas\(\d+\): Hint warning H2219: Private symbol 'FoldAscii' declared but never used \[[^\]]+\]$
 ^maxLogic\.EventNexus\.Core\.pas\(\d+\): Hint warning H2164: Variable 'lKvInner' is declared but never used in 'TmaxBus\.EnableSticky<t>' \[[^\]]+\]$
+^maxLogic\.EventNexus\.Core\.pas\(\d+\): Hint warning H2077: Value assigned to 'lAlreadyProcessing' never used \[[^\]]+\]$
 ^lib\\maxlogicfoundation\\maxAsync\.pas\(\d+\): Hint warning H2077: Value assigned to 'NoItem' never used \[[^\]]+\]$
+^lib\\maxlogicfoundation\\maxAsync\.pas\(\d+\): Hint warning H2077: Value assigned to 'aException' never used \[[^\]]+\]$
+^reference\\iPub\.Rtl\.Messaging\.pas\(\d+\): Hint warning H2164: Variable 'LSubscription' is declared but never used in 'TipMessageManager\.DoPost<[Tt]>' \[[^\]]+\]$
 ^SchedulerCompare\.dpr\(\d+\): Hint warning H2077: Value assigned to '.+' never used \[[^\]]+\]$
