@@ -54,6 +54,12 @@ type
   end;
 
   TTestCoalesce = class(TmaxTestCase)
+  private
+    class function MakeKeyed(const aKey: string; aValue: integer): TKeyed; static;
+    procedure AddKeyedValue(const aLock: TCriticalSection; const aValues: TList<TKeyed>; const aEvent: TKeyed);
+    function FindKeyedValue(const aLock: TCriticalSection; const aValues: TList<TKeyed>; const aKey: string): integer;
+    procedure WaitForKeyedCount(const aLock: TCriticalSection; const aValues: TList<TKeyed>; aExpected: integer;
+      aTimeoutMs: Cardinal);
   published
     procedure DropsIntermediateDeliversLatest;
     procedure ZeroWindowBatchesPosts;
@@ -298,6 +304,8 @@ type
   end;
 
   TTestDispatchErrorDetails = class(TmaxTestCase)
+  private
+    procedure AssertSingleCoalescedDetail(const aTopicName: string; const aDetails: TArray<TmaxDispatchErrorDetail>);
   published
     procedure IncludesSubscriberMetadataForPost;
     procedure IncludesMetadataForCoalescedAsyncHook;
@@ -330,6 +338,8 @@ type
     procedure NamedDelayedPostWaitsBeforeDelivery;
     procedure CancelPreventsTypedDelayedDelivery;
     procedure ClearDropsPendingDelayedPosts;
+    procedure ZeroDelayDispatchesAndUpdatesMetrics;
+    procedure LargeDelayRemainsPendingUntilCanceled;
   end;
 
   TTestMetricsCallbackTotals = class(TmaxTestCase)
@@ -573,6 +583,14 @@ type
     function IsMainThread: Boolean;
   end;
 
+  THoldDelayedScheduler = class(TInterfacedObject, IEventNexusScheduler)
+  public
+    procedure RunAsync(const aProc: TmaxProc);
+    procedure RunOnMain(const aProc: TmaxProc);
+    procedure RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);
+    function IsMainThread: Boolean;
+  end;
+
 procedure TABATarget.OnInt(const aValue: integer);
 begin
   if aValue = 1 then
@@ -658,6 +676,29 @@ begin
 end;
 
 function TInlineScheduler.IsMainThread: Boolean;
+begin
+  Result := False;
+end;
+
+procedure THoldDelayedScheduler.RunAsync(const aProc: TmaxProc);
+begin
+  if ProcAssigned(aProc) then
+    aProc();
+end;
+
+procedure THoldDelayedScheduler.RunOnMain(const aProc: TmaxProc);
+begin
+  if ProcAssigned(aProc) then
+    aProc();
+end;
+
+procedure THoldDelayedScheduler.RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);
+begin
+  if (aDelayUs = 0) and ProcAssigned(aProc) then
+    aProc();
+end;
+
+function THoldDelayedScheduler.IsMainThread: Boolean;
 begin
   Result := False;
 end;
@@ -815,76 +856,82 @@ end;
 
 { TTestCoalesce }
 
+class function TTestCoalesce.MakeKeyed(const aKey: string; aValue: integer): TKeyed;
+begin
+  Result.Key := aKey;
+  Result.Value := aValue;
+end;
+
+procedure TTestCoalesce.AddKeyedValue(const aLock: TCriticalSection; const aValues: TList<TKeyed>;
+  const aEvent: TKeyed);
+begin
+  aLock.Enter;
+  try
+    aValues.Add(aEvent);
+  finally
+    aLock.Leave;
+  end;
+end;
+
+function TTestCoalesce.FindKeyedValue(const aLock: TCriticalSection; const aValues: TList<TKeyed>;
+  const aKey: string): integer;
+var
+  lValue: TKeyed;
+begin
+  aLock.Enter;
+  try
+    for lValue in aValues do
+      if lValue.Key = aKey then
+        Exit(lValue.Value);
+    Result := -1;
+  finally
+    aLock.Leave;
+  end;
+end;
+
+procedure TTestCoalesce.WaitForKeyedCount(const aLock: TCriticalSection; const aValues: TList<TKeyed>;
+  aExpected: integer; aTimeoutMs: Cardinal);
+var
+  lStart: UInt64;
+  lCount: integer;
+begin
+  lStart := GetTickCount64;
+  repeat
+    aLock.Enter;
+    try
+      lCount := aValues.Count;
+    finally
+      aLock.Leave;
+    end;
+    if lCount >= aExpected then
+      Exit;
+    CheckSynchronize(0);
+    Sleep(1);
+  until GetTickCount64 - lStart >= aTimeoutMs;
+end;
+
 procedure TTestCoalesce.DropsIntermediateDeliversLatest;
 var
   lBus: ImaxBusAdvanced;
   lSub: ImaxSubscription;
   {$IFDEF max_FPC}
   lValues: specialize TList<TKeyed>;
-
-  function KeyOf(const aEvt: TKeyed): TmaxString;
+  function KeyOf(const aEvent: TKeyed): TmaxString;
   begin
-    Result := aEvt.Key;
+    Result := aEvent.Key;
   end;
-
-  procedure Handler(const aEvt: TKeyed);
+  procedure Handler(const aEvent: TKeyed);
   begin
-    lLock.Enter;
-    try
-      lValues.Add(aEvt);
-    finally
-      lLock.Leave;
-    end;
+    AddKeyedValue(lLock, lValues, aEvent);
   end;
   {$ELSE}
   lValues: TList<TKeyed>;
   {$ENDIF}
   lLock: TCriticalSection;
-
-  function Make(const k: string; v: integer): TKeyed;
-  begin
-    Result.Key := k;
-    Result.Value := v;
-  end;
-
-	  function FindVal(const k: string): integer;
-	  var
-	    t: TKeyed;
-	  begin
-    lLock.Enter;
-    try
-      for t in lValues do
-        if t.Key = k then
-          exit(t.Value);
-      Result := -1;
-    finally
-      lLock.Leave;
-    end;
-	  end;
-
-	  procedure WaitForCount(aExpected: integer; aTimeoutMs: Cardinal);
-	  var
-	    lStart: UInt64;
-	    lCount: integer;
-	  begin
-	    lStart := GetTickCount64;
-	    repeat
-	      lLock.Enter;
-	      try
-	        lCount := lValues.Count;
-	      finally
-	        lLock.Leave;
-	      end;
-	      if lCount >= aExpected then
-	        Exit;
-	      CheckSynchronize(0);
-	      Sleep(1);
-	    until GetTickCount64 - lStart >= aTimeoutMs;
-	  end;
-	begin
-	  lBus := maxBus as ImaxBusAdvanced;
-	  lBus.Clear;
-	  lLock := TCriticalSection.Create;
+begin
+  lBus := maxBus as ImaxBusAdvanced;
+  lBus.Clear;
+  lLock := TCriticalSection.Create;
   try
     {$IFDEF max_FPC}
     lBus.EnableCoalesceOf<TKeyed>(@KeyOf, 10000);
@@ -899,38 +946,34 @@ var
       10000);
     lValues := TList<TKeyed>.Create;
     lSub := maxBusObj(lBus).Subscribe<TKeyed>(
-      procedure(const aEvt: TKeyed)
+      procedure(const aEvent: TKeyed)
       begin
-        lLock.Enter;
-        try
-          lValues.Add(aEvt);
-        finally
-          lLock.Leave;
-        end;
+        AddKeyedValue(lLock, lValues, aEvent);
       end);
     {$ENDIF}
     try
       {$IFDEF max_FPC}
-      lBus.Post<TKeyed>(Make('A', 1));
-      lBus.Post<TKeyed>(Make('A', 2));
-      lBus.Post<TKeyed>(Make('B', 10));
-      lBus.Post<TKeyed>(Make('B', 11));
+      lBus.Post<TKeyed>(MakeKeyed('A', 1));
+      lBus.Post<TKeyed>(MakeKeyed('A', 2));
+      lBus.Post<TKeyed>(MakeKeyed('B', 10));
+      lBus.Post<TKeyed>(MakeKeyed('B', 11));
       {$ELSE}
-      maxBusObj(lBus).Post<TKeyed>(Make('A', 1));
-	      maxBusObj(lBus).Post<TKeyed>(Make('A', 2));
-	      maxBusObj(lBus).Post<TKeyed>(Make('B', 10));
-	      maxBusObj(lBus).Post<TKeyed>(Make('B', 11));
-	      {$ENDIF}
-	      WaitForCount(2, 2000);
-	      lLock.Enter;
-	      try
-	        CheckEquals(2, lValues.Count);
-	        CheckEquals(2, FindVal('A'));
-        CheckEquals(11, FindVal('B'));
+      maxBusObj(lBus).Post<TKeyed>(MakeKeyed('A', 1));
+      maxBusObj(lBus).Post<TKeyed>(MakeKeyed('A', 2));
+      maxBusObj(lBus).Post<TKeyed>(MakeKeyed('B', 10));
+      maxBusObj(lBus).Post<TKeyed>(MakeKeyed('B', 11));
+      {$ENDIF}
+      WaitForKeyedCount(lLock, lValues, 2, 2000);
+      lLock.Enter;
+      try
+        CheckEquals(2, lValues.Count);
       finally
         lLock.Leave;
       end;
+      CheckEquals(2, FindKeyedValue(lLock, lValues, 'A'));
+      CheckEquals(11, FindKeyedValue(lLock, lValues, 'B'));
     finally
+      lSub := nil;
       lValues.Free;
     end;
   finally
@@ -949,31 +992,18 @@ var
   lSub: ImaxSubscription;
   {$IFDEF max_FPC}
   lValues: specialize TList<TKeyed>;
-
-  function KeyOf(const aEvt: TKeyed): TmaxString;
+  function KeyOf(const aEvent: TKeyed): TmaxString;
   begin
-    Result := aEvt.Key;
+    Result := aEvent.Key;
   end;
-
-  procedure Handler(const aEvt: TKeyed);
+  procedure Handler(const aEvent: TKeyed);
   begin
-    lLock.Enter;
-    try
-      lValues.Add(aEvt);
-    finally
-      lLock.Leave;
-    end;
+    AddKeyedValue(lLock, lValues, aEvent);
   end;
   {$ELSE}
   lValues: TList<TKeyed>;
   {$ENDIF}
   lLock: TCriticalSection;
-
-  function Make(const k: string; v: integer): TKeyed;
-  begin
-    Result.Key := k;
-    Result.Value := v;
-  end;
 begin
   lBus := maxBus as ImaxBusAdvanced;
   lBus.Clear;
@@ -991,25 +1021,20 @@ begin
     0);
   lValues := TList<TKeyed>.Create;
   lSub := maxBusObj(lBus).Subscribe<TKeyed>(
-    procedure(const aEvt: TKeyed)
+    procedure(const aEvent: TKeyed)
     begin
-      lLock.Enter;
-      try
-        lValues.Add(aEvt);
-      finally
-        lLock.Leave;
-      end;
+      AddKeyedValue(lLock, lValues, aEvent);
     end);
   {$ENDIF}
   try
     {$IFDEF max_FPC}
-    lBus.Post<TKeyed>(Make('A', 1));
-    lBus.Post<TKeyed>(Make('A', 2));
+    lBus.Post<TKeyed>(MakeKeyed('A', 1));
+    lBus.Post<TKeyed>(MakeKeyed('A', 2));
     {$ELSE}
-    maxBusObj(lBus).Post<TKeyed>(Make('A', 1));
-    maxBusObj(lBus).Post<TKeyed>(Make('A', 2));
+    maxBusObj(lBus).Post<TKeyed>(MakeKeyed('A', 1));
+    maxBusObj(lBus).Post<TKeyed>(MakeKeyed('A', 2));
     {$ENDIF}
-    Sleep(1);
+    WaitForKeyedCount(lLock, lValues, 1, 1000);
     lLock.Enter;
     try
       CheckEquals(1, lValues.Count);
@@ -1018,6 +1043,7 @@ begin
       lLock.Leave;
     end;
   finally
+    lSub := nil;
     lValues.Free;
     {$IFDEF max_FPC}
     lBus.EnableCoalesceOf<TKeyed>(nil);
@@ -1428,113 +1454,68 @@ end;
 { TTestAsyncExceptions }
 
 procedure TTestAsyncExceptions.ErrorsForwardToHookNoRaise;
+const
+  cTopicAsync = 0;
+  cTopicMain = 1;
+  cTopicBg = 2;
+  cTopicNames: array[0..2] of string = ('t.async', 't.main', 't.bg');
+  cExpectedMessages: array[0..2] of string = ('async boom', 'main boom', 'bg boom');
+  cModes: array[0..2] of TmaxDelivery = (TmaxDelivery.Async, TmaxDelivery.Main, TmaxDelivery.Background);
 var
   lBus: ImaxBus;
-  lEvAsync, lEvMain, lEvBg: TEvent;
-  lAsyncMsg, lMainMsg, lBgMsg: string;
+  lEvents: array[0..2] of TEvent;
+  lMessages: array[0..2] of string;
+  lIdx: integer;
   lTry: integer;
-
-  {$IFDEF max_FPC}
-  procedure OnAsyncError(const aTopic: string; const aE: Exception);
-  begin
-    if SameText(aTopic, 't.async') then
-    begin
-      lAsyncMsg := aE.Message;
-      lEvAsync.SetEvent;
-    end
-    else if SameText(aTopic, 't.main') then
-    begin
-      lMainMsg := aE.Message;
-      lEvMain.SetEvent;
-    end
-    else if SameText(aTopic, 't.bg') then
-    begin
-      lBgMsg := aE.Message;
-      lEvBg.SetEvent;
-    end;
-  end;
-
-  procedure RaiseAsync;
-  begin
-    raise Exception.Create('async boom');
-  end;
-
-  procedure RaiseMain;
-  begin
-    raise Exception.Create('main boom');
-  end;
-
-  procedure RaiseBg;
-  begin
-    raise Exception.Create('bg boom');
-  end;
-  {$ENDIF}
 begin
   lBus := maxBus;
   lBus.Clear;
   maxSetMainThreadPolicy(TmaxMainThreadPolicy.DegradeToPosting);
 
-  lEvAsync := TEvent.Create(nil, True, False, '');
-  lEvMain := TEvent.Create(nil, True, False, '');
-  lEvBg := TEvent.Create(nil, True, False, '');
+  for lIdx := Low(lEvents) to High(lEvents) do
+  begin
+    lEvents[lIdx] := TEvent.Create(nil, True, False, '');
+    lMessages[lIdx] := '';
+  end;
   try
-    lAsyncMsg := '';
-    lMainMsg := '';
-    lBgMsg := '';
-
-    {$IFDEF max_FPC}
-    maxSetAsyncErrorHandler(@OnAsyncError);
-    {$ELSE}
     maxSetAsyncErrorHandler(
       procedure(const aTopic: string; const aE: Exception)
+      var
+        i: integer;
       begin
-        if SameText(aTopic, 't.async') then
+        for i := Low(cTopicNames) to High(cTopicNames) do
         begin
-          lAsyncMsg := aE.Message;
-          lEvAsync.SetEvent;
-        end
-        else if SameText(aTopic, 't.main') then
-        begin
-          lMainMsg := aE.Message;
-          lEvMain.SetEvent;
-        end
-        else if SameText(aTopic, 't.bg') then
-        begin
-          lBgMsg := aE.Message;
-          lEvBg.SetEvent;
+          if SameText(aTopic, cTopicNames[i]) then
+          begin
+            lMessages[i] := aE.Message;
+            lEvents[i].SetEvent;
+            Break;
+          end;
         end;
       end);
-    {$ENDIF}
 
-    {$IFDEF max_FPC}
-    lBus.SubscribeNamed('t.async', @RaiseAsync, TmaxDelivery.Async);
-    lBus.SubscribeNamed('t.main', @RaiseMain, TmaxDelivery.Main);
-    lBus.SubscribeNamed('t.bg', @RaiseBg, TmaxDelivery.Background);
-    {$ELSE}
-    lBus.SubscribeNamed('t.async',
+    lBus.SubscribeNamed(cTopicNames[cTopicAsync],
       procedure
       begin
-        raise Exception.Create('async boom');
+        raise Exception.Create(cExpectedMessages[cTopicAsync]);
       end,
-      TmaxDelivery.Async);
-    lBus.SubscribeNamed('t.main',
+      cModes[cTopicAsync]);
+    lBus.SubscribeNamed(cTopicNames[cTopicMain],
       procedure
       begin
-        raise Exception.Create('main boom');
+        raise Exception.Create(cExpectedMessages[cTopicMain]);
       end,
-      TmaxDelivery.Main);
-    lBus.SubscribeNamed('t.bg',
+      cModes[cTopicMain]);
+    lBus.SubscribeNamed(cTopicNames[cTopicBg],
       procedure
       begin
-        raise Exception.Create('bg boom');
+        raise Exception.Create(cExpectedMessages[cTopicBg]);
       end,
-      TmaxDelivery.Background);
-    {$ENDIF}
+      cModes[cTopicBg]);
 
     try
-      lBus.PostNamed('t.async');
-      lBus.PostNamed('t.main');
-      lBus.PostNamed('t.bg');
+      for lIdx := Low(cTopicNames) to High(cTopicNames) do
+        lBus.PostNamed(cTopicNames[lIdx]);
     except
       on e: Exception do
         Check(False, 'No exception should escape PostNamed for Main/Async/Background; got ' + e.ClassName + ': ' + e.Message);
@@ -1543,23 +1524,21 @@ begin
     {$IFDEF max_DELPHI}
     for lTry := 0 to 200 do
     begin
-      if lEvMain.WaitFor(0) = wrSignaled then
+      if lEvents[cTopicMain].WaitFor(0) = wrSignaled then
         Break;
       CheckSynchronize(25);
     end;
     {$ENDIF}
 
-    Check(lEvMain.WaitFor(5000) = wrSignaled, 'Main error hook not invoked');
-    Check(lEvAsync.WaitFor(5000) = wrSignaled, 'Async error hook not invoked');
-    Check(lEvBg.WaitFor(5000) = wrSignaled, 'Background error hook not invoked');
-    CheckEquals('main boom', lMainMsg);
-    CheckEquals('async boom', lAsyncMsg);
-    CheckEquals('bg boom', lBgMsg);
+    Check(lEvents[cTopicMain].WaitFor(5000) = wrSignaled, 'Main error hook not invoked');
+    Check(lEvents[cTopicAsync].WaitFor(5000) = wrSignaled, 'Async error hook not invoked');
+    Check(lEvents[cTopicBg].WaitFor(5000) = wrSignaled, 'Background error hook not invoked');
+    for lIdx := Low(cExpectedMessages) to High(cExpectedMessages) do
+      CheckEquals(cExpectedMessages[lIdx], lMessages[lIdx]);
   finally
     maxSetAsyncErrorHandler(nil);
-    lEvAsync.Free;
-    lEvMain.Free;
-    lEvBg.Free;
+    for lIdx := Low(lEvents) to High(lEvents) do
+      lEvents[lIdx].Free;
   end;
 end;
 
@@ -4460,6 +4439,18 @@ end;
 
 { TTestDispatchErrorDetails }
 
+procedure TTestDispatchErrorDetails.AssertSingleCoalescedDetail(const aTopicName: string;
+  const aDetails: TArray<TmaxDispatchErrorDetail>);
+begin
+  CheckEquals(1, Length(aDetails));
+  CheckEquals('Exception', aDetails[0].ExceptionClassName);
+  CheckEquals('coalesced-detail', aDetails[0].ExceptionMessage);
+  CheckEquals(aTopicName, aDetails[0].Topic);
+  CheckEquals(Integer(TmaxDelivery.Posting), Integer(aDetails[0].Delivery));
+  Check(aDetails[0].SubscriberToken > 0);
+  CheckEquals(0, aDetails[0].SubscriberIndex);
+end;
+
 procedure TTestDispatchErrorDetails.IncludesSubscriberMetadataForPost;
 var
   lBus: ImaxBus;
@@ -4509,34 +4500,38 @@ begin
 end;
 
 procedure TTestDispatchErrorDetails.IncludesMetadataForCoalescedAsyncHook;
+type
+  TCoalescedCapture = record
+    TopicName: string;
+    WasDispatchError: boolean;
+    InnerCount: integer;
+    Details: TArray<TmaxDispatchErrorDetail>;
+  end;
 var
   lBus: ImaxBus;
-  lEvt: TKeyed;
+  lEvent: TKeyed;
   lPrevScheduler: IEventNexusScheduler;
   lSignal: TEvent;
-  lTopicName: string;
-  lWasDispatchError: boolean;
-  lInnerCount: integer;
-  lDetails: TArray<TmaxDispatchErrorDetail>;
+  lCaptured: TCoalescedCapture;
 begin
   lBus := maxBus;
   lBus.Clear;
   lSignal := TEvent.Create(nil, True, False, '');
   lPrevScheduler := maxGetAsyncScheduler;
-  lTopicName := '';
-  lWasDispatchError := False;
-  lInnerCount := 0;
-  lDetails := nil;
+  lCaptured.TopicName := '';
+  lCaptured.WasDispatchError := False;
+  lCaptured.InnerCount := 0;
+  lCaptured.Details := nil;
   maxSetAsyncScheduler(TInlineScheduler.Create);
   maxSetAsyncErrorHandler(
     procedure(const aTopic: string; const aE: Exception)
     begin
-      lTopicName := aTopic;
-      lWasDispatchError := aE is EmaxDispatchError;
-      if lWasDispatchError then
+      lCaptured.TopicName := aTopic;
+      lCaptured.WasDispatchError := aE is EmaxDispatchError;
+      if lCaptured.WasDispatchError then
       begin
-        lInnerCount := EmaxDispatchError(aE).Inner.Count;
-        lDetails := Copy(EmaxDispatchError(aE).Details);
+        lCaptured.InnerCount := EmaxDispatchError(aE).Inner.Count;
+        lCaptured.Details := Copy(EmaxDispatchError(aE).Details);
       end;
       lSignal.SetEvent;
     end);
@@ -4554,21 +4549,15 @@ begin
       end,
       TmaxDelivery.Posting);
 
-    lEvt.Key := 'K';
-    lEvt.Value := 10;
-    maxBusObj(lBus).Post<TKeyed>(lEvt);
+    lEvent.Key := 'K';
+    lEvent.Value := 10;
+    maxBusObj(lBus).Post<TKeyed>(lEvent);
 
     Check(lSignal.WaitFor(2000) = wrSignaled, 'Async error hook was not called');
-    Check(lWasDispatchError, 'Expected EmaxDispatchError from coalesced path');
-    CheckEquals(1, lInnerCount);
-    CheckEquals(1, Length(lDetails));
-    CheckEquals('Exception', lDetails[0].ExceptionClassName);
-    CheckEquals('coalesced-detail', lDetails[0].ExceptionMessage);
-    CheckEquals(GetTypeName(TypeInfo(TKeyed)), lTopicName);
-    CheckEquals(lTopicName, lDetails[0].Topic);
-    CheckEquals(Integer(TmaxDelivery.Posting), Integer(lDetails[0].Delivery));
-    Check(lDetails[0].SubscriberToken > 0);
-    CheckEquals(0, lDetails[0].SubscriberIndex);
+    Check(lCaptured.WasDispatchError, 'Expected EmaxDispatchError from coalesced path');
+    CheckEquals(1, lCaptured.InnerCount);
+    CheckEquals(GetTypeName(TypeInfo(TKeyed)), lCaptured.TopicName);
+    AssertSingleCoalescedDetail(lCaptured.TopicName, lCaptured.Details);
   finally
     maxBusObj(lBus).EnableCoalesceOf<TKeyed>(nil);
     maxSetAsyncErrorHandler(nil);
@@ -5048,6 +5037,87 @@ begin
   end;
 end;
 
+procedure TTestDelayedPosting.ZeroDelayDispatchesAndUpdatesMetrics;
+var
+  lBus: ImaxBus;
+  lSub: ImaxSubscription;
+  lHandle: ImaxDelayedPost;
+  lDone: TEvent;
+  lHits: integer;
+  lStats: TmaxTopicStats;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lHits := 0;
+  lDone := TEvent.Create(nil, True, False, '');
+  try
+    lSub := maxBusObj(lBus).Subscribe<integer>(
+      procedure(const aValue: integer)
+      begin
+        Inc(lHits);
+        lDone.SetEvent;
+      end,
+      TmaxDelivery.Posting);
+
+    lHandle := maxBusObj(lBus).PostDelayed<integer>(7, 0);
+    Check(lHandle <> nil);
+    Check(lDone.WaitFor(1000) = wrSignaled, 'Zero-delay post was not delivered');
+    CheckEquals(1, lHits);
+
+    lStats := maxBusObj(lBus).GetStatsFor<integer>;
+    Check(lStats.PostsTotal >= 1, 'Expected PostsTotal increment for delayed post');
+    Check(lStats.DeliveredTotal >= 1, 'Expected DeliveredTotal increment for delayed post');
+    Check(not lHandle.IsPending);
+    Check(not lHandle.Cancel, 'Cancel should fail after delayed post has already dispatched');
+    lSub := nil;
+  finally
+    lDone.Free;
+  end;
+end;
+
+procedure TTestDelayedPosting.LargeDelayRemainsPendingUntilCanceled;
+const
+  cLongDelayMs = 30000;
+var
+  lBus: ImaxBus;
+  lSub: ImaxSubscription;
+  lHandle: ImaxDelayedPost;
+  lDone: TEvent;
+  lHits: integer;
+  lPrevScheduler: IEventNexusScheduler;
+begin
+  lBus := maxBus;
+  lPrevScheduler := maxGetAsyncScheduler;
+  maxSetAsyncScheduler(THoldDelayedScheduler.Create);
+  lBus.Clear;
+  lHits := 0;
+  lDone := TEvent.Create(nil, True, False, '');
+  try
+    lSub := lBus.SubscribeNamed('delayed.long',
+      procedure
+      begin
+        Inc(lHits);
+        lDone.SetEvent;
+      end,
+      TmaxDelivery.Posting);
+
+    lHandle := lBus.PostDelayedNamed('delayed.long', cLongDelayMs);
+    Check(lHandle <> nil);
+    Check(lHandle.IsPending);
+    Check(lDone.WaitFor(200) = wrTimeout, 'Large-delay post fired unexpectedly early');
+    CheckEquals(0, lHits);
+
+    Check(lHandle.Cancel, 'Cancel should succeed for a still-pending large-delay post');
+    Check(not lHandle.IsPending);
+    Check(lDone.WaitFor(200) = wrTimeout, 'Canceled large-delay post should remain canceled');
+    CheckEquals(0, lHits);
+    lSub := nil;
+  finally
+    maxSetAsyncScheduler(lPrevScheduler);
+    lDone.Free;
+  end;
+end;
+
 { TTestSchedulers }
 
 function TTestSchedulers.WaitForSignal(const aEvent: TEvent; aTimeoutMs: Cardinal): boolean;
@@ -5075,7 +5145,7 @@ procedure TTestSchedulers.ExerciseScheduler(const aScheduler: IEventNexusSchedul
 var
   lMainId, lAsyncId, lMainHandlerId: TThreadID;
   lAsyncEvent, lMainEvent, lDelayEvent: TEvent;
-  lDelayStart, lDelayDelta: UInt64;
+  lDelayStart: UInt64;
 begin
   lAsyncEvent := TEvent.Create(nil, True, False, '');
   lMainEvent := TEvent.Create(nil, True, False, '');
@@ -5104,16 +5174,14 @@ begin
     CheckEquals(lMainId, lMainHandlerId, aName + ': RunOnMain did not execute on main thread');
 
     lDelayStart := GetTickCount64;
-    lDelayDelta := 0;
     aScheduler.RunDelayed(
       procedure
       begin
-        lDelayDelta := GetTickCount64 - lDelayStart;
         lDelayEvent.SetEvent;
       end,
       100000);
     Check(WaitForSignal(lDelayEvent, 2000), aName + ': RunDelayed timed out');
-    Check(lDelayDelta >= 50, aName + ': RunDelayed executed too early');
+    Check(GetTickCount64 - lDelayStart >= 50, aName + ': RunDelayed executed too early');
   finally
     lAsyncEvent.Free;
     lMainEvent.Free;

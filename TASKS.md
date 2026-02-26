@@ -1,27 +1,15 @@
 # Tasks
-Next task ID: T-1077
+Next task ID: T-1078
 
 ## Summary
-Open tasks: 1 (In Progress: 0, Next Today: 0, Next This Week: 1, Next Later: 0, Blocked: 0)
-Done tasks: 98
+Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
+Done tasks: 100
 
 ## In Progress
 
 ## Next – Today
 
 ## Next – This Week
-
-### T-1075 [CORE] Continue FixInsight C101/C103 reduction batch in high-density test fixtures
-Outcome: Reduce remaining top FixInsight debt by shrinking method length/locals in the current highest-density test fixtures while preserving behavior and public APIs.
-Proof:
-- Command: `./build-static-analysis.sh && ./build/check-analysis-thresholds.sh build/analysis/summary.md build/analysis/analysis-thresholds.csv`
-- Expect: exit code `0`; top-code thresholds stay green and summary shows no regressions while additional `C101`/`C103` reductions are achieved.
-- Command: `./build-and-run-tests.sh`
-- Expect: exit code `0`; DUnitX suite passes under the default build+analysis flow.
-Touches: `tests/src/MaxEventNexus.Main.Tests.pas`, `build/analysis/summary.md`, `TASKS.md`, `CHANGELOG.md`
-Deps: `T-1074`
-Notes:
-- Prioritize methods that still dominate `C101`/`C103` counts in `build/analysis/fixinsight.txt` to keep the batch controlled and measurable.
 
 ## Next – Later
 
@@ -37,6 +25,26 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1077 [TEST] Harden delayed posting edge-case coverage
+Summary: Added deterministic delayed-posting edge-case tests for zero-delay metrics behavior and long-delay pending/cancel lifecycle.
+
+Details:
+- Added `TTestDelayedPosting.ZeroDelayDispatchesAndUpdatesMetrics` to verify zero-delay dispatch delivery, stats increments, and post-dispatch `Cancel` behavior.
+- Added `TTestDelayedPosting.LargeDelayRemainsPendingUntilCanceled` using a deterministic hold scheduler to assert `IsPending` and `Cancel` semantics without thread-pool submission flakiness.
+- Added internal test scheduler `THoldDelayedScheduler` for delayed-handle lifecycle assertions where delayed callbacks must remain pending until explicit cancellation.
+- Proof: `./build-and-run-tests.sh` (exit `0`, DUnitX + static analysis + threshold gate pass).
+
+### T-1075 [CORE] Continue FixInsight C101/C103 reduction batch in high-density test fixtures
+Summary: Reduced remaining top FixInsight debt in high-density test fixtures while keeping behavior and public APIs unchanged.
+
+Details:
+- Refactored coalescing fixtures with helper methods (`MakeKeyed`, `AddKeyedValue`, `FindKeyedValue`, `WaitForKeyedCount`) and tightened assertions while preserving semantics.
+- Simplified async exception fixture setup (`ErrorsForwardToHookNoRaise`) and dispatch-error detail assertions to shrink method/local complexity.
+- Trimmed scheduler exercise timing locals and tightened delayed-posting tests to reduce variable pressure in long methods.
+- Lowered tracked analyzer thresholds to match new achieved top-code counts (`C101=20`, `C103=14`).
+- Proof: `./build-static-analysis.sh && ./build/check-analysis-thresholds.sh build/analysis/summary.md build/analysis/analysis-thresholds.csv` (exit `0`, thresholds pass at `C101=20`, `C103=14`).
+- Proof: `./build-and-run-tests.sh` (exit `0`, DUnitX suite passes under default build+analysis flow).
 
 ### T-1076 [API] Add delayed posting APIs with cancellation handle
 Summary: Added delayed post APIs across topic families with cancellable handles and clear-boundary dropping semantics.
