@@ -245,11 +245,11 @@ Details:
 - Proof: `./build-and-run-tests.sh` (SUCCESS), `cmd.exe /C "cd /d F:\\projects\\MaxLogic\\maxEventNexus && tests\\MaxEventNexusTests.exe"` (exit 0).
 
 ### T-1010 [API] Priority Subscriptions
-Summary: Deferred by scope decision for current delivery.
+Summary: Dropped from current product roadmap.
 
 Details:
-- Closed via ADR: `docs/decisions/ADR-0003-extension-scope-freeze.md`.
-- No runtime/API changes applied in this cycle.
+- Maintainer decision: explicit priority-ordered dispatch is not part of current scope.
+- Reconsider only if we have a concrete ordering use-case and a dedicated ADR.
 
 ### T-1011 [API] Bulk Dispatch API
 Summary: Closed as superseded by delivered bulk API.
