@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-02-26
+
 ### Added
 - `tests/src/MaxEventNexus.Testing.pas` with a DUnitX-backed `TmaxTestCase` compatibility layer and RTTI published-method suite runner. (T-1044, T-1045)
 - Added posting outcome APIs `PostResult<T>`, `PostResultNamed`, `PostResultNamedOf<T>`, and `PostResultGuidOf<T>` returning `TmaxPostResult`. (T-1063)

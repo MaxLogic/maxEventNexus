@@ -8,7 +8,7 @@ uses
   maxLogic.EventNexus.Threading.Adapter;
 
 const
-  max_BUS_VERSION = '0.1.0';
+  max_BUS_VERSION = '1.1.0';
 
 type
   TmaxString = string;
