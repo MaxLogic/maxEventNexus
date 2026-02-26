@@ -4,6 +4,8 @@
 
 ### Changed
 - Expanded DUnitX coverage for delayed named-of/guid posting, GUID queue-preset precedence, and `PostResult` named-of/guid paths. (T-1081)
+- Expanded `TTestPostResult` with GUID queue-pressure assertions for `PostResultGuidOf<T>` (`Queued` and `Dropped` outcomes). (T-1084)
+- Added lightweight API coverage proxy reporting with numeric target enforcement (`build/report-api-test-coverage.*`, target file, and default test-flow gate). (T-1084)
 
 ## [1.1.0] - 2026-02-26
 
