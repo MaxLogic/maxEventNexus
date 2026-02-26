@@ -303,8 +303,10 @@ type
   published
     procedure NoTopicReturnsNoTopic;
     procedure DropNewestReturnsDropped;
+    procedure NamedOfDropNewestReturnsDropped;
     procedure CoalescedReturnsCoalesced;
     procedure AcceptedReturnsInlineOrQueued;
+    procedure GuidOfAcceptedReturnsInline;
   end;
 
   TTestDispatchErrorDetails = class(TmaxTestCase)
@@ -4424,6 +4426,63 @@ begin
   end;
 end;
 
+procedure TTestPostResult.NamedOfDropNewestReturnsDropped;
+var
+  lBus: ImaxBus;
+  lPolicy: TmaxQueuePolicy;
+  lStarted: TEvent;
+  lRelease: TEvent;
+  lThread: TThread;
+  lPostResult: TmaxPostResult;
+  lName: string;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lName := 'postresult.named.drop';
+  lStarted := TEvent.Create(nil, True, False, '');
+  lRelease := TEvent.Create(nil, True, False, '');
+  lThread := nil;
+  try
+    lPolicy.MaxDepth := 1;
+    lPolicy.Overflow := TmaxOverflow.DropNewest;
+    lPolicy.DeadlineUs := 0;
+    maxBusObj(lBus).SetPolicyNamed(lName, lPolicy);
+
+    maxBusObj(lBus).SubscribeNamedOf<integer>(lName,
+      procedure(const aValue: integer)
+      begin
+        if aValue = 1 then
+        begin
+          lStarted.SetEvent;
+          lRelease.WaitFor(5000);
+        end;
+      end,
+      TmaxDelivery.Posting);
+
+    lThread := TThread.CreateAnonymousThread(
+      procedure
+      begin
+        maxBusObj(lBus).PostResultNamedOf<integer>(lName, 1);
+      end);
+    lThread.FreeOnTerminate := False;
+    lThread.Start;
+
+    Check(lStarted.WaitFor(2000) = wrSignaled, 'First named-of dispatch did not start');
+    maxBusObj(lBus).PostResultNamedOf<integer>(lName, 2); // fills single queued slot
+    lPostResult := maxBusObj(lBus).PostResultNamedOf<integer>(lName, 3);
+    CheckEquals(Integer(TmaxPostResult.Dropped), Integer(lPostResult));
+  finally
+    lRelease.SetEvent;
+    if lThread <> nil then
+    begin
+      lThread.WaitFor;
+      lThread.Free;
+    end;
+    lRelease.Free;
+    lStarted.Free;
+  end;
+end;
+
 procedure TTestPostResult.CoalescedReturnsCoalesced;
 var
   lBus: ImaxBus;
@@ -4521,6 +4580,31 @@ begin
     lRelease.Free;
     lStarted.Free;
   end;
+end;
+
+procedure TTestPostResult.GuidOfAcceptedReturnsInline;
+var
+  lBus: ImaxBus;
+  lResult: TmaxPostResult;
+  lHits: integer;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lHits := 0;
+
+  maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
+    procedure(const aValue: IIntEvent)
+    begin
+      if aValue <> nil then
+      begin
+        Inc(lHits);
+      end;
+    end,
+    TmaxDelivery.Posting);
+
+  lResult := maxBusObj(lBus).PostResultGuidOf<IIntEvent>(TIntEvent.Create(17));
+  CheckEquals(Integer(TmaxPostResult.DispatchedInline), Integer(lResult));
+  CheckEquals(1, lHits);
 end;
 
 { TTestDispatchErrorDetails }
