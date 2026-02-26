@@ -9,6 +9,7 @@
 - Added bulk dispatch helpers `PostMany<T>`, `PostManyNamedOf<T>`, and `PostManyGuidOf<T>`. (T-1065)
 - Added named wildcard subscriptions via `SubscribeNamedWildcard` with deterministic precedence (`exact`, then longer-prefix wildcard, then token order). (T-1066)
 - Added structured aggregate error metadata via `EmaxDispatchError.Details` / `TmaxDispatchErrorDetail`. (T-1067)
+- Added delayed posting APIs (`PostDelayed<T>`, `PostDelayedNamed`, `PostDelayedNamedOf<T>`, `PostDelayedGuidOf<T>`) with cancellable handle `ImaxDelayedPost`. (T-1076)
 - Added regression suites `TTestPostResult`, `TTestTracingHooks`, `TTestBulkDispatch`, `TTestWildcardNamed`, and `TTestDispatchErrorDetails`. (T-1063..T-1067)
 
 ### Changed

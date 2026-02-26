@@ -55,6 +55,7 @@ begin
     TTestTracingHooks,
     TTestBulkDispatch,
     TTestWildcardNamed,
+    TTestDelayedPosting,
     TTestUnsubscribeAll,
     TTestWeakTargets,
     TTestWeakTargetABA,

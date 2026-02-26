@@ -36,11 +36,18 @@ type
     function IsActive: boolean;
   end;
 
+  ImaxDelayedPost = interface
+    ['{2F70B998-4889-474A-A8CF-6A22C1381D09}']
+    function Cancel: boolean;
+    function IsPending: boolean;
+  end;
+
   ImaxBus = interface
     ['{1B8E6C9E-5F96-4F0C-9F88-0B7B8E885D4A}']
     function SubscribeNamed(const aName: TmaxString; const aHandler: TmaxProc; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
     procedure PostNamed(const aName: TmaxString);
     function TryPostNamed(const aName: TmaxString): boolean;
+    function PostDelayedNamed(const aName: TmaxString; aDelayMs: Cardinal): ImaxDelayedPost;
 
     procedure UnsubscribeAllFor(const aTarget: TObject);
     procedure Clear;
@@ -421,8 +428,9 @@ type
 		    fAutoSubsLock: TmaxMonitorObject;
 		    fAutoSubs: TmaxAutoSubDict;
         fAutoBridgeLock: TmaxMonitorObject;
-        fAutoBridgeSubs: TObjectList<TmaxAutoBridgeEntry>;
+		    fAutoBridgeSubs: TObjectList<TmaxAutoBridgeEntry>;
         fAutoBridgeNextToken: TmaxSubscriptionToken;
+        fDelayedPostEpoch: Int64;
 			    fMainThreadId: TThreadID;
 			    class procedure AddDispatchError(const aTopic: TmaxString; aMode: TmaxDelivery; aToken: TmaxSubscriptionToken;
 			      aSubscriberIndex: integer; const aException: Exception; var aErrors: TmaxExceptionList;
@@ -447,6 +455,8 @@ type
           function SnapshotAutoBridgeGuid(const aGuidKey: TGuid): TArray<TmaxAutoBridgeSnapshot>;
           procedure DispatchAutoBridge<t>(const aTopic: TmaxString; const aSnapshots: TArray<TmaxAutoBridgeSnapshot>;
             const aEvent: t);
+          class function DelayMsToUs(aDelayMs: Cardinal): integer; static;
+          function ScheduleDelayedPost(const aPostProc: TmaxProc; aDelayMs: Cardinal): ImaxDelayedPost;
 			    procedure SetAsyncScheduler(const aAsync: IEventNexusScheduler);
     procedure ScheduleTypedCoalesce<t>(const aTopicName: TmaxString;
       aTopic: TTypedTopic<t>; const aSubs: TArray<TTypedSubscriber<t>>);
@@ -467,18 +477,21 @@ type
 	    procedure Post<t>(const aEvent: t);
 	    function TryPost<t>(const aEvent: t): boolean; overload;
     function PostResult<t>(const aEvent: t): TmaxPostResult; overload;
+    function PostDelayed<t>(const aEvent: t; aDelayMs: Cardinal): ImaxDelayedPost;
 
 	    function SubscribeNamed(const aName: TmaxString; const aHandler: TmaxProc; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
     function SubscribeNamedWildcard(const aPattern: TmaxString; const aHandler: TmaxProc; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
     procedure PostNamed(const aName: TmaxString);
     function TryPostNamed(const aName: TmaxString): boolean;
     function PostResultNamed(const aName: TmaxString): TmaxPostResult;
+    function PostDelayedNamed(const aName: TmaxString; aDelayMs: Cardinal): ImaxDelayedPost;
 
     function SubscribeNamedOf<t>(const aName: TmaxString; const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
     function SubscribeNamedOf<t>(const aName: TmaxString; const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
     procedure PostNamedOf<t>(const aName: TmaxString; const aEvent: t);
     function TryPostNamedOf<t>(const aName: TmaxString; const aEvent: t): boolean; overload;
     function PostResultNamedOf<t>(const aName: TmaxString; const aEvent: t): TmaxPostResult; overload;
+    function PostDelayedNamedOf<t>(const aName: TmaxString; const aEvent: t; aDelayMs: Cardinal): ImaxDelayedPost;
     procedure PostMany<t>(const aEvents: array of t);
     procedure PostManyNamedOf<t>(const aName: TmaxString; const aEvents: array of t);
 
@@ -487,6 +500,7 @@ type
     procedure PostGuidOf<t: IInterface>(const aEvent: t);
     function TryPostGuidOf<t: IInterface>(const aEvent: t): boolean; overload;
     function PostResultGuidOf<t: IInterface>(const aEvent: t): TmaxPostResult; overload;
+    function PostDelayedGuidOf<t: IInterface>(const aEvent: t; aDelayMs: Cardinal): ImaxDelayedPost;
     procedure PostManyGuidOf<t: IInterface>(const aEvents: array of t);
     procedure UnsubscribeAllFor(const aTarget: TObject);
     procedure Clear;
@@ -587,6 +601,15 @@ type
   public
     constructor Create(const aBus: TmaxBus; aToken: TmaxSubscriptionToken; const aState: ImaxSubscriptionState);
     procedure Unsubscribe; override;
+  end;
+
+  TmaxDelayedPostHandle = class(TInterfacedObject, ImaxDelayedPost)
+  private
+    // 0 = pending, 1 = consumed (canceled, executed, or dropped)
+    fState: integer;
+  public
+    function Cancel: boolean;
+    function IsPending: boolean;
   end;
 
 function maxBusObj: TmaxBus; overload;
@@ -2625,6 +2648,18 @@ begin
   end;
 end;
 
+{ TmaxDelayedPostHandle }
+
+function TmaxDelayedPostHandle.Cancel: boolean;
+begin
+  Result := TInterlocked.CompareExchange(fState, 1, 0) = 0;
+end;
+
+function TmaxDelayedPostHandle.IsPending: boolean;
+begin
+  Result := TInterlocked.CompareExchange(fState, 0, 0) = 0;
+end;
+
 function DefaultAsync: IEventNexusScheduler;
 begin
   if gAsyncScheduler <> nil then
@@ -3438,7 +3473,51 @@ begin
   fAutoBridgeLock := TmaxMonitorObject.Create;
   fAutoBridgeSubs := TObjectList<TmaxAutoBridgeEntry>.Create(True);
   fAutoBridgeNextToken := 1;
+  fDelayedPostEpoch := 0;
 		fMainThreadId := TThread.CurrentThread.ThreadID;
+end;
+
+class function TmaxBus.DelayMsToUs(aDelayMs: Cardinal): integer;
+const
+  cMaxDelayMs = High(integer) div 1000;
+begin
+  if aDelayMs = 0 then
+    Exit(0);
+  if aDelayMs > cMaxDelayMs then
+    Exit(High(integer));
+  Result := integer(aDelayMs) * 1000;
+end;
+
+function TmaxBus.ScheduleDelayedPost(const aPostProc: TmaxProc; aDelayMs: Cardinal): ImaxDelayedPost;
+var
+  lDelayUs: integer;
+  lEpoch: Int64;
+  lHandle: ImaxDelayedPost;
+begin
+  lHandle := TmaxDelayedPostHandle.Create;
+  lDelayUs := DelayMsToUs(aDelayMs);
+  lEpoch := TInterlocked.CompareExchange(fDelayedPostEpoch, 0, 0);
+  try
+    fAsync.RunDelayed(
+      procedure
+      begin
+        if TInterlocked.CompareExchange(fDelayedPostEpoch, 0, 0) <> lEpoch then
+        begin
+          lHandle.Cancel;
+          Exit;
+        end;
+        if not lHandle.Cancel then
+          Exit;
+        if Assigned(aPostProc) then
+          aPostProc();
+      end,
+      lDelayUs);
+  except
+    // Keep progress even when delayed scheduler submission fails.
+    if lHandle.Cancel and Assigned(aPostProc) then
+      aPostProc();
+  end;
+  Result := lHandle;
 end;
 
 procedure TmaxBus.SetAsyncScheduler(const aAsync: IEventNexusScheduler);
@@ -4373,6 +4452,19 @@ begin
   Result := TmaxPostResult.DispatchedInline;
 end;
 
+function TmaxBus.PostDelayed<t>(const aEvent: t; aDelayMs: Cardinal): ImaxDelayedPost;
+var
+  lEvent: t;
+begin
+  lEvent := aEvent;
+  Result := ScheduleDelayedPost(
+    procedure
+    begin
+      Post<t>(lEvent);
+    end,
+    aDelayMs);
+end;
+
 procedure TmaxBus.PostMany<t>(const aEvents: array of t);
 var
   lIdx: integer;
@@ -4963,6 +5055,19 @@ begin
   if (lQueueDepth > 0) or lWasProcessing then
     Exit(TmaxPostResult.Queued);
   Result := TmaxPostResult.DispatchedInline;
+end;
+
+function TmaxBus.PostDelayedNamed(const aName: TmaxString; aDelayMs: Cardinal): ImaxDelayedPost;
+var
+  lName: TmaxString;
+begin
+  lName := aName;
+  Result := ScheduleDelayedPost(
+    procedure
+    begin
+      PostNamed(lName);
+    end,
+    aDelayMs);
 end;
 
 function TmaxBus.SubscribeNamedOf<t>(const aName: TmaxString; const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
@@ -5713,6 +5818,21 @@ begin
   Result := TmaxPostResult.DispatchedInline;
 end;
 
+function TmaxBus.PostDelayedNamedOf<t>(const aName: TmaxString; const aEvent: t; aDelayMs: Cardinal): ImaxDelayedPost;
+var
+  lName: TmaxString;
+  lEvent: t;
+begin
+  lName := aName;
+  lEvent := aEvent;
+  Result := ScheduleDelayedPost(
+    procedure
+    begin
+      PostNamedOf<t>(lName, lEvent);
+    end,
+    aDelayMs);
+end;
+
 procedure TmaxBus.PostManyNamedOf<t>(const aName: TmaxString; const aEvents: array of t);
 var
   lIdx: integer;
@@ -6380,6 +6500,19 @@ begin
   Result := TmaxPostResult.DispatchedInline;
 end;
 
+function TmaxBus.PostDelayedGuidOf<t>(const aEvent: t; aDelayMs: Cardinal): ImaxDelayedPost;
+var
+  lEvent: t;
+begin
+  lEvent := aEvent;
+  Result := ScheduleDelayedPost(
+    procedure
+    begin
+      PostGuidOf<t>(lEvent);
+    end,
+    aDelayMs);
+end;
+
 procedure TmaxBus.PostManyGuidOf<t>(const aEvents: array of t);
 var
   lIdx: integer;
@@ -6767,6 +6900,7 @@ var
   lPreset: TmaxQueuePreset;
   lIdx: integer;
 begin
+  TInterlocked.Increment(fDelayedPostEpoch);
   lAutoKeys := nil;
   TMonitor.Enter(fAutoSubsLock);
   try

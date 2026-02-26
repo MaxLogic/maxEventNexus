@@ -325,6 +325,13 @@ type
     procedure WildcardDispatchesWithoutPrecreatedNamedTopic;
   end;
 
+  TTestDelayedPosting = class(TmaxTestCase)
+  published
+    procedure NamedDelayedPostWaitsBeforeDelivery;
+    procedure CancelPreventsTypedDelayedDelivery;
+    procedure ClearDropsPendingDelayedPosts;
+  end;
+
   TTestMetricsCallbackTotals = class(TmaxTestCase)
   published
     procedure MetricCallbackReceivesSnapshots;
@@ -4928,6 +4935,117 @@ begin
   lResult := maxBusObj(lBus).PostResultNamed('dynamic.alpha');
   CheckEquals(Integer(TmaxPostResult.DispatchedInline), Integer(lResult));
   CheckEquals(1, lHits);
+end;
+
+{ TTestDelayedPosting }
+
+procedure TTestDelayedPosting.NamedDelayedPostWaitsBeforeDelivery;
+var
+  lBus: ImaxBus;
+  lSub: ImaxSubscription;
+  lHandle: ImaxDelayedPost;
+  lDone: TEvent;
+  lStartMs: UInt64;
+  lElapsedMs: integer;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lDone := TEvent.Create(nil, True, False, '');
+  try
+    lSub := lBus.SubscribeNamed('delayed.named',
+      procedure
+      begin
+        lDone.SetEvent;
+      end,
+      TmaxDelivery.Posting);
+    lStartMs := GetTickCount64;
+    lHandle := lBus.PostDelayedNamed('delayed.named', 120);
+    Check(lHandle <> nil);
+    Check(lHandle.IsPending);
+    Check(lDone.WaitFor(40) = wrTimeout, 'Delayed post fired too early');
+    Check(lDone.WaitFor(600) = wrSignaled, 'Delayed post did not fire');
+    lElapsedMs := integer(GetTickCount64 - lStartMs);
+    Check(lElapsedMs >= 80, Format('Delayed post fired too quickly (%dms)', [lElapsedMs]));
+    Check(not lHandle.IsPending);
+    lSub := nil;
+  finally
+    lDone.Free;
+  end;
+end;
+
+procedure TTestDelayedPosting.CancelPreventsTypedDelayedDelivery;
+var
+  lBus: ImaxBus;
+  lSub: ImaxSubscription;
+  lHandle: ImaxDelayedPost;
+  lDone: TEvent;
+  lHits: integer;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lHits := 0;
+  lDone := TEvent.Create(nil, True, False, '');
+  try
+    lSub := maxBusObj(lBus).Subscribe<integer>(
+      procedure(const aValue: integer)
+      begin
+        Inc(lHits);
+        lDone.SetEvent;
+      end,
+      TmaxDelivery.Posting);
+    lHandle := maxBusObj(lBus).PostDelayed<integer>(42, 120);
+    Check(lHandle <> nil);
+    Check(lHandle.Cancel, 'Cancel should succeed while pending');
+    Check(not lHandle.Cancel, 'Second cancel should report already consumed');
+    Check(not lHandle.IsPending);
+    Check(lDone.WaitFor(250) = wrTimeout, 'Canceled delayed post should not dispatch');
+    CheckEquals(0, lHits);
+    lSub := nil;
+  finally
+    lDone.Free;
+  end;
+end;
+
+procedure TTestDelayedPosting.ClearDropsPendingDelayedPosts;
+var
+  lBus: ImaxBus;
+  lSub: ImaxSubscription;
+  lHandle: ImaxDelayedPost;
+  lDone: TEvent;
+  lHits: integer;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lHits := 0;
+  lDone := TEvent.Create(nil, True, False, '');
+  try
+    lSub := lBus.SubscribeNamed('delayed.clear',
+      procedure
+      begin
+        Inc(lHits);
+      end,
+      TmaxDelivery.Posting);
+    lHandle := lBus.PostDelayedNamed('delayed.clear', 100);
+    Check(lHandle <> nil);
+    Check(lHandle.IsPending);
+
+    lBus.Clear;
+
+    lSub := lBus.SubscribeNamed('delayed.clear',
+      procedure
+      begin
+        Inc(lHits);
+        lDone.SetEvent;
+      end,
+      TmaxDelivery.Posting);
+
+    Check(lDone.WaitFor(250) = wrTimeout, 'Delayed post scheduled before Clear should be dropped');
+    CheckEquals(0, lHits);
+    Check(not lHandle.IsPending);
+    lSub := nil;
+  finally
+    lDone.Free;
+  end;
 end;
 
 { TTestSchedulers }
