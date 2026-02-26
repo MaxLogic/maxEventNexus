@@ -194,6 +194,7 @@ maxSetMetricCallback(
 - Build + run tests: `./build-and-run-tests.sh`
 - Binary: `tests/MaxEventNexusTests.exe`
 - Diagnostics policy gate: build scripts enforce `build/diagnostics-policy.regex` and fail on untriaged warnings/hints.
+- API coverage proxy: `./build/report-api-test-coverage.sh --enforce-target` (target in `build/api-test-coverage-target.txt`, report in `build/analysis/test-api-coverage.md`).
 
 The test runner is DUnitX-based and executes the active fixture suite from `tests/src`.
 

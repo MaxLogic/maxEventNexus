@@ -1,9 +1,9 @@
 # Tasks
-Next task ID: T-1084
+Next task ID: T-1085
 
 ## Summary
 Open tasks: 1 (In Progress: 0, Next Today: 0, Next This Week: 1, Next Later: 0, Blocked: 0)
-Done tasks: 105
+Done tasks: 106
 
 ## In Progress
 
@@ -37,6 +37,20 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1084 [TEST] Extend GUID PostResult queue-pressure coverage and add API coverage proxy target
+Summary: Added missing GUID `PostResult` queue-pressure assertions and introduced a lightweight numeric API-to-tests coverage report with an enforceable target.
+
+Details:
+- Added `TTestPostResult.GuidOfQueuePressureReturnsQueuedThenDropped` to validate GUID `PostResult` behavior under bounded-queue pressure (`Queued` then `Dropped`).
+- Added lightweight API coverage proxy tooling:
+  - token list: `build/api-test-coverage.tokens`
+  - target: `build/api-test-coverage-target.txt`
+  - scripts: `build/report-api-test-coverage.sh`, `build/report-api-test-coverage.ps1`, `build/report-api-test-coverage.bat`
+  - report output: `build/analysis/test-api-coverage.md`
+- Integrated the target gate into default test flow via `build-and-run-tests.bat` (`report-api-test-coverage.bat -EnforceTarget`).
+- Proof: `./build-and-run-tests.sh` (exit `0`, DUnitX + analysis thresholds + API coverage proxy target pass).
+- Proof: `./build/report-api-test-coverage.sh --enforce-target` (exit `0`, currently `48/51`, `94%`, target `92%`).
 
 ### T-1083 [ANALYSIS] Resolve remaining actionable FixInsight warnings
 Summary: Cleared remaining actionable FixInsight warnings (`C110`, `W515`, `W524`) from the active analysis baseline.
