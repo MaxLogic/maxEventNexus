@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Expanded DUnitX coverage for delayed named-of/guid posting, GUID queue-preset precedence, and `PostResult` named-of/guid paths. (T-1081)
+
 ## [1.1.0] - 2026-02-26
 
 ### Added

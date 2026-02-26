@@ -2,26 +2,14 @@
 Next task ID: T-1084
 
 ## Summary
-Open tasks: 2 (In Progress: 0, Next Today: 0, Next This Week: 2, Next Later: 0, Blocked: 0)
-Done tasks: 104
+Open tasks: 1 (In Progress: 0, Next Today: 0, Next This Week: 1, Next Later: 0, Blocked: 0)
+Done tasks: 105
 
 ## In Progress
 
 ## Next – Today
 
 ## Next – This Week
-
-### T-1081 [TEST] Review and expand DUnitX coverage for correctness confidence
-Outcome: Produce a focused coverage review and add/adjust DUnitX tests so core bus behavior is validated across happy-path and edge-path scenarios with stronger bug-detection confidence.
-Proof:
-- Command: `./build-and-run-tests.sh`
-- Expect: exit code `0`; full DUnitX suite passes after new/updated tests are added.
-- Command: `rg -n "TTest|RegisterTestFixture|RunPublishedTests" tests/src tests/MaxEventNexusTests.dpr`
-- Expect: coverage-related fixture additions/updates are visible and mapped to reviewed behavior slices.
-Touches: `tests/src/MaxEventNexus.Main.Tests.pas`, `tests/src/MaxEventNexus.Testing.pas`, `tests/MaxEventNexusTests.dpr`, `TASKS.md`, `CHANGELOG.md`
-Deps: `T-1080`
-Notes:
-- Prioritize gaps that could hide real regressions (ordering, coalescing windows, delayed/cancel semantics, queue overflow, async error paths, unsubscribe/clear lifecycle).
 
 ### T-1082 [BENCH] Build cross-library benchmarks versus iPub and EventHorizon
 Outcome: Add benchmark harness coverage and reporting that compares EventNexus against iPub and EventHorizon on equivalent publish/subscribe workloads.
@@ -59,6 +47,16 @@ Details:
 - Kept GUID requirement for generic `iUserData<T>` (needed for `Supports`/RTTI paths) and documented it with explicit analyzer suppression to clear reviewed `W524`.
 - Proof: `./build-static-analysis.sh && ./build/check-analysis-thresholds.sh build/analysis/summary.md build/analysis/analysis-thresholds.csv` (exit `0`, no remaining `C110`/`W515`/`W524` entries in `fixinsight.txt`).
 - Proof: `./build-and-run-tests.sh` (exit `0`, DUnitX + analysis threshold gate pass).
+
+### T-1081 [TEST] Review and expand DUnitX coverage for correctness confidence
+Summary: Expanded DUnitX coverage for previously under-tested public API slices and edge-path behavior.
+
+Details:
+- Added delayed-post coverage for `PostDelayedNamedOf<T>` and `PostDelayedGuidOf<T>` including timing/payload assertions.
+- Added GUID preset-policy coverage for `maxSetQueuePresetGuid`, `GetPolicyGuidOf<T>`, and explicit-policy precedence over preset updates.
+- Added `PostResultNamedOf<T>` dropped-path coverage and `PostResultGuidOf<T>` dispatched-inline coverage.
+- Proof: `./build-and-run-tests.sh` (exit `0`, DUnitX + static analysis + threshold gate pass).
+- Proof: `rg -n "NamedOfDelayedPostWaitsBeforeDelivery|GuidDelayedPostWaitsBeforeDelivery|GuidPresetAffectsGetPolicy|GuidExplicitPolicyBeatsPreset|NamedOfDropNewestReturnsDropped|GuidOfAcceptedReturnsInline" tests/src/MaxEventNexus.Main.Tests.pas` (exit `0`).
 
 ### T-1080 [ANALYSIS] Resolve non-noise FixInsight warnings batch
 Summary: Cleared actionable/non-noise static-analysis warnings while preserving API compatibility and keeping test/build gates green.
