@@ -252,39 +252,39 @@ Details:
 - No runtime/API changes applied in this cycle.
 
 ### T-1011 [API] Bulk Dispatch API
-Summary: Deferred by scope decision for current delivery.
+Summary: Closed as superseded by delivered bulk API.
 
 Details:
-- Closed via ADR: `docs/decisions/ADR-0003-extension-scope-freeze.md`.
-- No runtime/API changes applied in this cycle.
+- Superseded by `T-1065` (`PostMany<T>`, `PostManyNamedOf<T>`, `PostManyGuidOf<T>`).
+- No further work planned under this legacy task ID.
 
 ### T-1012 [API] Topic Groups / Wildcards
-Summary: Deferred by scope decision for current delivery.
+Summary: Closed as superseded by delivered named wildcard subscriptions.
 
 Details:
-- Closed via ADR: `docs/decisions/ADR-0003-extension-scope-freeze.md`.
-- No runtime/API changes applied in this cycle.
+- Superseded by `T-1066` (`SubscribeNamedWildcard`) for the current product scope.
+- No separate topic-group feature track is planned under this legacy task ID.
 
 ### T-1013 [OBS] Tracing Hooks
-Summary: Deferred by scope decision for current delivery.
+Summary: Closed as superseded by delivered tracing hooks.
 
 Details:
-- Closed via ADR: `docs/decisions/ADR-0003-extension-scope-freeze.md`.
-- No runtime/API changes applied in this cycle.
+- Superseded by `T-1064` (`maxSetDispatchTrace` and trace lifecycle events).
+- No further work planned under this legacy task ID.
 
 ### T-1014 [API] Serializer Plug-in (IPC bridge)
-Summary: Deferred by scope decision for current delivery.
+Summary: Dropped from current product roadmap.
 
 Details:
-- Closed via ADR: `docs/decisions/ADR-0003-extension-scope-freeze.md`.
-- No runtime/API changes applied in this cycle.
+- Maintainer decision: keep IPC/serialization adapters outside core EventNexus scope for now.
+- Reconsider only if a concrete integration requirement appears.
 
 ### T-1015 [PERF] Disruptor-Style Sequences
-Summary: Deferred by scope decision for current delivery.
+Summary: Dropped from current product roadmap.
 
 Details:
-- Closed via ADR: `docs/decisions/ADR-0003-extension-scope-freeze.md`.
-- No runtime/API changes applied in this cycle.
+- Maintainer decision: no dedicated disruptor-style specialization track in current roadmap.
+- Reconsider only with a new ADR and clear benchmark evidence.
 
 ### T-1019 [BENCH] Benchmark suite contract and percentile CSV output
 Summary: Implemented a benchmark output contract with explicit clock/percentile rules and CSV output from `SchedulerCompare`.
