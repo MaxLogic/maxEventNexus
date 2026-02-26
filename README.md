@@ -9,6 +9,7 @@
 - Async benchmark profile is stabilized (bounded queue/in-flight guards + scheduler submission fallbacks), with CSV contract rows remaining `status=ok`.
 - Sample and benchmark projects now carry explicit unit search paths for shared foundation/mORMot units in group builds.
 - Queue policy preset defaults/overrides and lock-free posting behavior are documented for typed, named, and GUID topics.
+- Added delayed posting APIs (`PostDelayed*`) with cancel/pending handle semantics.
 
 EventNexus is a type-safe event bus for Delphi 12+ with typed, named, and GUID topic routing, delivery-mode control, sticky cache, coalescing, and queue policies.
 
@@ -92,6 +93,21 @@ Policy behavior:
 - `Strict`: raises `EmaxMainThreadRequired`.
 - `DegradeToAsync`: reroutes `Main` delivery to scheduler async path.
 - `DegradeToPosting`: runs handler on posting thread.
+
+## Delayed posting
+
+Use delayed post APIs when event delivery should happen later:
+
+```pascal
+var
+  lBus: TmaxBus;
+  lDelayed: ImaxDelayedPost;
+begin
+  lBus := maxBusObj;
+  lDelayed := lBus.PostDelayed<Integer>(42, 30000); // 30 seconds
+  // lDelayed.Cancel;
+end;
+```
 
 ## Queue policies
 

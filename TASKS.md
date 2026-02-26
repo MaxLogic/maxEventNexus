@@ -1,9 +1,9 @@
 # Tasks
-Next task ID: T-1076
+Next task ID: T-1077
 
 ## Summary
 Open tasks: 1 (In Progress: 0, Next Today: 0, Next This Week: 1, Next Later: 0, Blocked: 0)
-Done tasks: 97
+Done tasks: 98
 
 ## In Progress
 
@@ -37,6 +37,21 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1076 [API] Add delayed posting APIs with cancellation handle
+Summary: Added delayed post APIs across topic families with cancellable handles and clear-boundary dropping semantics.
+
+Details:
+- Added `ImaxDelayedPost` (`Cancel`, `IsPending`) and delayed API surface:
+  - `ImaxBus.PostDelayedNamed`
+  - `TmaxBus.PostDelayed<T>`
+  - `TmaxBus.PostDelayedNamed`
+  - `TmaxBus.PostDelayedNamedOf<T>`
+  - `TmaxBus.PostDelayedGuidOf<T>`
+- Delayed scheduling uses existing async scheduler `RunDelayed` path and preserves normal `Post*` dispatch semantics when delay expires.
+- `Clear` now advances a delayed-post epoch so delayed posts scheduled before clear are dropped instead of dispatching into post-clear subscriptions.
+- Added regression fixture `TTestDelayedPosting` with coverage for delay timing, cancellation, and clear-drop behavior.
+- Proof: `./build-and-run-tests.sh` (exit `0`, DUnitX + static analysis + threshold gate all pass).
 
 ### T-1074 [BUILD] Integrate analysis threshold gate into default test run flow
 Summary: `build-and-run-tests` now enforces static-analysis threshold gating by default after test execution.
