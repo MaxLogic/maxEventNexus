@@ -1,9 +1,9 @@
 # Tasks
-Next task ID: T-1083
+Next task ID: T-1084
 
 ## Summary
 Open tasks: 2 (In Progress: 0, Next Today: 0, Next This Week: 2, Next Later: 0, Blocked: 0)
-Done tasks: 103
+Done tasks: 104
 
 ## In Progress
 
@@ -49,6 +49,16 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1083 [ANALYSIS] Resolve remaining actionable FixInsight warnings
+Summary: Cleared remaining actionable FixInsight warnings (`C110`, `W515`, `W524`) from the active analysis baseline.
+
+Details:
+- Renamed wake-signal getter paths in `maxAsync` (`GetWakeSignal` -> `GetWakeUpSignal`) to align property/getter naming and clear `C110`.
+- Kept intentional one-shot `TAsyncLoop` self-destruction and documented it with explicit analyzer suppression on the `Free` site to clear reviewed `W515`.
+- Kept GUID requirement for generic `iUserData<T>` (needed for `Supports`/RTTI paths) and documented it with explicit analyzer suppression to clear reviewed `W524`.
+- Proof: `./build-static-analysis.sh && ./build/check-analysis-thresholds.sh build/analysis/summary.md build/analysis/analysis-thresholds.csv` (exit `0`, no remaining `C110`/`W515`/`W524` entries in `fixinsight.txt`).
+- Proof: `./build-and-run-tests.sh` (exit `0`, DUnitX + analysis threshold gate pass).
 
 ### T-1080 [ANALYSIS] Resolve non-noise FixInsight warnings batch
 Summary: Cleared actionable/non-noise static-analysis warnings while preserving API compatibility and keeping test/build gates green.
