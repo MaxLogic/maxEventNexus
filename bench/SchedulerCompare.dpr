@@ -65,9 +65,10 @@ type
     fBus: TmaxBus;
     fConsumers: TObjectList<TFrameworkConsumer>;
     fDelivery: TmaxDelivery;
+    fUseStrongSubscriptions: Boolean;
     fSubscriptions: TList<ImaxSubscription>;
   public
-    constructor Create(aDelivery: TmaxDelivery);
+    constructor Create(aDelivery: TmaxDelivery; aUseStrongSubscriptions: Boolean);
     destructor Destroy; override;
     procedure Subscribe(const aCallback: TFrameworkCallback);
     procedure Post(const aEvent: IBenchmarkEvent);
@@ -178,10 +179,11 @@ begin
   end;
 end;
 
-constructor TEventNexusFrameworkBus.Create(aDelivery: TmaxDelivery);
+constructor TEventNexusFrameworkBus.Create(aDelivery: TmaxDelivery; aUseStrongSubscriptions: Boolean);
 begin
   inherited Create;
   fDelivery := aDelivery;
+  fUseStrongSubscriptions := aUseStrongSubscriptions;
   fBus := TmaxBus.Create(CreateTTaskScheduler);
   fSubscriptions := TList<ImaxSubscription>.Create;
   fConsumers := TObjectList<TFrameworkConsumer>.Create(True);
@@ -202,7 +204,12 @@ var
 begin
   lConsumer := TFrameworkConsumer.Create(aCallback);
   fConsumers.Add(lConsumer);
-  lSubscription := fBus.SubscribeGuidOf<IBenchmarkEvent>(lConsumer.Handle, fDelivery);
+  if fUseStrongSubscriptions then
+  begin
+    lSubscription := fBus.SubscribeGuidOfStrong<IBenchmarkEvent>(lConsumer.Handle, fDelivery);
+  end else begin
+    lSubscription := fBus.SubscribeGuidOf<IBenchmarkEvent>(lConsumer.Handle, fDelivery);
+  end;
   fSubscriptions.Add(lSubscription);
 end;
 
@@ -311,9 +318,14 @@ begin
   fConsumers.Clear;
 end;
 
-function CreateEventNexusFrameworkBus(aDelivery: TmaxDelivery): IFrameworkBus;
+function CreateEventNexusFrameworkBusWeak(aDelivery: TmaxDelivery): IFrameworkBus;
 begin
-  Result := TEventNexusFrameworkBus.Create(aDelivery);
+  Result := TEventNexusFrameworkBus.Create(aDelivery, False);
+end;
+
+function CreateEventNexusFrameworkBusStrong(aDelivery: TmaxDelivery): IFrameworkBus;
+begin
+  Result := TEventNexusFrameworkBus.Create(aDelivery, True);
 end;
 
 function CreateIpubFrameworkBus(aDelivery: TmaxDelivery): IFrameworkBus;
@@ -863,13 +875,15 @@ begin
   lEntries[2].Name := 'TTask';
   lEntries[2].Factory := CreateTTaskScheduler;
 
-  SetLength(lFrameworkEntries, 3);
-  lFrameworkEntries[0].Name := 'EventNexus(TTask)';
-  lFrameworkEntries[0].Factory := CreateEventNexusFrameworkBus;
-  lFrameworkEntries[1].Name := 'iPub';
-  lFrameworkEntries[1].Factory := CreateIpubFrameworkBus;
-  lFrameworkEntries[2].Name := 'EventHorizon';
-  lFrameworkEntries[2].Factory := CreateEventHorizonFrameworkBus;
+  SetLength(lFrameworkEntries, 4);
+  lFrameworkEntries[0].Name := 'EventNexus(TTask-weak)';
+  lFrameworkEntries[0].Factory := CreateEventNexusFrameworkBusWeak;
+  lFrameworkEntries[1].Name := 'EventNexus(TTask-strong)';
+  lFrameworkEntries[1].Factory := CreateEventNexusFrameworkBusStrong;
+  lFrameworkEntries[2].Name := 'iPub';
+  lFrameworkEntries[2].Factory := CreateIpubFrameworkBus;
+  lFrameworkEntries[3].Name := 'EventHorizon';
+  lFrameworkEntries[3].Factory := CreateEventHorizonFrameworkBus;
 
   lCsv := nil;
   if lCfg.CsvPath <> '' then
@@ -928,7 +942,7 @@ begin
       end;
     end;
 
-    Writeln('Cross-library comparison: EventNexus(TTask), iPub, EventHorizon');
+    Writeln('Cross-library comparison: EventNexus(TTask-weak), EventNexus(TTask-strong), iPub, EventHorizon');
     Writeln;
     lFrameworkCfg := lCfg;
     lFrameworkCfg.MetricsReaders := 0;
