@@ -78,7 +78,8 @@ reference/
 *.log
 .agents/
 .github/
-bench/scheduler-summary.csv
+bench/scheduler-*.csv
+!bench/scheduler-thresholds.csv
 last-session.md
 build/analysis/*
 !build/analysis/analysis-thresholds.csv
