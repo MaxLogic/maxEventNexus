@@ -8,7 +8,11 @@ uses
 
 type
   TmaxTTaskScheduler = class(TInterfacedObject, IEventNexusScheduler)
+  private
+    fPool: TThreadPool;
   public
+    constructor Create;
+    destructor Destroy; override;
     procedure RunAsync(const aProc: TmaxProc);
     procedure RunOnMain(const aProc: TmaxProc);
     procedure RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);
@@ -19,6 +23,33 @@ function CreateTTaskScheduler: IEventNexusScheduler;
 
 implementation
 
+constructor TmaxTTaskScheduler.Create;
+var
+  lCpuCount: Integer;
+  lMaxWorkers: Integer;
+  lMinWorkers: Integer;
+begin
+  inherited Create;
+  fPool := TThreadPool.Create;
+  lCpuCount := TThread.ProcessorCount;
+  if lCpuCount < 1 then
+    lCpuCount := 1;
+  lMaxWorkers := lCpuCount * 2;
+  if lMaxWorkers < 2 then
+    lMaxWorkers := 2;
+  lMinWorkers := lCpuCount;
+  if lMinWorkers < 2 then
+    lMinWorkers := 2;
+  fPool.SetMaxWorkerThreads(lMaxWorkers);
+  fPool.SetMinWorkerThreads(lMinWorkers);
+end;
+
+destructor TmaxTTaskScheduler.Destroy;
+begin
+  fPool.Free;
+  inherited Destroy;
+end;
+
 procedure TmaxTTaskScheduler.RunAsync(const aProc: TmaxProc);
 begin
   if not ProcAssigned(aProc) then
@@ -28,7 +59,7 @@ begin
       procedure
       begin
         aProc();
-      end);
+      end, fPool);
   except
     // Thread-pool submission can fail under OS pressure; degrade to inline execution.
     aProc();
@@ -66,7 +97,7 @@ begin
             TThread.Sleep(lDelayMs);
         end;
         aProc();
-      end);
+      end, fPool);
   except
     if aDelayUs > 0 then
       TThread.Sleep(aDelayUs div 1000);
