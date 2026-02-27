@@ -175,6 +175,15 @@ begin
 end;
 ```
 
+## Performance recommendation (memory manager)
+
+For high-throughput workloads, we recommend using FastMM5 as the process memory manager.
+EventNexus dispatch paths make heavy use of closures/managed values under async delivery, and FastMM5 usually reduces allocator contention and latency jitter versus the default RTL manager.
+
+- FastMM5 project: https://github.com/pleriche/FastMM5
+- Integration: add `FastMM5` as the first unit in the `.dpr` `uses` list.
+- Licensing: FastMM5 supports both GPL and commercial licensing.
+
 ## Metrics
 
 Install callback + throttle interval:

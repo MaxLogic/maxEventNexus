@@ -311,6 +311,7 @@ type
     Mode: TmaxDelivery;
     Token: TmaxSubscriptionToken;
     State: ImaxSubscriptionState;
+    StateObj: TmaxSubscriptionState;
   end;
 
   TmaxWeakTarget = record
@@ -327,6 +328,7 @@ type
     Token: TmaxSubscriptionToken;
     Target: TmaxWeakTarget;
     State: ImaxSubscriptionState;
+    StateObj: TmaxSubscriptionState;
   end;
 
   TmaxAutoBridgeKind = (AutoBridgeTyped, AutoBridgeNamedTyped, AutoBridgeGuidTyped);
@@ -341,10 +343,11 @@ type
     MethodPtr: TMethod;
     Mode: TmaxDelivery;
     State: ImaxSubscriptionState;
+    StateObj: TmaxSubscriptionState;
     Target: TmaxWeakTarget;
     constructor Create(aKind: TmaxAutoBridgeKind; aToken: TmaxSubscriptionToken; const aParamType: PTypeInfo;
       const aNameKey: TmaxString; const aGuidKey: TGuid; const aMethodPtr: TMethod; aMode: TmaxDelivery;
-      const aState: ImaxSubscriptionState; const aTarget: TObject);
+      const aState: ImaxSubscriptionState; const aStateObj: TmaxSubscriptionState; const aTarget: TObject);
   end;
 
   TmaxAutoBridgeSnapshot = record
@@ -352,6 +355,7 @@ type
     MethodPtr: TMethod;
     Mode: TmaxDelivery;
     State: ImaxSubscriptionState;
+    StateObj: TmaxSubscriptionState;
     Target: TmaxWeakTarget;
   end;
 
@@ -408,7 +412,7 @@ type
       Handler: TmaxProcOf<T>;
       Value: T;
       Token: TmaxSubscriptionToken;
-      State: ImaxSubscriptionState;
+      StateObj: TmaxSubscriptionState;
       class constructor Create;
       class destructor Destroy;
       class function Acquire: TInvokeBox<T>; static;
@@ -564,6 +568,7 @@ type
     Token: TmaxSubscriptionToken;
     Target: TmaxWeakTarget;
     State: ImaxSubscriptionState;
+    StateObj: TmaxSubscriptionState;
   end;
 
   TNamedTopic = class(TmaxTopicBase)
@@ -1088,6 +1093,7 @@ function TmaxBus.AddNamedWildcard(const aPattern: TmaxString; const aPrefix: Tma
 var
   lNew: TArray<TNamedWildcardSubscriber>;
   lSub: TNamedWildcardSubscriber;
+  lStateObj: TmaxSubscriptionState;
 begin
   TMonitor.Enter(fNamedWildcardLock);
   try
@@ -1099,8 +1105,10 @@ begin
     lSub.Handler := aHandler;
     lSub.Mode := aMode;
     lSub.Token := fNamedWildcardNextToken;
-    lSub.State := TmaxSubscriptionState.Create;
-    aState := lSub.State;
+    lStateObj := TmaxSubscriptionState.Create;
+    lSub.State := lStateObj;
+    lSub.StateObj := lStateObj;
+    aState := lStateObj;
     Inc(fNamedWildcardNextToken);
 
     lNew := Copy(fNamedWildcardSubs);
@@ -1301,7 +1309,8 @@ end;
 
 constructor TmaxAutoBridgeEntry.Create(aKind: TmaxAutoBridgeKind; aToken: TmaxSubscriptionToken;
   const aParamType: PTypeInfo; const aNameKey: TmaxString; const aGuidKey: TGuid; const aMethodPtr: TMethod;
-  aMode: TmaxDelivery; const aState: ImaxSubscriptionState; const aTarget: TObject);
+  aMode: TmaxDelivery; const aState: ImaxSubscriptionState; const aStateObj: TmaxSubscriptionState;
+  const aTarget: TObject);
 begin
   inherited Create;
   Kind := aKind;
@@ -1312,6 +1321,7 @@ begin
   MethodPtr := aMethodPtr;
   Mode := aMode;
   State := aState;
+  StateObj := aStateObj;
   Target := TmaxWeakTarget.Create(aTarget);
 end;
 
@@ -2143,6 +2153,7 @@ function TTypedTopic<t>.Add(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery; 
 var
   lNew: TArray<TTypedSubscriber<t>>;
   lSub: TTypedSubscriber<t>;
+  lStateObj: TmaxSubscriptionState;
 begin
   TMonitor.Enter(Self);
   try
@@ -2153,8 +2164,10 @@ begin
     lSub.Mode := aMode;
     lSub.Token := fNextToken;
     lSub.Target := TmaxWeakTarget.Create(aTarget); // store weak target when available (object-method overload)
-    lSub.State := TmaxSubscriptionState.Create;
-    aState := lSub.State;
+    lStateObj := TmaxSubscriptionState.Create;
+    lSub.State := lStateObj;
+    lSub.StateObj := lStateObj;
+    aState := lStateObj;
     Inc(fNextToken);
     lNew := copy(fSubs);
     SetLength(lNew, length(lNew) + 1);
@@ -2531,6 +2544,7 @@ function TNamedTopic.Add(const aHandler: TmaxProc; aMode: TmaxDelivery; out aSta
 var
   lSub: TNamedSubscriber;
   lNew: TArray<TNamedSubscriber>;
+  lStateObj: TmaxSubscriptionState;
 begin
   TMonitor.Enter(Self);
   try
@@ -2541,8 +2555,10 @@ begin
     lSub.Mode := aMode;
     lSub.Token := fNextToken;
     lSub.Target := TmaxWeakTarget.Create(nil); // cannot derive target from an anonymous method; treat as always-alive
-    lSub.State := TmaxSubscriptionState.Create;
-    aState := lSub.State;
+    lStateObj := TmaxSubscriptionState.Create;
+    lSub.State := lStateObj;
+    lSub.StateObj := lStateObj;
+    aState := lStateObj;
     Inc(fNextToken);
     lNew := copy(fSubs);
     SetLength(lNew, length(lNew) + 1);
@@ -3041,7 +3057,7 @@ begin
   aBox.Handler := nil;
   aBox.Value := Default(T);
   aBox.Token := 0;
-  aBox.State := nil;
+  aBox.StateObj := nil;
   lPooled := False;
   TMonitor.Enter(fPoolLock);
   try
@@ -3080,13 +3096,13 @@ begin
       lHandler: TmaxProcOf<T>;
       lValue: T;
       lTopic: TTypedTopic<T>;
-      lState: ImaxSubscriptionState;
+      lStateObj: TmaxSubscriptionState;
       lToken: TmaxSubscriptionToken;
     begin
       lHandler := aBox.Handler;
       lValue := aBox.Value;
       lTopic := aBox.Topic;
-      lState := aBox.State;
+      lStateObj := aBox.StateObj;
       lToken := aBox.Token;
       try
         try
@@ -3105,8 +3121,8 @@ begin
           end;
         end;
       finally
-        if lState <> nil then
-          lState.Leave;
+        if lStateObj <> nil then
+          lStateObj.Leave;
         aBox.ReleaseToPool;
       end;
     end;
@@ -3181,13 +3197,15 @@ function TmaxBus.AddAutoBridgeSubscription(aKind: TmaxAutoBridgeKind; const aPar
   const aTarget: TObject): ImaxSubscription;
 var
   lState: ImaxSubscriptionState;
+  lStateObj: TmaxSubscriptionState;
   lEntry: TmaxAutoBridgeEntry;
 begin
-  lState := TmaxSubscriptionState.Create;
+  lStateObj := TmaxSubscriptionState.Create;
+  lState := lStateObj;
   TMonitor.Enter(fAutoBridgeLock);
   try
     lEntry := TmaxAutoBridgeEntry.Create(aKind, fAutoBridgeNextToken, aParamType, aNameKey, aGuidKey, aMethodPtr,
-      aDelivery, lState, aTarget);
+      aDelivery, lState, lStateObj, aTarget);
     Inc(fAutoBridgeNextToken);
     fAutoBridgeSubs.Add(lEntry);
     TInterlocked.Increment(fAutoBridgeCount);
@@ -3208,7 +3226,9 @@ begin
       if fAutoBridgeSubs[lIdx].Token = aToken then
       begin
         lEntry := fAutoBridgeSubs[lIdx];
-        if Assigned(lEntry.State) then
+        if Assigned(lEntry.StateObj) then
+          lEntry.StateObj.Deactivate
+        else if Assigned(lEntry.State) then
           lEntry.State.Deactivate;
         fAutoBridgeSubs.Delete(lIdx);
         TInterlocked.Decrement(fAutoBridgeCount);
@@ -3242,12 +3262,13 @@ begin
       lEntry := fAutoBridgeSubs[lIdx];
       if (lEntry.Kind <> AutoBridgeTyped) or (lEntry.ParamType <> aParamType) then
         Continue;
-      if Assigned(lEntry.State) and (not lEntry.State.IsActive) then
+      if Assigned(lEntry.StateObj) and (not lEntry.StateObj.IsActive) then
         Continue;
       lResult[lOut].Token := lEntry.Token;
       lResult[lOut].MethodPtr := lEntry.MethodPtr;
       lResult[lOut].Mode := lEntry.Mode;
       lResult[lOut].State := lEntry.State;
+      lResult[lOut].StateObj := lEntry.StateObj;
       lResult[lOut].Target := lEntry.Target;
       Inc(lOut);
     end;
@@ -3277,12 +3298,13 @@ begin
       lEntry := fAutoBridgeSubs[lIdx];
       if (lEntry.Kind <> AutoBridgeNamedTyped) or (lEntry.ParamType <> aParamType) or (lEntry.NameKey <> aNameKey) then
         Continue;
-      if Assigned(lEntry.State) and (not lEntry.State.IsActive) then
+      if Assigned(lEntry.StateObj) and (not lEntry.StateObj.IsActive) then
         Continue;
       lResult[lOut].Token := lEntry.Token;
       lResult[lOut].MethodPtr := lEntry.MethodPtr;
       lResult[lOut].Mode := lEntry.Mode;
       lResult[lOut].State := lEntry.State;
+      lResult[lOut].StateObj := lEntry.StateObj;
       lResult[lOut].Target := lEntry.Target;
       Inc(lOut);
     end;
@@ -3311,12 +3333,13 @@ begin
       lEntry := fAutoBridgeSubs[lIdx];
       if (lEntry.Kind <> AutoBridgeGuidTyped) or (not IsEqualGUID(lEntry.GuidKey, aGuidKey)) then
         Continue;
-      if Assigned(lEntry.State) and (not lEntry.State.IsActive) then
+      if Assigned(lEntry.StateObj) and (not lEntry.StateObj.IsActive) then
         Continue;
       lResult[lOut].Token := lEntry.Token;
       lResult[lOut].MethodPtr := lEntry.MethodPtr;
       lResult[lOut].Mode := lEntry.Mode;
       lResult[lOut].State := lEntry.State;
+      lResult[lOut].StateObj := lEntry.StateObj;
       lResult[lOut].Target := lEntry.Target;
       Inc(lOut);
     end;
@@ -3335,10 +3358,10 @@ var
   lIdx: integer;
   lMode: TmaxDelivery;
   lToken: TmaxSubscriptionToken;
-  lState: ImaxSubscriptionState;
+  lStateObj: TmaxSubscriptionState;
   lHandler: TBridgeObjProc;
   lHandlerCopy: TBridgeObjProc;
-  lStateCopy: ImaxSubscriptionState;
+  lStateObjCopy: TmaxSubscriptionState;
   lEventCopy: t;
   lScheduled: TmaxProc;
   lErrors: TmaxExceptionList;
@@ -3350,14 +3373,14 @@ begin
   lDetails := nil;
   for lIdx := 0 to High(aSnapshots) do
   begin
-    lState := aSnapshots[lIdx].State;
-    if (lState <> nil) and (not lState.TryEnter) then
+    lStateObj := aSnapshots[lIdx].StateObj;
+    if (lStateObj <> nil) and (not lStateObj.TryEnter) then
       Continue;
     if not aSnapshots[lIdx].Target.IsAlive then
     begin
       RemoveAutoBridgeByToken(aSnapshots[lIdx].Token);
-      if lState <> nil then
-        lState.Leave;
+      if lStateObj <> nil then
+        lStateObj.Leave;
       Continue;
     end;
 
@@ -3371,14 +3394,14 @@ begin
         try
           lHandler(aEvent);
         finally
-          if lState <> nil then
-            lState.Leave;
+          if lStateObj <> nil then
+            lStateObj.Leave;
         end;
       end
       else
       begin
         lHandlerCopy := lHandler;
-        lStateCopy := lState;
+        lStateObjCopy := lStateObj;
         lEventCopy := aEvent;
         lScheduled :=
           procedure
@@ -3386,15 +3409,15 @@ begin
             try
               lHandlerCopy(lEventCopy);
             finally
-              if lStateCopy <> nil then
-                lStateCopy.Leave;
+              if lStateObjCopy <> nil then
+                lStateObjCopy.Leave;
             end;
           end;
         try
           Dispatch(aTopic, lMode, lScheduled, nil);
         except
-          if lState <> nil then
-            lState.Leave;
+          if lStateObj <> nil then
+            lStateObj.Leave;
           raise;
         end;
       end;
@@ -3580,10 +3603,11 @@ procedure TmaxBus.DispatchTypedSubscribers<t>(const aTopicName: TmaxString; cons
   const aSubs: TArray<TTypedSubscriber<t>>; const aValue: t; aRaiseMainThreadRequired: boolean);
 var
   i: Integer;
+  lSub: TTypedSubscriber<t>;
   lHandler: TmaxProcOf<t>;
   lMode: TmaxDelivery;
   lToken: TmaxSubscriptionToken;
-  lState: ImaxSubscriptionState;
+  lStateObj: TmaxSubscriptionState;
   lErrs: TmaxExceptionList;
   lErrDetails: TArray<TmaxDispatchErrorDetail>;
   lBox: TInvokeBox<t>;
@@ -3592,63 +3616,99 @@ begin
   lErrs := nil;
   lErrDetails := nil;
   lDeliveredCount := 0;
+
+  // Pass 1: inline subscribers (Posting).
   for i := 0 to High(aSubs) do
   begin
-    lHandler := aSubs[i].Handler;
-    lMode := aSubs[i].Mode;
-    lToken := aSubs[i].Token;
-    lState := aSubs[i].State;
+    if aSubs[i].Mode <> Posting then
+      Continue;
+    lSub := aSubs[i];
+    lHandler := lSub.Handler;
+    lToken := lSub.Token;
+    lStateObj := lSub.StateObj;
 
-    if (lState <> nil) and (not lState.TryEnter) then
+    if (lStateObj <> nil) and (not lStateObj.TryEnter) then
       Continue;
 
-    if not aSubs[i].Target.IsAlive then
+    if not lSub.Target.IsAlive then
     begin
       aTopic.RemoveByToken(lToken);
-      if lState <> nil then
-        lState.Leave;
+      if lStateObj <> nil then
+        lStateObj.Leave;
       Continue;
     end;
 
     try
-      if lMode = Posting then
-      begin
+      try
         try
-          try
-            lHandler(aValue);
-            Inc(lDeliveredCount);
-          except
-            on e: Exception do
-            begin
-              aTopic.AddException;
-              if (e is EAccessViolation) or (e is EInvalidPointer) then
-              begin
-                aTopic.RemoveByToken(lToken);
-                Continue;
-              end;
-              raise;
-            end;
-          end;
-        finally
-          if lState <> nil then
-            lState.Leave;
-        end;
-      end else
-      begin
-        lBox := TInvokeBox<t>.Acquire;
-        lBox.Topic := aTopic;
-        lBox.Handler := lHandler;
-        lBox.Value := aValue;
-        lBox.Token := lToken;
-        lBox.State := lState;
-        try
-          Dispatch(aTopicName, lMode, TInvokeBox<t>.MakeProc(lBox), nil);
+          lHandler(aValue);
+          Inc(lDeliveredCount);
         except
-          lBox.ReleaseToPool;
-          if lState <> nil then
-            lState.Leave;
-          raise;
+          on e: Exception do
+          begin
+            aTopic.AddException;
+            if (e is EAccessViolation) or (e is EInvalidPointer) then
+            begin
+              aTopic.RemoveByToken(lToken);
+              Continue;
+            end;
+            raise;
+          end;
         end;
+      finally
+        if lStateObj <> nil then
+          lStateObj.Leave;
+      end;
+    except
+      on e: EmaxMainThreadRequired do
+      begin
+        if aRaiseMainThreadRequired then
+          raise;
+        AddDispatchError(aTopicName, Posting, lToken, i, e, lErrs, lErrDetails);
+      end;
+      on e: Exception do
+      begin
+        AddDispatchError(aTopicName, Posting, lToken, i, e, lErrs, lErrDetails);
+      end;
+    end;
+  end;
+
+  // Pass 2: deferred subscribers (Main/Async/Background).
+  for i := 0 to High(aSubs) do
+  begin
+    lMode := aSubs[i].Mode;
+    if lMode = Posting then
+      Continue;
+    lSub := aSubs[i];
+    lHandler := lSub.Handler;
+    lToken := lSub.Token;
+    lStateObj := lSub.StateObj;
+
+    if (lStateObj <> nil) and (not lStateObj.TryEnter) then
+      Continue;
+
+    if not lSub.Target.IsAlive then
+    begin
+      aTopic.RemoveByToken(lToken);
+      if lStateObj <> nil then
+        lStateObj.Leave;
+      Continue;
+    end;
+
+    try
+      lBox := TInvokeBox<t>.Acquire;
+      lBox.Topic := aTopic;
+      lBox.Handler := lHandler;
+      lBox.Value := aValue;
+      lBox.Token := lToken;
+      lBox.StateObj := lStateObj;
+      try
+        Dispatch(aTopicName, lMode, TInvokeBox<t>.MakeProc(lBox), nil);
+      except
+        lBox.ReleaseToPool;
+        if lStateObj <> nil then
+          lStateObj.Leave;
+        raise;
       end;
     except
       on e: EmaxMainThreadRequired do
