@@ -16,6 +16,36 @@
 
 EventNexus is a type-safe event bus for Delphi 12+ with typed, named, and GUID topic routing, delivery-mode control, sticky cache, coalescing, and queue policies.
 
+## Performance and Scope Snapshot (2026-02-27)
+
+The cross-library benchmark uses a deliberately small common surface (`subscribe + post`) across EventNexus, iPub, and EventHorizon.
+So raw speed numbers below do not include advanced features such as delayed posting, queue policies, tracing, or sticky/coalescing behavior.
+
+Method:
+
+- Tool: `bench/SchedulerCompare.exe`
+- Isolated-process medians (fresh process per sample)
+- Posting profile: 9 successful samples (`--events=5000 --consumers=4 --runs=1 --delivery=posting`)
+- Async profile: 9 successful samples out of 10 attempts (`--events=2000 --consumers=2 --runs=1 --delivery=async --max-inflight=64`)
+
+Median framework results:
+
+| Profile | EventNexus weak avg us | EventNexus strong avg us | iPub avg us | EventNexus weak throughput | EventNexus strong throughput | iPub throughput |
+|---|---:|---:|---:|---:|---:|---:|
+| posting | 2561 | 2426 | 2018 | 7,809,449 | 8,244,023 | 9,910,802 |
+| async | 15506 | 15872 | 15103 | 257,964 | 252,016 | 264,848 |
+
+Interpretation:
+
+- Posting: iPub is faster; EventNexus strong narrows the gap compared with EventNexus weak.
+- Async: EventNexus weak is close to iPub (about `+2.7%` latency and `-2.6%` throughput in this run set).
+- EventNexus priority is keeping this performance band while offering broader built-in behavior in one API.
+
+Feature scope beyond baseline pub/sub:
+
+- The benchmark surface is minimal (`subscribe/post`), but EventNexus currently ships at least 16 major runtime capabilities around it:
+  typed topics, named topics, GUID topics, 4 delivery modes, main-thread fallback policy, sticky cache, coalescing, queue overflow policies, queue presets, delayed posting with cancel/pending handle, `TryPost*` and `PostResult*`, metrics snapshots/callbacks, wildcard named subscriptions, bulk dispatch APIs, dispatch tracing hooks, and weak/strong object-method subscription modes.
+
 ## Core API shape on Delphi
 
 Delphi does not allow generic methods on interfaces (`E2535`), so the public API is split:
@@ -203,10 +233,11 @@ maxSetMetricCallback(
 - Build tests: `./build-tests.sh`
 - Build + run tests: `./build-and-run-tests.sh`
 - Binary: `tests/MaxEventNexusTests.exe`
+- Coverage depth (current suite): 32 legacy test classes with 88 published test methods executed via the DUnitX compatibility fixture.
 - Diagnostics policy gate: build scripts enforce `build/diagnostics-policy.regex` and fail on untriaged warnings/hints.
 - API coverage proxy: `./build/report-api-test-coverage.sh --enforce-target` (target in `build/api-test-coverage-target.txt`, report in `build/analysis/test-api-coverage.md`).
 
-The test runner is DUnitX-based and executes the active fixture suite from `tests/src`.
+The test runner is DUnitX-based and executes the active fixture suite from `tests/src`. DUnitX reports one top-level fixture because it hosts the legacy published-method suite runner.
 
 ## Docs
 
