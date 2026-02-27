@@ -287,6 +287,13 @@ type
     procedure SkipsFreedTargetGuidOf;
   end;
 
+  TTestStrongTargets = class(TmaxTestCase)
+  published
+    procedure UnsubscribeAllForRemovesTypedStrong;
+    procedure UnsubscribeAllForRemovesNamedStrong;
+    procedure UnsubscribeAllForRemovesGuidStrong;
+  end;
+
   TTestWeakTargetABA = class(TmaxTestCase)
   published
     procedure PreventsQueuedABARedirect;
@@ -4096,6 +4103,92 @@ begin
   finally
     if lProbe <> nil then
       lProbe.Free;
+  end;
+end;
+
+{ TTestStrongTargets }
+
+procedure TTestStrongTargets.UnsubscribeAllForRemovesTypedStrong;
+var
+  lBus: ImaxBus;
+  lProbe: TWeakTargetProbe;
+  lSub: ImaxSubscription;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+
+  TWeakTargetProbe.HitsInt := 0;
+  lProbe := TWeakTargetProbe.Create;
+  try
+    lSub := maxBusObj(lBus).SubscribeStrong<integer>(lProbe.OnInt, TmaxDelivery.Posting);
+    maxBusObj(lBus).Post<integer>(1);
+    CheckEquals(1, TWeakTargetProbe.HitsInt);
+    Check(lSub.IsActive);
+
+    lBus.UnsubscribeAllFor(lProbe);
+    maxBusObj(lBus).Post<integer>(2);
+
+    CheckEquals(1, TWeakTargetProbe.HitsInt);
+    Check(not lSub.IsActive);
+  finally
+    lProbe.Free;
+  end;
+end;
+
+procedure TTestStrongTargets.UnsubscribeAllForRemovesNamedStrong;
+var
+  lBus: ImaxBus;
+  lProbe: TWeakTargetProbe;
+  lSub: ImaxSubscription;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+
+  TWeakTargetProbe.HitsInt := 0;
+  lProbe := TWeakTargetProbe.Create;
+  try
+    lSub := maxBusObj(lBus).SubscribeNamedOfStrong<integer>('strong.named', lProbe.OnInt, TmaxDelivery.Posting);
+    maxBusObj(lBus).PostNamedOf<integer>('strong.named', 1);
+    CheckEquals(1, TWeakTargetProbe.HitsInt);
+    Check(lSub.IsActive);
+
+    lBus.UnsubscribeAllFor(lProbe);
+    maxBusObj(lBus).PostNamedOf<integer>('strong.named', 2);
+
+    CheckEquals(1, TWeakTargetProbe.HitsInt);
+    Check(not lSub.IsActive);
+  finally
+    lProbe.Free;
+  end;
+end;
+
+procedure TTestStrongTargets.UnsubscribeAllForRemovesGuidStrong;
+var
+  lBus: ImaxBus;
+  lProbe: TWeakTargetProbe;
+  lSub: ImaxSubscription;
+  lEvt: IIntEvent;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+
+  TWeakTargetProbe.HitsIntf := 0;
+  lProbe := TWeakTargetProbe.Create;
+  try
+    lSub := maxBusObj(lBus).SubscribeGuidOfStrong<IIntEvent>(lProbe.OnIntf, TmaxDelivery.Posting);
+    lEvt := TIntEvent.Create(1);
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(lEvt);
+    CheckEquals(1, TWeakTargetProbe.HitsIntf);
+    Check(lSub.IsActive);
+
+    lBus.UnsubscribeAllFor(lProbe);
+    lEvt := TIntEvent.Create(2);
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(lEvt);
+
+    CheckEquals(1, TWeakTargetProbe.HitsIntf);
+    Check(not lSub.IsActive);
+  finally
+    lProbe.Free;
   end;
 end;
 

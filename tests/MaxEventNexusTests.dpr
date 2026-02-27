@@ -58,6 +58,7 @@ begin
     TTestDelayedPosting,
     TTestUnsubscribeAll,
     TTestWeakTargets,
+    TTestStrongTargets,
     TTestWeakTargetABA,
     TTestInterfaceGenerics
   ]);
