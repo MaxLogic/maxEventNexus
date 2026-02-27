@@ -369,6 +369,7 @@ type
     fLast: t;
     fHasLast: boolean;
     fStickyFast: integer;
+    fHasDeferredFast: integer;
     fCoalesce: boolean;
     fCoalesceFast: integer;
     fKeyFunc: TmaxKeyFunc<t>;
@@ -377,6 +378,7 @@ type
     fPendingLock: TmaxMonitorObject;
     fFlushScheduled: boolean;
     fNextToken: TmaxSubscriptionToken;
+    procedure RecomputeDeferredFastLocked;
     procedure PruneDeadLocked;
   public
     constructor Create;
@@ -389,6 +391,7 @@ type
     procedure ResetTopic; override;
     procedure Cache(const aEvent: t);
     function TryGetCached(out aEvent: t): boolean;
+    function HasDeferredSubscribers: boolean;
     procedure SetCoalesce(const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer);
     function HasCoalesce: boolean;
     function CoalesceKey(const aEvent: t): TmaxString;
@@ -2153,11 +2156,25 @@ begin
   fPendingLock := TmaxMonitorObject.Create;
   fNextToken := 1;
   fStickyFast := 0;
+  fHasDeferredFast := 0;
   fCoalesceFast := 0;
   SetLength(fSubs, 0);
   SetLength(fSnapshotCache, 0);
   fSubsVersion := 1;
   fSnapshotVersion := 0;
+end;
+
+procedure TTypedTopic<t>.RecomputeDeferredFastLocked;
+var
+  lIdx: integer;
+begin
+  for lIdx := 0 to High(fSubs) do
+    if fSubs[lIdx].Mode <> Posting then
+    begin
+      TInterlocked.Exchange(fHasDeferredFast, 1);
+      Exit;
+    end;
+  TInterlocked.Exchange(fHasDeferredFast, 0);
 end;
 
 procedure TTypedTopic<t>.PruneDeadLocked;
@@ -2197,6 +2214,7 @@ begin
   end;
   SetLength(lCopy, lOut);
   fSubs := lCopy;
+  RecomputeDeferredFastLocked;
   Inc(fSubsVersion);
 end;
 
@@ -2224,6 +2242,8 @@ begin
     SetLength(lNew, length(lNew) + 1);
     lNew[High(lNew)] := lSub;
     fSubs := lNew;
+    if aMode <> Posting then
+      TInterlocked.Exchange(fHasDeferredFast, 1);
     Inc(fSubsVersion);
     Result := lSub.Token;
   finally
@@ -2260,6 +2280,7 @@ begin
     end;
     SetLength(lNew, lOut);
     fSubs := lNew;
+    RecomputeDeferredFastLocked;
     Inc(fSubsVersion);
   finally
     TMonitor.Exit(Self);
@@ -2348,6 +2369,7 @@ begin
     begin
       SetLength(lNew, lOut);
       fSubs := lNew;
+      RecomputeDeferredFastLocked;
       Inc(fSubsVersion);
     end;
   finally
@@ -2386,6 +2408,7 @@ begin
     fSnapshotVersion := 0;
     fHasLast := False;
     TInterlocked.Exchange(fStickyFast, 0);
+    TInterlocked.Exchange(fHasDeferredFast, 0);
   finally
     TMonitor.Exit(Self);
   end;
@@ -2435,6 +2458,11 @@ begin
   finally
     TMonitor.Exit(Self);
   end;
+end;
+
+function TTypedTopic<t>.HasDeferredSubscribers: boolean;
+begin
+  Result := TInterlocked.CompareExchange(fHasDeferredFast, 0, 0) <> 0;
 end;
 
 procedure TTypedTopic<t>.SetCoalesce(const aKeyOf: TmaxKeyFunc<t>; aWindowUs: integer);
@@ -3660,7 +3688,6 @@ procedure TmaxBus.DispatchTypedSubscribers<t>(const aTopicName: TmaxString; cons
 var
   i: Integer;
   lBatchIdx: integer;
-  lSub: TTypedSubscriber<t>;
   lHandler: TmaxProcOf<t>;
   lMode: TmaxDelivery;
   lToken: TmaxSubscriptionToken;
@@ -3674,191 +3701,250 @@ var
   lAsyncIndexes: TArray<integer>;
   lAsyncCount: integer;
   lAsyncCapacity: integer;
+  lHasDeferred: boolean;
 begin
   lErrs := nil;
   lErrDetails := nil;
   lDeliveredCount := 0;
   lAsyncCount := 0;
   lAsyncCapacity := 0;
+  lHasDeferred := aTopic.HasDeferredSubscribers;
   SetLength(lAsyncBoxes, 0);
   SetLength(lAsyncTokens, 0);
   SetLength(lAsyncIndexes, 0);
 
   // Pass 1: inline subscribers (Posting).
-  for i := 0 to High(aSubs) do
+  if lHasDeferred then
   begin
-    if aSubs[i].Mode <> Posting then
-      Continue;
-    lSub := aSubs[i];
-    lHandler := lSub.Handler;
-    lToken := lSub.Token;
-    lStateObj := lSub.StateObj;
-
-    if (lStateObj <> nil) and (not lStateObj.TryEnter) then
-      Continue;
-
-    if not lSub.Target.IsAlive then
+    for i := 0 to High(aSubs) do
     begin
-      aTopic.RemoveByToken(lToken);
-      if lStateObj <> nil then
-        lStateObj.Leave;
-      Continue;
-    end;
+      if aSubs[i].Mode <> Posting then
+        Continue;
+      lHandler := aSubs[i].Handler;
+      lToken := aSubs[i].Token;
+      lStateObj := aSubs[i].StateObj;
 
-    try
+      if (lStateObj <> nil) and (not lStateObj.TryEnter) then
+        Continue;
+
+      if not aSubs[i].Target.IsAlive then
+      begin
+        aTopic.RemoveByToken(lToken);
+        if lStateObj <> nil then
+          lStateObj.Leave;
+        Continue;
+      end;
+
       try
         try
-          lHandler(aValue);
-          Inc(lDeliveredCount);
-        except
-          on e: Exception do
-          begin
-            aTopic.AddException;
-            if (e is EAccessViolation) or (e is EInvalidPointer) then
+          try
+            lHandler(aValue);
+            Inc(lDeliveredCount);
+          except
+            on e: Exception do
             begin
-              aTopic.RemoveByToken(lToken);
-              Continue;
+              aTopic.AddException;
+              if (e is EAccessViolation) or (e is EInvalidPointer) then
+              begin
+                aTopic.RemoveByToken(lToken);
+                Continue;
+              end;
+              raise;
             end;
-            raise;
           end;
+        finally
+          if lStateObj <> nil then
+            lStateObj.Leave;
         end;
-      finally
-        if lStateObj <> nil then
-          lStateObj.Leave;
-      end;
-    except
-      on e: EmaxMainThreadRequired do
-      begin
-        if aRaiseMainThreadRequired then
-          raise;
-        AddDispatchError(aTopicName, Posting, lToken, i, e, lErrs, lErrDetails);
-      end;
-      on e: Exception do
-      begin
-        AddDispatchError(aTopicName, Posting, lToken, i, e, lErrs, lErrDetails);
-      end;
-    end;
-  end;
-
-  // Pass 2: deferred subscribers (Main/Async/Background).
-  for i := 0 to High(aSubs) do
-  begin
-    lMode := aSubs[i].Mode;
-    if lMode = Posting then
-      Continue;
-    lSub := aSubs[i];
-    lHandler := lSub.Handler;
-    lToken := lSub.Token;
-    lStateObj := lSub.StateObj;
-
-    if (lStateObj <> nil) and (not lStateObj.TryEnter) then
-      Continue;
-
-    if not lSub.Target.IsAlive then
-    begin
-      aTopic.RemoveByToken(lToken);
-      if lStateObj <> nil then
-        lStateObj.Leave;
-      Continue;
-    end;
-
-    if lMode = Async then
-    begin
-      lBox := TInvokeBox<t>.Acquire;
-      lBox.Topic := aTopic;
-      lBox.Handler := lHandler;
-      lBox.Value := aValue;
-      lBox.Token := lToken;
-      lBox.StateObj := lStateObj;
-      if lAsyncCount = lAsyncCapacity then
-      begin
-        Inc(lAsyncCapacity, 16);
-        SetLength(lAsyncBoxes, lAsyncCapacity);
-        SetLength(lAsyncTokens, lAsyncCapacity);
-        SetLength(lAsyncIndexes, lAsyncCapacity);
-      end;
-      lAsyncBoxes[lAsyncCount] := lBox;
-      lAsyncTokens[lAsyncCount] := lToken;
-      lAsyncIndexes[lAsyncCount] := i;
-      Inc(lAsyncCount);
-      Continue;
-    end;
-
-    try
-      lBox := TInvokeBox<t>.Acquire;
-      lBox.Topic := aTopic;
-      lBox.Handler := lHandler;
-      lBox.Value := aValue;
-      lBox.Token := lToken;
-      lBox.StateObj := lStateObj;
-      try
-        Dispatch(aTopicName, lMode, TInvokeBox<t>.MakeProc(lBox), nil);
       except
-        lBox.ReleaseToPool;
+        on e: EmaxMainThreadRequired do
+        begin
+          if aRaiseMainThreadRequired then
+            raise;
+          AddDispatchError(aTopicName, Posting, lToken, i, e, lErrs, lErrDetails);
+        end;
+        on e: Exception do
+        begin
+          AddDispatchError(aTopicName, Posting, lToken, i, e, lErrs, lErrDetails);
+        end;
+      end;
+    end;
+  end else
+  begin
+    for i := 0 to High(aSubs) do
+    begin
+      lHandler := aSubs[i].Handler;
+      lToken := aSubs[i].Token;
+      lStateObj := aSubs[i].StateObj;
+
+      if (lStateObj <> nil) and (not lStateObj.TryEnter) then
+        Continue;
+
+      if not aSubs[i].Target.IsAlive then
+      begin
+        aTopic.RemoveByToken(lToken);
         if lStateObj <> nil then
           lStateObj.Leave;
-        raise;
+        Continue;
       end;
-    except
-      on e: EmaxMainThreadRequired do
-      begin
-        if aRaiseMainThreadRequired then
-          raise;
-        AddDispatchError(aTopicName, lMode, lToken, i, e, lErrs, lErrDetails);
-      end;
-      on e: Exception do
-      begin
-        AddDispatchError(aTopicName, lMode, lToken, i, e, lErrs, lErrDetails);
+
+      try
+        try
+          try
+            lHandler(aValue);
+            Inc(lDeliveredCount);
+          except
+            on e: Exception do
+            begin
+              aTopic.AddException;
+              if (e is EAccessViolation) or (e is EInvalidPointer) then
+              begin
+                aTopic.RemoveByToken(lToken);
+                Continue;
+              end;
+              raise;
+            end;
+          end;
+        finally
+          if lStateObj <> nil then
+            lStateObj.Leave;
+        end;
+      except
+        on e: EmaxMainThreadRequired do
+        begin
+          if aRaiseMainThreadRequired then
+            raise;
+          AddDispatchError(aTopicName, Posting, lToken, i, e, lErrs, lErrDetails);
+        end;
+        on e: Exception do
+        begin
+          AddDispatchError(aTopicName, Posting, lToken, i, e, lErrs, lErrDetails);
+        end;
       end;
     end;
   end;
 
-  if lAsyncCount > 0 then
+  if lHasDeferred then
   begin
-    SetLength(lAsyncBoxes, lAsyncCount);
-    SetLength(lAsyncTokens, lAsyncCount);
-    SetLength(lAsyncIndexes, lAsyncCount);
-    try
-      Dispatch(aTopicName, Async,
-        procedure
-        var
-          lIdx: integer;
-        begin
-          for lIdx := 0 to High(lAsyncBoxes) do
-            try
-              InvokeWithTrace(aTopicName, Async, TInvokeBox<t>.MakeProc(lAsyncBoxes[lIdx]));
-            except
-              on e: Exception do
-                if Assigned(gAsyncError) then
-                  gAsyncError(aTopicName, e);
-            end;
-        end, nil);
-    except
-      on e: EmaxMainThreadRequired do
+    // Pass 2: deferred subscribers (Main/Async/Background).
+    for i := 0 to High(aSubs) do
+    begin
+      lMode := aSubs[i].Mode;
+      if lMode = Posting then
+        Continue;
+      lHandler := aSubs[i].Handler;
+      lToken := aSubs[i].Token;
+      lStateObj := aSubs[i].StateObj;
+
+      if (lStateObj <> nil) and (not lStateObj.TryEnter) then
+        Continue;
+
+      if not aSubs[i].Target.IsAlive then
       begin
-        for lBatchIdx := 0 to lAsyncCount - 1 do
-        begin
-          lStateObj := lAsyncBoxes[lBatchIdx].StateObj;
-          lAsyncBoxes[lBatchIdx].ReleaseToPool;
-          if lStateObj <> nil then
-            lStateObj.Leave;
-        end;
-        if aRaiseMainThreadRequired then
-          raise;
-        for lBatchIdx := 0 to lAsyncCount - 1 do
-          AddDispatchError(aTopicName, Async, lAsyncTokens[lBatchIdx], lAsyncIndexes[lBatchIdx], e, lErrs, lErrDetails);
+        aTopic.RemoveByToken(lToken);
+        if lStateObj <> nil then
+          lStateObj.Leave;
+        Continue;
       end;
-      on e: Exception do
+
+      if lMode = Async then
       begin
-        for lBatchIdx := 0 to lAsyncCount - 1 do
+        lBox := TInvokeBox<t>.Acquire;
+        lBox.Topic := aTopic;
+        lBox.Handler := lHandler;
+        lBox.Value := aValue;
+        lBox.Token := lToken;
+        lBox.StateObj := lStateObj;
+        if lAsyncCount = lAsyncCapacity then
         begin
-          lStateObj := lAsyncBoxes[lBatchIdx].StateObj;
-          lAsyncBoxes[lBatchIdx].ReleaseToPool;
+          Inc(lAsyncCapacity, 16);
+          SetLength(lAsyncBoxes, lAsyncCapacity);
+          SetLength(lAsyncTokens, lAsyncCapacity);
+          SetLength(lAsyncIndexes, lAsyncCapacity);
+        end;
+        lAsyncBoxes[lAsyncCount] := lBox;
+        lAsyncTokens[lAsyncCount] := lToken;
+        lAsyncIndexes[lAsyncCount] := i;
+        Inc(lAsyncCount);
+        Continue;
+      end;
+
+      try
+        lBox := TInvokeBox<t>.Acquire;
+        lBox.Topic := aTopic;
+        lBox.Handler := lHandler;
+        lBox.Value := aValue;
+        lBox.Token := lToken;
+        lBox.StateObj := lStateObj;
+        try
+          Dispatch(aTopicName, lMode, TInvokeBox<t>.MakeProc(lBox), nil);
+        except
+          lBox.ReleaseToPool;
           if lStateObj <> nil then
             lStateObj.Leave;
+          raise;
         end;
-        for lBatchIdx := 0 to lAsyncCount - 1 do
-          AddDispatchError(aTopicName, Async, lAsyncTokens[lBatchIdx], lAsyncIndexes[lBatchIdx], e, lErrs, lErrDetails);
+      except
+        on e: EmaxMainThreadRequired do
+        begin
+          if aRaiseMainThreadRequired then
+            raise;
+          AddDispatchError(aTopicName, lMode, lToken, i, e, lErrs, lErrDetails);
+        end;
+        on e: Exception do
+        begin
+          AddDispatchError(aTopicName, lMode, lToken, i, e, lErrs, lErrDetails);
+        end;
+      end;
+    end;
+
+    if lAsyncCount > 0 then
+    begin
+      SetLength(lAsyncBoxes, lAsyncCount);
+      SetLength(lAsyncTokens, lAsyncCount);
+      SetLength(lAsyncIndexes, lAsyncCount);
+      try
+        Dispatch(aTopicName, Async,
+          procedure
+          var
+            lIdx: integer;
+          begin
+            for lIdx := 0 to High(lAsyncBoxes) do
+              try
+                InvokeWithTrace(aTopicName, Async, TInvokeBox<t>.MakeProc(lAsyncBoxes[lIdx]));
+              except
+                on e: Exception do
+                  if Assigned(gAsyncError) then
+                    gAsyncError(aTopicName, e);
+              end;
+          end, nil);
+      except
+        on e: EmaxMainThreadRequired do
+        begin
+          for lBatchIdx := 0 to lAsyncCount - 1 do
+          begin
+            lStateObj := lAsyncBoxes[lBatchIdx].StateObj;
+            lAsyncBoxes[lBatchIdx].ReleaseToPool;
+            if lStateObj <> nil then
+              lStateObj.Leave;
+          end;
+          if aRaiseMainThreadRequired then
+            raise;
+          for lBatchIdx := 0 to lAsyncCount - 1 do
+            AddDispatchError(aTopicName, Async, lAsyncTokens[lBatchIdx], lAsyncIndexes[lBatchIdx], e, lErrs, lErrDetails);
+        end;
+        on e: Exception do
+        begin
+          for lBatchIdx := 0 to lAsyncCount - 1 do
+          begin
+            lStateObj := lAsyncBoxes[lBatchIdx].StateObj;
+            lAsyncBoxes[lBatchIdx].ReleaseToPool;
+            if lStateObj <> nil then
+              lStateObj.Leave;
+          end;
+          for lBatchIdx := 0 to lAsyncCount - 1 do
+            AddDispatchError(aTopicName, Async, lAsyncTokens[lBatchIdx], lAsyncIndexes[lBatchIdx], e, lErrs, lErrDetails);
+        end;
       end;
     end;
   end;
