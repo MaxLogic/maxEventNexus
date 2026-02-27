@@ -160,6 +160,8 @@ type
   published
     procedure StickyAndCoalesceNamed;
     procedure QueuePolicyAndMetricsNamed;
+    procedure TryPostNamedNoTopicReturnsTrueWithoutCounters;
+    procedure TryPostNamedDeliversWhenSubscriberExists;
   end;
 
   TNamedPostThread = class(TThread)
@@ -3223,6 +3225,69 @@ begin
   CheckEquals(3, lStats.PostsTotal);
   CheckEquals(2, lStats.DeliveredTotal);
   CheckEquals(1, lStats.DroppedTotal);
+end;
+
+procedure TTestNamedTopics.TryPostNamedNoTopicReturnsTrueWithoutCounters;
+var
+  lBus: ImaxBus;
+  lMetrics: ImaxBusMetrics;
+  lStats: TmaxTopicStats;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lMetrics := lBus as ImaxBusMetrics;
+
+  Check(lBus.TryPostNamed('__trypost_named_missing__'));
+  lStats := lMetrics.GetTotals;
+  CheckEquals(0, lStats.PostsTotal);
+  CheckEquals(0, lStats.DeliveredTotal);
+  CheckEquals(0, lStats.DroppedTotal);
+  CheckEquals(0, lStats.ExceptionsTotal);
+end;
+
+procedure TTestNamedTopics.TryPostNamedDeliversWhenSubscriberExists;
+var
+  lBus: ImaxBus;
+  lMetrics: ImaxBusMetrics;
+  lSub: ImaxSubscription;
+  lStats: TmaxTopicStats;
+  lName: TmaxString;
+  lDelivered: integer;
+
+  {$IFDEF max_FPC}
+  procedure Handler;
+  begin
+    Inc(lDelivered);
+  end;
+  {$ENDIF}
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lName := 'trypost.named.deliver';
+  lMetrics := lBus as ImaxBusMetrics;
+  lSub := nil;
+  lDelivered := 0;
+  try
+    {$IFDEF max_FPC}
+    lSub := lBus.SubscribeNamed(lName, @Handler, TmaxDelivery.Posting);
+    {$ELSE}
+    lSub := lBus.SubscribeNamed(lName,
+      procedure
+      begin
+        Inc(lDelivered);
+      end,
+      TmaxDelivery.Posting);
+    {$ENDIF}
+
+    Check(lBus.TryPostNamed(lName));
+    CheckEquals(1, lDelivered);
+    lStats := lMetrics.GetStatsNamed(lName);
+    CheckEquals(1, lStats.PostsTotal);
+    CheckEquals(1, lStats.DeliveredTotal);
+    CheckEquals(0, lStats.DroppedTotal);
+  finally
+    lSub := nil;
+  end;
 end;
 
 { TTestQueuePolicy }
