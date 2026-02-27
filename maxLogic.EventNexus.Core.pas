@@ -319,6 +319,7 @@ type
     Generation: UInt32;
     StateRef: Pointer;
     class function Create(const aObj: TObject): TmaxWeakTarget; static;
+    class function CreateStrong(const aObj: TObject): TmaxWeakTarget; static;
     function Matches(const aObj: TObject): boolean;
     function IsAlive: boolean;
   end;
@@ -382,7 +383,8 @@ type
     procedure PruneDeadLocked;
   public
     constructor Create;
-    function Add(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery; out aState: ImaxSubscriptionState; const aTarget: TObject = nil): TmaxSubscriptionToken;
+    function Add(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery; out aState: ImaxSubscriptionState;
+      const aTarget: TObject = nil; aTrackWeakTarget: boolean = True): TmaxSubscriptionToken;
     procedure RemoveByToken(aToken: TmaxSubscriptionToken);
     function Snapshot: TArray<TTypedSubscriber<t>>;
     function SnapshotAndTryBeginDirectDispatch(out aSubs: TArray<TTypedSubscriber<t>>): boolean;
@@ -498,6 +500,12 @@ type
             const aEvent: t);
           procedure DispatchTypedSubscribers<t>(const aTopicName: TmaxString; const aTopic: TTypedTopic<t>;
             const aSubs: TArray<TTypedSubscriber<t>>; const aValue: t; aRaiseMainThreadRequired: boolean);
+          function SubscribeTypedObjInternal<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery;
+            aTrackWeakTarget: boolean): ImaxSubscription;
+          function SubscribeNamedOfObjInternal<t>(const aName: TmaxString; const aHandler: TmaxObjProcOf<t>;
+            aMode: TmaxDelivery; aTrackWeakTarget: boolean): ImaxSubscription;
+          function SubscribeGuidOfObjInternal<t: IInterface>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery;
+            aTrackWeakTarget: boolean): ImaxSubscription;
           class function DelayMsToUs(aDelayMs: Cardinal): integer; static;
           function ScheduleDelayedPost(const aPostProc: TmaxProc; aDelayMs: Cardinal): ImaxDelayedPost;
 			    procedure SetAsyncScheduler(const aAsync: IEventNexusScheduler);
@@ -517,6 +525,7 @@ type
 	    procedure SetQueuePresetGuid(const aGuid: TGuid; aPreset: TmaxQueuePreset);
 	    function Subscribe<t>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
 	    function Subscribe<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
+    function SubscribeStrong<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
 	    procedure Post<t>(const aEvent: t);
 	    function TryPost<t>(const aEvent: t): boolean; overload;
     function PostResult<t>(const aEvent: t): TmaxPostResult; overload;
@@ -531,6 +540,8 @@ type
 
     function SubscribeNamedOf<t>(const aName: TmaxString; const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
     function SubscribeNamedOf<t>(const aName: TmaxString; const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
+    function SubscribeNamedOfStrong<t>(const aName: TmaxString; const aHandler: TmaxObjProcOf<t>;
+      aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
     procedure PostNamedOf<t>(const aName: TmaxString; const aEvent: t);
     function TryPostNamedOf<t>(const aName: TmaxString; const aEvent: t): boolean; overload;
     function PostResultNamedOf<t>(const aName: TmaxString; const aEvent: t): TmaxPostResult; overload;
@@ -540,6 +551,8 @@ type
 
     function SubscribeGuidOf<t: IInterface>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
     function SubscribeGuidOf<t: IInterface>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
+    function SubscribeGuidOfStrong<t: IInterface>(const aHandler: TmaxObjProcOf<t>;
+      aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
     procedure PostGuidOf<t: IInterface>(const aEvent: t);
     function TryPostGuidOf<t: IInterface>(const aEvent: t): boolean; overload;
     function PostResultGuidOf<t: IInterface>(const aEvent: t): TmaxPostResult; overload;
@@ -1390,6 +1403,13 @@ begin
     Result.Generation := 0;
 end;
 
+class function TmaxWeakTarget.CreateStrong(const aObj: TObject): TmaxWeakTarget;
+begin
+  Result.Raw := aObj;
+  Result.Generation := 0;
+  Result.StateRef := nil;
+end;
+
 function TmaxWeakTarget.Matches(const aObj: TObject): boolean;
 begin
   Result := (Raw <> nil) and (Raw = aObj);
@@ -2218,7 +2238,8 @@ begin
   Inc(fSubsVersion);
 end;
 
-function TTypedTopic<t>.Add(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery; out aState: ImaxSubscriptionState; const aTarget: TObject = nil): TmaxSubscriptionToken;
+function TTypedTopic<t>.Add(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery; out aState: ImaxSubscriptionState;
+  const aTarget: TObject = nil; aTrackWeakTarget: boolean = True): TmaxSubscriptionToken;
 var
   lNew: TArray<TTypedSubscriber<t>>;
   lSub: TTypedSubscriber<t>;
@@ -2232,7 +2253,10 @@ begin
     lSub.Handler := aHandler;
     lSub.Mode := aMode;
     lSub.Token := fNextToken;
-    lSub.Target := TmaxWeakTarget.Create(aTarget); // store weak target when available (object-method overload)
+    if aTrackWeakTarget then
+      lSub.Target := TmaxWeakTarget.Create(aTarget) // store weak target when available (object-method overload)
+    else
+      lSub.Target := TmaxWeakTarget.CreateStrong(aTarget);
     lStateObj := TmaxSubscriptionState.Create;
     lSub.State := lStateObj;
     lSub.StateObj := lStateObj;
@@ -4526,7 +4550,8 @@ begin
   Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
 end;
 
-function TmaxBus.Subscribe<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
+function TmaxBus.SubscribeTypedObjInternal<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery;
+  aTrackWeakTarget: boolean): ImaxSubscription;
 var
   lKey: PTypeInfo;
   lObj: TmaxTopicBase;
@@ -4584,7 +4609,7 @@ begin
   if lCreated then
     PublishMetricTypedTopic(lKey, lTopic);
 
-  lToken := lTopic.Add(lWrapper, aMode, lState, lTarget);
+  lToken := lTopic.Add(lWrapper, aMode, lState, lTarget, aTrackWeakTarget);
   lSend := lTopic.TryGetCached(lLast);
   if lSend then
     lTopic.Enqueue(
@@ -4629,6 +4654,16 @@ begin
         end;
       end);
   Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
+end;
+
+function TmaxBus.Subscribe<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
+begin
+  Result := SubscribeTypedObjInternal<t>(aHandler, aMode, True);
+end;
+
+function TmaxBus.SubscribeStrong<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
+begin
+  Result := SubscribeTypedObjInternal<t>(aHandler, aMode, False);
 end;
 
 procedure TmaxBus.Post<t>(const aEvent: t);
@@ -5767,7 +5802,8 @@ var
   Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
 end;
 
-function TmaxBus.SubscribeNamedOf<t>(const aName: TmaxString; const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
+function TmaxBus.SubscribeNamedOfObjInternal<t>(const aName: TmaxString; const aHandler: TmaxObjProcOf<t>;
+  aMode: TmaxDelivery; aTrackWeakTarget: boolean): ImaxSubscription;
 var
   lTypeDict: TmaxTypeTopicDict;
   lObj: TmaxTopicBase;
@@ -5854,7 +5890,7 @@ var
   if lCreated then
     PublishMetricNamedTypedTopic(lNameKey, lKey, lTopic);
 
-  lToken := lTopic.Add(lWrapper, aMode, lState, lTarget);
+  lToken := lTopic.Add(lWrapper, aMode, lState, lTarget, aTrackWeakTarget);
   lSend := lTopic.TryGetCached(lLast);
   if lSend then
     lTopic.Enqueue(
@@ -5899,6 +5935,18 @@ var
         end;
       end);
   Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
+end;
+
+function TmaxBus.SubscribeNamedOf<t>(const aName: TmaxString; const aHandler: TmaxObjProcOf<t>;
+  aMode: TmaxDelivery): ImaxSubscription;
+begin
+  Result := SubscribeNamedOfObjInternal<t>(aName, aHandler, aMode, True);
+end;
+
+function TmaxBus.SubscribeNamedOfStrong<t>(const aName: TmaxString; const aHandler: TmaxObjProcOf<t>;
+  aMode: TmaxDelivery): ImaxSubscription;
+begin
+  Result := SubscribeNamedOfObjInternal<t>(aName, aHandler, aMode, False);
 end;
 
 procedure TmaxBus.PostNamedOf<t>(const aName: TmaxString; const aEvent: t);
@@ -6431,7 +6479,8 @@ begin
   Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
 end;
 
-function TmaxBus.SubscribeGuidOf<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
+function TmaxBus.SubscribeGuidOfObjInternal<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery;
+  aTrackWeakTarget: boolean): ImaxSubscription;
 var
   lKey: TGuid;
   lObj: TmaxTopicBase;
@@ -6491,7 +6540,7 @@ begin
   if lCreated then
     PublishMetricGuidTopic(lKey, lTopic);
 
-  lToken := lTopic.Add(lWrapper, aMode, lState, lTarget);
+  lToken := lTopic.Add(lWrapper, aMode, lState, lTarget, aTrackWeakTarget);
   lSend := lTopic.TryGetCached(lLast);
   if lSend then
     lTopic.Enqueue(
@@ -6536,6 +6585,16 @@ begin
         end;
       end);
   Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
+end;
+
+function TmaxBus.SubscribeGuidOf<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
+begin
+  Result := SubscribeGuidOfObjInternal<t>(aHandler, aMode, True);
+end;
+
+function TmaxBus.SubscribeGuidOfStrong<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
+begin
+  Result := SubscribeGuidOfObjInternal<t>(aHandler, aMode, False);
 end;
 
 procedure TmaxBus.PostGuidOf<t>(const aEvent: t);

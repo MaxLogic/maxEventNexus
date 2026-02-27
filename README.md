@@ -12,6 +12,7 @@
 - Added delayed posting APIs (`PostDelayed*`) with cancel/pending handle semantics.
 - Reduced static-analysis top debt again (`C101=20`, `C103=14`) with test-fixture refactors and no public API changes.
 - Hardened delayed-posting edge coverage: zero-delay dispatch/metrics/cancel semantics and deterministic long-delay pending/cancel behavior.
+- Added optional strong object-method subscriptions (`SubscribeStrong<T>`, `SubscribeNamedOfStrong<T>`, `SubscribeGuidOfStrong<T>`) for callers that guarantee subscriber lifetime and want to skip weak-liveness tracking overhead.
 
 EventNexus is a type-safe event bus for Delphi 12+ with typed, named, and GUID topic routing, delivery-mode control, sticky cache, coalescing, and queue policies.
 
