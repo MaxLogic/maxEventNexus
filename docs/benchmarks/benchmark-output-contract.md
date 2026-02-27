@@ -28,7 +28,7 @@ scenario,scheduler,delivery,consumers,events,runs,p50_us,p95_us,p99_us,avg_us,be
 Field notes:
 
 - `scenario`: `scheduler-compare` | `framework-compare`
-- `scheduler`: scheduler rows use `raw-thread` | `maxAsync` | `TTask`; framework rows use `EventNexus(maxAsync)` | `iPub` | `EventHorizon`
+- `scheduler`: scheduler rows use `raw-thread` | `maxAsync` | `TTask`; framework rows use `EventNexus(TTask-weak)` | `EventNexus(TTask-strong)` | `iPub` | `EventHorizon`
 - `delivery`: `posting` | `main` | `async` | `background`
 - `status`: `ok` or `failed`
 - `error`: non-empty only when `status=failed`

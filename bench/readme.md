@@ -39,7 +39,8 @@ Compares internal scheduler adapters under equivalent workloads and emits percen
 
 Also emits cross-library rows in the same CSV for:
 
-- `EventNexus(maxAsync)`
+- `EventNexus(TTask-weak)`
+- `EventNexus(TTask-strong)`
 - `iPub`
 - `EventHorizon`
 
