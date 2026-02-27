@@ -317,6 +317,7 @@ type
   TmaxWeakTarget = record
     Raw: TObject;
     Generation: UInt32;
+    StateRef: Pointer;
     class function Create(const aObj: TObject): TmaxWeakTarget; static;
     function Matches(const aObj: TObject): boolean;
     function IsAlive: boolean;
@@ -417,6 +418,7 @@ type
       class destructor Destroy;
       class function Acquire: TInvokeBox<T>; static;
       procedure ReleaseToPool;
+      class procedure Execute(const aBox: TInvokeBox<T>); static;
       class function MakeProc(const aBox: TInvokeBox<T>): TmaxProc; static;
     end;
 
@@ -458,6 +460,9 @@ type
         fGuidHotStamp: integer;
         fGuidHotKey: TGuid;
         fGuidHotTopic: TmaxTopicBase;
+        fTypeGuidHotStamp: integer;
+        fTypeGuidHotType: PTypeInfo;
+        fTypeGuidHotGuid: TGuid;
 			    fMainThreadId: TThreadID;
 			    class procedure AddDispatchError(const aTopic: TmaxString; aMode: TmaxDelivery; aToken: TmaxSubscriptionToken;
 			      aSubscriberIndex: integer; const aException: Exception; var aErrors: TmaxExceptionList;
@@ -473,6 +478,7 @@ type
           procedure UpdateTypedHotTopic(const aKey: PTypeInfo; const aTopic: TmaxTopicBase);
           function TryGetGuidHotTopic(const aKey: TGuid; out aTopic: TmaxTopicBase): boolean;
           procedure UpdateGuidHotTopic(const aKey: TGuid; const aTopic: TmaxTopicBase);
+          function GuidForType(const aTypeKey: PTypeInfo): TGuid;
 			    function AddNamedWildcard(const aPattern: TmaxString; const aPrefix: TmaxString; const aHandler: TmaxProc;
 			      aMode: TmaxDelivery; out aState: ImaxSubscriptionState): TmaxSubscriptionToken;
 			    procedure RemoveNamedWildcardByToken(aToken: TmaxSubscriptionToken);
@@ -685,9 +691,10 @@ var
 
 
 type
-  TDelphiWeakEntry = record
-    Generation: UInt32;
-    Alive: boolean;
+  PDelphiWeakState = ^TDelphiWeakState;
+  TDelphiWeakState = record
+    Generation: integer;
+    Alive: integer;
   end;
 
   TDelphiWeakRegistry = class
@@ -695,7 +702,7 @@ type
     type
       TFreeInstanceThunk = procedure(aSelf: TObject);
     var
-    fEntries: TDictionary<TObject, TDelphiWeakEntry>;
+    fEntries: TDictionary<TObject, PDelphiWeakState>;
     fHooks: TDictionary<TClass, Pointer>;
     fLock: TCriticalSection;
     function EnsureHook(const aObj: TObject): boolean;
@@ -704,8 +711,8 @@ type
   public
     constructor Create;
     destructor Destroy; override;
-    function Observe(const aObj: TObject): UInt32;
-    function IsAlive(const aObj: TObject; const aGeneration: UInt32): boolean;
+    function Observe(const aObj: TObject; out aStateRef: Pointer): UInt32;
+    function IsAlive(const aObj: TObject; const aGeneration: UInt32; const aStateRef: Pointer): boolean;
     class function Instance: TDelphiWeakRegistry; static;
   end;
 
@@ -734,7 +741,7 @@ begin
       lPtr := UIntPtr(aValue);
       Result := Integer(lPtr xor (lPtr shr 32));
     end);
-  fEntries := TDictionary<TObject, TDelphiWeakEntry>.Create(lObjComparer);
+  fEntries := TDictionary<TObject, PDelphiWeakState>.Create(lObjComparer);
 
   lClassComparer := TEqualityComparer<TClass>.Construct(
     function(const aLeft, aRight: TClass): Boolean
@@ -753,7 +760,12 @@ begin
 end;
 
 destructor TDelphiWeakRegistry.Destroy;
+var
+  lPair: TPair<TObject, PDelphiWeakState>;
 begin
+  for lPair in fEntries do
+    if lPair.Value <> nil then
+      Dispose(lPair.Value);
   fLock.Free;
   fEntries.Free;
   fHooks.Free;
@@ -828,7 +840,7 @@ end;
 
 function TDelphiWeakRegistry.PrepareFreeInstance(const aObj: TObject): Pointer;
 var
-  lEntry: TDelphiWeakEntry;
+  lState: PDelphiWeakState;
   lClass: TClass;
 begin
   Result := nil;
@@ -839,61 +851,75 @@ begin
     lClass := aObj.ClassType;
     if not fHooks.TryGetValue(lClass, Result) then
       Result := nil;
-    if fEntries.TryGetValue(aObj, lEntry) then
+    if fEntries.TryGetValue(aObj, lState) then
     begin
-      lEntry.Alive := False;
-      if lEntry.Generation = High(UInt32) then
-        lEntry.Generation := 1
+      lState^.Alive := 0;
+      if lState^.Generation = High(integer) then
+        lState^.Generation := 1
       else
-        Inc(lEntry.Generation);
-      fEntries.AddOrSetValue(aObj, lEntry);
+        Inc(lState^.Generation);
     end
     else
     begin
-      lEntry.Generation := 1;
-      lEntry.Alive := False;
-      fEntries.Add(aObj, lEntry);
+      New(lState);
+      lState^.Generation := 1;
+      lState^.Alive := 0;
+      fEntries.Add(aObj, lState);
     end;
   finally
     fLock.Leave;
   end;
 end;
 
-function TDelphiWeakRegistry.Observe(const aObj: TObject): UInt32;
+function TDelphiWeakRegistry.Observe(const aObj: TObject; out aStateRef: Pointer): UInt32;
 var
-  lEntry: TDelphiWeakEntry;
+  lState: PDelphiWeakState;
 begin
+  aStateRef := nil;
   if aObj = nil then
     exit(0);
   if not EnsureHook(aObj) then
     exit(0);
   fLock.Enter;
   try
-    if fEntries.TryGetValue(aObj, lEntry) then
+    if fEntries.TryGetValue(aObj, lState) then
     begin
-      lEntry.Alive := True;
-      fEntries.AddOrSetValue(aObj, lEntry);
-      exit(lEntry.Generation);
+      lState^.Alive := 1;
+      aStateRef := lState;
+      exit(UInt32(lState^.Generation));
     end;
-    lEntry.Generation := 1;
-    lEntry.Alive := True;
-    fEntries.Add(aObj, lEntry);
-    Result := lEntry.Generation;
+    New(lState);
+    lState^.Generation := 1;
+    lState^.Alive := 1;
+    fEntries.Add(aObj, lState);
+    aStateRef := lState;
+    Result := UInt32(lState^.Generation);
   finally
     fLock.Leave;
   end;
 end;
 
-function TDelphiWeakRegistry.IsAlive(const aObj: TObject; const aGeneration: UInt32): boolean;
+function TDelphiWeakRegistry.IsAlive(const aObj: TObject; const aGeneration: UInt32;
+  const aStateRef: Pointer): boolean;
 var
-  lEntry: TDelphiWeakEntry;
+  lState: PDelphiWeakState;
+  lGeneration: UInt32;
 begin
   if (aObj = nil) or (aGeneration = 0) then
     exit(True);
+  if aStateRef <> nil then
+  begin
+    lState := PDelphiWeakState(aStateRef);
+    if TInterlocked.CompareExchange(lState^.Alive, 0, 0) = 0 then
+      exit(False);
+    lGeneration := UInt32(TInterlocked.CompareExchange(lState^.Generation, 0, 0));
+    exit(lGeneration = aGeneration);
+  end;
+
   fLock.Enter;
   try
-    if fEntries.TryGetValue(aObj, lEntry) then
-      Result := lEntry.Alive and (lEntry.Generation = aGeneration)
+    if fEntries.TryGetValue(aObj, lState) then
+      Result := (lState^.Alive <> 0) and (UInt32(lState^.Generation) = aGeneration)
     else
       Result := False;
   finally
@@ -1305,6 +1331,30 @@ begin
   TInterlocked.Increment(fGuidHotStamp);
 end;
 
+function TmaxBus.GuidForType(const aTypeKey: PTypeInfo): TGuid;
+var
+  lStampBefore: integer;
+  lStampAfter: integer;
+  lCachedType: PTypeInfo;
+  lCachedGuid: TGuid;
+begin
+  lStampBefore := TInterlocked.CompareExchange(fTypeGuidHotStamp, 0, 0);
+  if (lStampBefore and 1) = 0 then
+  begin
+    lCachedType := fTypeGuidHotType;
+    lCachedGuid := fTypeGuidHotGuid;
+    lStampAfter := TInterlocked.CompareExchange(fTypeGuidHotStamp, 0, 0);
+    if (lStampAfter = lStampBefore) and (lCachedType = aTypeKey) then
+      Exit(lCachedGuid);
+  end;
+
+  Result := GetTypeData(aTypeKey)^.Guid;
+  TInterlocked.Increment(fTypeGuidHotStamp);
+  fTypeGuidHotType := aTypeKey;
+  fTypeGuidHotGuid := Result;
+  TInterlocked.Increment(fTypeGuidHotStamp);
+end;
+
 { TmaxAutoBridgeEntry }
 
 constructor TmaxAutoBridgeEntry.Create(aKind: TmaxAutoBridgeKind; aToken: TmaxSubscriptionToken;
@@ -1330,8 +1380,9 @@ end;
 class function TmaxWeakTarget.Create(const aObj: TObject): TmaxWeakTarget;
 begin
   Result.Raw := aObj;
+  Result.StateRef := nil;
   if aObj <> nil then
-    Result.Generation := TDelphiWeakRegistry.Instance.Observe(aObj)
+    Result.Generation := TDelphiWeakRegistry.Instance.Observe(aObj, Result.StateRef)
   else
     Result.Generation := 0;
 end;
@@ -1345,7 +1396,7 @@ function TmaxWeakTarget.IsAlive: boolean;
 begin
   if (Raw = nil) or (Generation = 0) then
     exit(True);
-  Result := TDelphiWeakRegistry.Instance.IsAlive(Raw, Generation);
+  Result := TDelphiWeakRegistry.Instance.IsAlive(Raw, Generation, StateRef);
 end;
 
 { TmaxSubscriptionState }
@@ -3088,43 +3139,48 @@ begin
   PushPool(Self);
 end;
 
+class procedure TInvokeBox<T>.Execute(const aBox: TInvokeBox<T>);
+var
+  lHandler: TmaxProcOf<T>;
+  lValue: T;
+  lTopic: TTypedTopic<T>;
+  lStateObj: TmaxSubscriptionState;
+  lToken: TmaxSubscriptionToken;
+begin
+  lHandler := aBox.Handler;
+  lValue := aBox.Value;
+  lTopic := aBox.Topic;
+  lStateObj := aBox.StateObj;
+  lToken := aBox.Token;
+  try
+    try
+      lHandler(lValue);
+      lTopic.AddDelivered(1);
+    except
+      on e: Exception do
+      begin
+        lTopic.AddException;
+        if (e is EAccessViolation) or (e is EInvalidPointer) then
+        begin
+          lTopic.RemoveByToken(lToken);
+          Exit;
+        end;
+        raise;
+      end;
+    end;
+  finally
+    if lStateObj <> nil then
+      lStateObj.Leave;
+    aBox.ReleaseToPool;
+  end;
+end;
+
 class function TInvokeBox<T>.MakeProc(const aBox: TInvokeBox<T>): TmaxProc;
 begin
   Result :=
     procedure
-    var
-      lHandler: TmaxProcOf<T>;
-      lValue: T;
-      lTopic: TTypedTopic<T>;
-      lStateObj: TmaxSubscriptionState;
-      lToken: TmaxSubscriptionToken;
     begin
-      lHandler := aBox.Handler;
-      lValue := aBox.Value;
-      lTopic := aBox.Topic;
-      lStateObj := aBox.StateObj;
-      lToken := aBox.Token;
-      try
-        try
-          lHandler(lValue);
-          lTopic.AddDelivered(1);
-        except
-          on e: Exception do
-          begin
-            lTopic.AddException;
-            if (e is EAccessViolation) or (e is EInvalidPointer) then
-            begin
-              lTopic.RemoveByToken(lToken);
-              Exit;
-            end;
-            raise;
-          end;
-        end;
-      finally
-        if lStateObj <> nil then
-          lStateObj.Leave;
-        aBox.ReleaseToPool;
-      end;
+      Execute(aBox);
     end;
 end;
 
@@ -3603,6 +3659,7 @@ procedure TmaxBus.DispatchTypedSubscribers<t>(const aTopicName: TmaxString; cons
   const aSubs: TArray<TTypedSubscriber<t>>; const aValue: t; aRaiseMainThreadRequired: boolean);
 var
   i: Integer;
+  lBatchIdx: integer;
   lSub: TTypedSubscriber<t>;
   lHandler: TmaxProcOf<t>;
   lMode: TmaxDelivery;
@@ -3612,10 +3669,20 @@ var
   lErrDetails: TArray<TmaxDispatchErrorDetail>;
   lBox: TInvokeBox<t>;
   lDeliveredCount: integer;
+  lAsyncBoxes: TArray<TInvokeBox<t>>;
+  lAsyncTokens: TArray<TmaxSubscriptionToken>;
+  lAsyncIndexes: TArray<integer>;
+  lAsyncCount: integer;
+  lAsyncCapacity: integer;
 begin
   lErrs := nil;
   lErrDetails := nil;
   lDeliveredCount := 0;
+  lAsyncCount := 0;
+  lAsyncCapacity := 0;
+  SetLength(lAsyncBoxes, 0);
+  SetLength(lAsyncTokens, 0);
+  SetLength(lAsyncIndexes, 0);
 
   // Pass 1: inline subscribers (Posting).
   for i := 0 to High(aSubs) do
@@ -3695,6 +3762,28 @@ begin
       Continue;
     end;
 
+    if lMode = Async then
+    begin
+      lBox := TInvokeBox<t>.Acquire;
+      lBox.Topic := aTopic;
+      lBox.Handler := lHandler;
+      lBox.Value := aValue;
+      lBox.Token := lToken;
+      lBox.StateObj := lStateObj;
+      if lAsyncCount = lAsyncCapacity then
+      begin
+        Inc(lAsyncCapacity, 16);
+        SetLength(lAsyncBoxes, lAsyncCapacity);
+        SetLength(lAsyncTokens, lAsyncCapacity);
+        SetLength(lAsyncIndexes, lAsyncCapacity);
+      end;
+      lAsyncBoxes[lAsyncCount] := lBox;
+      lAsyncTokens[lAsyncCount] := lToken;
+      lAsyncIndexes[lAsyncCount] := i;
+      Inc(lAsyncCount);
+      Continue;
+    end;
+
     try
       lBox := TInvokeBox<t>.Acquire;
       lBox.Topic := aTopic;
@@ -3720,6 +3809,56 @@ begin
       on e: Exception do
       begin
         AddDispatchError(aTopicName, lMode, lToken, i, e, lErrs, lErrDetails);
+      end;
+    end;
+  end;
+
+  if lAsyncCount > 0 then
+  begin
+    SetLength(lAsyncBoxes, lAsyncCount);
+    SetLength(lAsyncTokens, lAsyncCount);
+    SetLength(lAsyncIndexes, lAsyncCount);
+    try
+      Dispatch(aTopicName, Async,
+        procedure
+        var
+          lIdx: integer;
+        begin
+          for lIdx := 0 to High(lAsyncBoxes) do
+            try
+              InvokeWithTrace(aTopicName, Async, TInvokeBox<t>.MakeProc(lAsyncBoxes[lIdx]));
+            except
+              on e: Exception do
+                if Assigned(gAsyncError) then
+                  gAsyncError(aTopicName, e);
+            end;
+        end, nil);
+    except
+      on e: EmaxMainThreadRequired do
+      begin
+        for lBatchIdx := 0 to lAsyncCount - 1 do
+        begin
+          lStateObj := lAsyncBoxes[lBatchIdx].StateObj;
+          lAsyncBoxes[lBatchIdx].ReleaseToPool;
+          if lStateObj <> nil then
+            lStateObj.Leave;
+        end;
+        if aRaiseMainThreadRequired then
+          raise;
+        for lBatchIdx := 0 to lAsyncCount - 1 do
+          AddDispatchError(aTopicName, Async, lAsyncTokens[lBatchIdx], lAsyncIndexes[lBatchIdx], e, lErrs, lErrDetails);
+      end;
+      on e: Exception do
+      begin
+        for lBatchIdx := 0 to lAsyncCount - 1 do
+        begin
+          lStateObj := lAsyncBoxes[lBatchIdx].StateObj;
+          lAsyncBoxes[lBatchIdx].ReleaseToPool;
+          if lStateObj <> nil then
+            lStateObj.Leave;
+        end;
+        for lBatchIdx := 0 to lAsyncCount - 1 do
+          AddDispatchError(aTopicName, Async, lAsyncTokens[lBatchIdx], lAsyncIndexes[lBatchIdx], e, lErrs, lErrDetails);
       end;
     end;
   end;
@@ -3864,6 +4003,9 @@ begin
   fGuidHotStamp := 0;
   fGuidHotKey := cGuidNull;
   fGuidHotTopic := nil;
+  fTypeGuidHotStamp := 0;
+  fTypeGuidHotType := nil;
+  fTypeGuidHotGuid := cGuidNull;
 		fMainThreadId := TThread.CurrentThread.ThreadID;
 end;
 
@@ -6121,7 +6263,7 @@ var
   lCreated: boolean;
 begin
   lTypeKey := TypeInfo(t);
-  lKey := GetTypeData(lTypeKey)^.Guid;
+  lKey := GuidForType(lTypeKey);
   lMetric := GuidMetricName(lKey);
   fConfigLock.BeginWrite;
   try
@@ -6221,7 +6363,7 @@ var
   lCreated: boolean;
 begin
   lTypeKey := TypeInfo(t);
-  lKey := GetTypeData(lTypeKey)^.Guid;
+  lKey := GuidForType(lTypeKey);
   lMetric := GuidMetricName(lKey);
   lTarget := TObject(TMethod(aHandler).Data);
   lWrapper :=
@@ -6329,7 +6471,7 @@ begin
   lCreated := False;
 
   lTypeKey := TypeInfo(t);
-  lKey := GetTypeData(lTypeKey)^.Guid;
+  lKey := GuidForType(lTypeKey);
   lMetric := '';
   lAutoSubs := SnapshotAutoBridgeGuid(lKey);
   lTopic := nil;
@@ -6483,7 +6625,7 @@ begin
 
   Result := True;
   lTypeKey := TypeInfo(t);
-  lKey := GetTypeData(lTypeKey)^.Guid;
+  lKey := GuidForType(lTypeKey);
   lMetric := '';
   lAutoSubs := SnapshotAutoBridgeGuid(lKey);
 
@@ -6635,7 +6777,7 @@ var
   lWasProcessing: boolean;
 begin
   lTypeKey := TypeInfo(t);
-  lKey := GetTypeData(lTypeKey)^.Guid;
+  lKey := GuidForType(lTypeKey);
   lTopic := nil;
   lQueueDepth := 0;
   lWasProcessing := False;
@@ -6759,7 +6901,7 @@ begin
     TMonitor.Exit(fNamedTypedLock);
   end;
 
-  lGuid := GetTypeData(lKey)^.Guid;
+  lGuid := GuidForType(lKey);
   TMonitor.Enter(fGuidLock);
   try
     if fGuid.TryGetValue(lGuid, lObj) then
@@ -6940,7 +7082,7 @@ var
   lTypeKey: PTypeInfo;
 begin
   lTypeKey := TypeInfo(t);
-  lGuid := GetTypeData(lTypeKey)^.Guid;
+  lGuid := GuidForType(lTypeKey);
   lMetric := GuidMetricName(lGuid);
   fConfigLock.BeginWrite;
   try
@@ -7124,7 +7266,7 @@ begin
     end;
 
     for lKvStickyType in lStickyTypes do
-      lStickyGuids.AddOrSetValue(GetTypeData(lKvStickyType.Key)^.Guid, True);
+      lStickyGuids.AddOrSetValue(GuidForType(lKvStickyType.Key), True);
 
     TMonitor.Enter(fTypedLock);
     try
@@ -7302,7 +7444,7 @@ var
   lCreated: boolean;
 begin
   lTypeKey := TypeInfo(t);
-  lGuid := GetTypeData(lTypeKey)^.Guid;
+  lGuid := GuidForType(lTypeKey);
   lMetric := GuidMetricName(lGuid);
   lCreated := False;
   TMonitor.Enter(fGuidLock);
@@ -7394,7 +7536,7 @@ var
   lPreset: TmaxQueuePreset;
 begin
   lTypeKey := TypeInfo(t);
-  lGuid := GetTypeData(lTypeKey)^.Guid;
+  lGuid := GuidForType(lTypeKey);
   TMonitor.Enter(fGuidLock);
   try
     lFound := fGuid.TryGetValue(lGuid, lObj);
@@ -7439,7 +7581,7 @@ var
   lIndex: ImaxMetricsIndex;
 begin
   lTypeKey := TypeInfo(t);
-  lGuid := GetTypeData(lTypeKey)^.Guid;
+  lGuid := GuidForType(lTypeKey);
   fMetricsLock.BeginRead;
   try
     lIndex := fMetricsIndex;
