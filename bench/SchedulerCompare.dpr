@@ -112,6 +112,8 @@ type
     MetricsReadsPerReader: Int64;
     QueueMaxDepth: Integer;
     MaxInFlight: Integer;
+    SkipSchedulers: Boolean;
+    FrameworkFilter: string;
   end;
 
   TRunSample = record
@@ -363,6 +365,42 @@ begin
   raise Exception.CreateFmt('Invalid delivery mode "%s". Use posting|main|async|background.', [aValue]);
 end;
 
+function IsAllFrameworksFilter(const aValue: string): Boolean;
+begin
+  Result := (Trim(aValue) = '') or SameText(aValue, 'all');
+end;
+
+function IsFrameworkSelected(const aFilter: string; const aFrameworkName: string): Boolean;
+begin
+  if IsAllFrameworksFilter(aFilter) then
+    Exit(True);
+  if SameText(aFilter, aFrameworkName) then
+    Exit(True);
+
+  if SameText(aFrameworkName, 'EventNexus(TTask-weak)') then
+    Exit(SameText(aFilter, 'weak') or SameText(aFilter, 'eventnexus-weak'));
+  if SameText(aFrameworkName, 'EventNexus(TTask-strong)') then
+    Exit(SameText(aFilter, 'strong') or SameText(aFilter, 'eventnexus-strong'));
+  if SameText(aFrameworkName, 'iPub') then
+    Exit(SameText(aFilter, 'ipub'));
+  if SameText(aFrameworkName, 'EventHorizon') then
+    Exit(SameText(aFilter, 'eventhorizon') or SameText(aFilter, 'horizon'));
+
+  Result := False;
+end;
+
+function AnyFrameworkSelected(const aFilter: string; const aEntries: array of TFrameworkEntry): Boolean;
+var
+  lIdx: Integer;
+begin
+  for lIdx := Low(aEntries) to High(aEntries) do
+  begin
+    if IsFrameworkSelected(aFilter, aEntries[lIdx].Name) then
+      Exit(True);
+  end;
+  Result := False;
+end;
+
 procedure PrintUsage;
 begin
   Writeln('Usage: SchedulerCompare [options]');
@@ -374,6 +412,8 @@ begin
   Writeln('  --metrics-reads=<n>     max reads per reader, 0=unbounded until run ends (default: 0)');
   Writeln('  --queue-max-depth=<n>   typed-topic queue depth for benchmark topic, 0=unbounded (default: 64)');
   Writeln('  --max-inflight=<n>      max in-flight deliveries while posting, 0=unbounded (default: 256)');
+  Writeln('  --skip-schedulers       skip scheduler rows and run framework rows only');
+  Writeln('  --framework=<name>      all|weak|strong|ipub|eventhorizon or exact framework label');
   Writeln('  --csv=<path>            write summary CSV to file path');
 end;
 
@@ -391,6 +431,8 @@ begin
   aCfg.MetricsReadsPerReader := 0;
   aCfg.QueueMaxDepth := 64;
   aCfg.MaxInFlight := 256;
+  aCfg.SkipSchedulers := False;
+  aCfg.FrameworkFilter := 'all';
 
   for i := 1 to ParamCount do
   begin
@@ -416,6 +458,10 @@ begin
       aCfg.QueueMaxDepth := StrToIntDef(Copy(lArg, Length('--queue-max-depth=') + 1, MaxInt), aCfg.QueueMaxDepth)
     else if StartsText('--max-inflight=', lArg) then
       aCfg.MaxInFlight := StrToIntDef(Copy(lArg, Length('--max-inflight=') + 1, MaxInt), aCfg.MaxInFlight)
+    else if SameText(lArg, '--skip-schedulers') then
+      aCfg.SkipSchedulers := True
+    else if StartsText('--framework=', lArg) then
+      aCfg.FrameworkFilter := Trim(Copy(lArg, Length('--framework=') + 1, MaxInt))
     else if StartsText('--csv=', lArg) then
       aCfg.CsvPath := Copy(lArg, Length('--csv=') + 1, MaxInt)
     else
@@ -436,6 +482,8 @@ begin
     raise Exception.Create('queue-max-depth must be >= 0');
   if aCfg.MaxInFlight < 0 then
     raise Exception.Create('max-inflight must be >= 0');
+  if aCfg.FrameworkFilter = '' then
+    raise Exception.Create('framework must not be empty (use all|weak|strong|ipub|eventhorizon)');
 end;
 
 function WaitForSignal(const aEvent: TEvent; aTimeoutMs: Cardinal): Boolean;
@@ -864,6 +912,7 @@ var
   lAvgUs, lBestUs, lWorstUs: Int64;
   lAvgThroughput, lTotalMetricReads, lAvgMetricReadsPerSec: Int64;
   lCsv: TStringList;
+  lFrameworkRan: Boolean;
 begin
   ParseArgs(lCfg);
 
@@ -884,6 +933,11 @@ begin
   lFrameworkEntries[2].Factory := CreateIpubFrameworkBus;
   lFrameworkEntries[3].Name := 'EventHorizon';
   lFrameworkEntries[3].Factory := CreateEventHorizonFrameworkBus;
+  if not AnyFrameworkSelected(lCfg.FrameworkFilter, lFrameworkEntries) then
+  begin
+    raise Exception.CreateFmt('Unknown framework "%s". Use all|weak|strong|ipub|eventhorizon or exact framework name.',
+      [lCfg.FrameworkFilter]);
+  end;
 
   lCsv := nil;
   if lCfg.CsvPath <> '' then
@@ -902,47 +956,56 @@ begin
     Writeln('Max in-flight deliveries: ', lCfg.MaxInFlight);
     Writeln;
 
-    for lIdx := Low(lEntries) to High(lEntries) do
+    if lCfg.SkipSchedulers then
     begin
-      lRunCfg := lCfg;
-      if SameText(lEntries[lIdx].Name, 'maxAsync') and (lRunCfg.Delivery <> TmaxDelivery.Posting) and
-        (lRunCfg.Runs > 1) then
+      Writeln('Scheduler comparison skipped (--skip-schedulers).');
+      Writeln;
+    end else begin
+      for lIdx := Low(lEntries) to High(lEntries) do
       begin
-        Writeln('Note: maxAsync async profile is capped to 1 run in-process to avoid cumulative memory pressure.');
-        lRunCfg.Runs := 1;
-      end;
-      try
-        BenchmarkScheduler(lEntries[lIdx], lRunCfg, lSamples);
-        SummarizeSamples(lSamples, lP50Us, lP95Us, lP99Us, lAvgUs, lBestUs, lWorstUs,
-          lAvgThroughput, lTotalMetricReads, lAvgMetricReadsPerSec);
-
-        Writeln('--- ', lEntries[lIdx].Name, ' ---');
-        Writeln('p50 us: ', lP50Us);
-        Writeln('p95 us: ', lP95Us);
-        Writeln('p99 us: ', lP99Us);
-        Writeln('avg us: ', lAvgUs, '  best us: ', lBestUs, '  worst us: ', lWorstUs);
-        Writeln('avg throughput evt/s: ', lAvgThroughput);
-        Writeln('total metric reads: ', lTotalMetricReads, '  avg metric reads/s: ', lAvgMetricReadsPerSec);
-        Writeln;
-
-        if lCsv <> nil then
-          AppendCsvSummaryRow(lCsv, 'scheduler-compare', lEntries[lIdx].Name, lRunCfg, lP50Us, lP95Us,
-            lP99Us, lAvgUs, lBestUs,
-            lWorstUs, lAvgThroughput, lTotalMetricReads, lAvgMetricReadsPerSec);
-      except
-        on E: Exception do
+        lRunCfg := lCfg;
+        if SameText(lEntries[lIdx].Name, 'maxAsync') and (lRunCfg.Delivery <> TmaxDelivery.Posting) and
+          (lRunCfg.Runs > 1) then
         begin
+          Writeln('Note: maxAsync async profile is capped to 1 run in-process to avoid cumulative memory pressure.');
+          lRunCfg.Runs := 1;
+        end;
+        try
+          BenchmarkScheduler(lEntries[lIdx], lRunCfg, lSamples);
+          SummarizeSamples(lSamples, lP50Us, lP95Us, lP99Us, lAvgUs, lBestUs, lWorstUs,
+            lAvgThroughput, lTotalMetricReads, lAvgMetricReadsPerSec);
+
           Writeln('--- ', lEntries[lIdx].Name, ' ---');
-          Writeln('FAILED: ', E.ClassName, ': ', E.Message);
+          Writeln('p50 us: ', lP50Us);
+          Writeln('p95 us: ', lP95Us);
+          Writeln('p99 us: ', lP99Us);
+          Writeln('avg us: ', lAvgUs, '  best us: ', lBestUs, '  worst us: ', lWorstUs);
+          Writeln('avg throughput evt/s: ', lAvgThroughput);
+          Writeln('total metric reads: ', lTotalMetricReads, '  avg metric reads/s: ', lAvgMetricReadsPerSec);
           Writeln;
+
           if lCsv <> nil then
-            AppendCsvFailureRow(lCsv, 'scheduler-compare', lEntries[lIdx].Name, lRunCfg,
-              E.ClassName + ': ' + E.Message);
+            AppendCsvSummaryRow(lCsv, 'scheduler-compare', lEntries[lIdx].Name, lRunCfg, lP50Us, lP95Us,
+              lP99Us, lAvgUs, lBestUs,
+              lWorstUs, lAvgThroughput, lTotalMetricReads, lAvgMetricReadsPerSec);
+        except
+          on E: Exception do
+          begin
+            Writeln('--- ', lEntries[lIdx].Name, ' ---');
+            Writeln('FAILED: ', E.ClassName, ': ', E.Message);
+            Writeln;
+            if lCsv <> nil then
+              AppendCsvFailureRow(lCsv, 'scheduler-compare', lEntries[lIdx].Name, lRunCfg,
+                E.ClassName + ': ' + E.Message);
+          end;
         end;
       end;
     end;
 
-    Writeln('Cross-library comparison: EventNexus(TTask-weak), EventNexus(TTask-strong), iPub, EventHorizon');
+    if IsAllFrameworksFilter(lCfg.FrameworkFilter) then
+      Writeln('Cross-library comparison: EventNexus(TTask-weak), EventNexus(TTask-strong), iPub, EventHorizon')
+    else
+      Writeln('Cross-library comparison: ', lCfg.FrameworkFilter);
     Writeln;
     lFrameworkCfg := lCfg;
     lFrameworkCfg.MetricsReaders := 0;
@@ -956,8 +1019,12 @@ begin
       Writeln('Note: cross-library async profile is capped to 1 run in-process to avoid cumulative memory pressure.');
       lFrameworkCfg.Runs := 1;
     end;
+    lFrameworkRan := False;
     for lFrameworkIdx := Low(lFrameworkEntries) to High(lFrameworkEntries) do
     begin
+      if not IsFrameworkSelected(lCfg.FrameworkFilter, lFrameworkEntries[lFrameworkIdx].Name) then
+        Continue;
+      lFrameworkRan := True;
       try
         BenchmarkFramework(lFrameworkEntries[lFrameworkIdx], lFrameworkCfg, lSamples);
         SummarizeSamples(lSamples, lP50Us, lP95Us, lP99Us, lAvgUs, lBestUs, lWorstUs,
@@ -986,6 +1053,11 @@ begin
               lFrameworkCfg, E.ClassName + ': ' + E.Message);
         end;
       end;
+    end;
+    if not lFrameworkRan then
+    begin
+      Writeln('No framework rows matched filter.');
+      Writeln;
     end;
 
     if lCsv <> nil then
