@@ -52,6 +52,8 @@ Key options:
 - `--delivery=posting|main|async|background`
 - `--metrics-readers=<n>`
 - `--metrics-reads=<n>`
+- `--skip-schedulers`
+- `--framework=all|weak|strong|ipub|eventhorizon`
 - `--csv=<path>`
 
 Example:
@@ -69,6 +71,14 @@ Threshold gate (pass/fail, scheduler rows only):
 - `./build/check-benchmark-thresholds.sh bench/scheduler-summary.csv`
 - `build\\check-benchmark-thresholds.bat bench\\scheduler-summary.csv`
 - Optional second argument overrides threshold config path (default: `bench/scheduler-thresholds.csv`).
+
+Isolated-process framework medians (fresh process per sample):
+
+```bash
+./bench/run-framework-isolated.sh --delivery=async --events=2000 --consumers=2 --samples=9 --platform=Win32
+```
+
+This runner executes one framework row per process (`--skip-schedulers --framework=<token> --runs=1`) and writes a summary CSV with median `avg_us` and median throughput.
 
 ## Legacy cross-framework runner (`CompareBuses.dpr`)
 
