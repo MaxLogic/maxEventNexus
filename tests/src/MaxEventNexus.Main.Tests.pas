@@ -51,6 +51,8 @@ type
   TTestAsyncExceptions = class(TmaxTestCase)
   published
     procedure ErrorsForwardToHookNoRaise;
+    procedure InlineSchedulerPostNamedAsyncForwardsError;
+    procedure InlineSchedulerTryPostNamedAsyncForwardsError;
   end;
 
   TTestCoalesce = class(TmaxTestCase)
@@ -162,6 +164,10 @@ type
     procedure QueuePolicyAndMetricsNamed;
     procedure TryPostNamedNoTopicReturnsTrueWithoutCounters;
     procedure TryPostNamedDeliversWhenSubscriberExists;
+    procedure TryPostNamedDropNewestDrops;
+    procedure TryPostNamedDropOldestDropsQueuedOldest;
+    procedure TryPostNamedBlockWaits;
+    procedure TryPostNamedDeadlineDrops;
   end;
 
   TNamedPostThread = class(TThread)
@@ -598,6 +604,16 @@ type
     procedure OnInt(const aValue: integer);
   end;
 
+  TNamedQueueBlockProbe = class
+  public
+    fStarted: TEvent;
+    fRelease: TEvent;
+    fHits: integer;
+    constructor Create;
+    destructor Destroy; override;
+    procedure OnNamed;
+  end;
+
   TInlineScheduler = class(TInterfacedObject, IEventNexusScheduler)
   public
     procedure RunAsync(const aProc: TmaxProc);
@@ -676,6 +692,76 @@ begin
     if fRelease <> nil then
       fRelease.WaitFor(5000);
   end;
+end;
+
+constructor TNamedQueueBlockProbe.Create;
+begin
+  inherited Create;
+  fStarted := TEvent.Create(nil, True, False, '');
+  fRelease := TEvent.Create(nil, True, False, '');
+  fHits := 0;
+end;
+
+destructor TNamedQueueBlockProbe.Destroy;
+begin
+  fRelease.Free;
+  fStarted.Free;
+  inherited;
+end;
+
+procedure TNamedQueueBlockProbe.OnNamed;
+begin
+  Inc(fHits);
+  if fHits = 1 then
+  begin
+    fStarted.SetEvent;
+    fRelease.WaitFor(5000);
+  end;
+end;
+
+procedure StartNamedPostThread(const aBus: ImaxBus; const aName: TmaxString);
+var
+  lThread: TThread;
+begin
+  lThread := TThread.CreateAnonymousThread(
+    procedure
+    begin
+      aBus.PostNamed(aName);
+    end);
+  lThread.FreeOnTerminate := True;
+  lThread.Start;
+end;
+
+procedure WaitForNamedHits(const aProbe: TNamedQueueBlockProbe; aExpected: integer; aTimeoutMs: Cardinal);
+var
+  lStart: UInt64;
+begin
+  lStart := GetTickCount64;
+  while GetTickCount64 - lStart < aTimeoutMs do
+  begin
+    if aProbe.fHits >= aExpected then
+      Exit;
+    CheckSynchronize(0);
+    Sleep(1);
+  end;
+  raise Exception.CreateFmt('Timed out waiting for named hits=%d (current=%d)', [aExpected, aProbe.fHits]);
+end;
+
+procedure SetupNamedQueuePressure(const aBus: ImaxBus; const aName: TmaxString; aOverflow: TmaxOverflow;
+  aDeadlineUs: Int64; out aSub: ImaxSubscription; out aProbe: TNamedQueueBlockProbe);
+var
+  lPolicy: TmaxQueuePolicy;
+  lProbe: TNamedQueueBlockProbe;
+  lQueues: ImaxBusQueues;
+begin
+  lQueues := aBus as ImaxBusQueues;
+  lPolicy.MaxDepth := 1;
+  lPolicy.Overflow := aOverflow;
+  lPolicy.DeadlineUs := aDeadlineUs;
+  lQueues.SetPolicyNamed(aName, lPolicy);
+  lProbe := TNamedQueueBlockProbe.Create;
+  aProbe := lProbe;
+  aSub := aBus.SubscribeNamed(aName, lProbe.OnNamed, TmaxDelivery.Posting);
 end;
 
 procedure TInlineScheduler.RunAsync(const aProc: TmaxProc);
@@ -1564,6 +1650,92 @@ begin
     maxSetAsyncErrorHandler(nil);
     for lIdx := Low(lEvents) to High(lEvents) do
       lEvents[lIdx].Free;
+  end;
+end;
+
+procedure TTestAsyncExceptions.InlineSchedulerPostNamedAsyncForwardsError;
+var
+  lBus: ImaxBus;
+  lPrevScheduler: IEventNexusScheduler;
+  lErrorEvent: TEvent;
+  lTopic: string;
+  lError: string;
+begin
+  lPrevScheduler := maxGetAsyncScheduler;
+  lErrorEvent := TEvent.Create(nil, True, False, '');
+  lTopic := '';
+  lError := '';
+  try
+    lBus := maxBus;
+    lBus.Clear;
+    maxSetMainThreadPolicy(TmaxMainThreadPolicy.DegradeToPosting);
+    maxSetAsyncScheduler(TInlineScheduler.Create);
+    maxSetAsyncErrorHandler(
+      procedure(const aTopic: string; const aE: Exception)
+      begin
+        lTopic := aTopic;
+        lError := aE.Message;
+        lErrorEvent.SetEvent;
+      end);
+
+    lBus.SubscribeNamed('inline.async.post',
+      procedure
+      begin
+        raise Exception.Create('inline post boom');
+      end,
+      TmaxDelivery.Async);
+    lBus.PostNamed('inline.async.post');
+
+    Check(lErrorEvent.WaitFor(1000) = wrSignaled, 'Async error hook not invoked');
+    Check(SameText('inline.async.post', lTopic));
+    CheckEquals('inline post boom', lError);
+  finally
+    maxSetAsyncErrorHandler(nil);
+    maxSetAsyncScheduler(lPrevScheduler);
+    lErrorEvent.Free;
+  end;
+end;
+
+procedure TTestAsyncExceptions.InlineSchedulerTryPostNamedAsyncForwardsError;
+var
+  lBus: ImaxBus;
+  lPrevScheduler: IEventNexusScheduler;
+  lErrorEvent: TEvent;
+  lTopic: string;
+  lError: string;
+begin
+  lPrevScheduler := maxGetAsyncScheduler;
+  lErrorEvent := TEvent.Create(nil, True, False, '');
+  lTopic := '';
+  lError := '';
+  try
+    lBus := maxBus;
+    lBus.Clear;
+    maxSetMainThreadPolicy(TmaxMainThreadPolicy.DegradeToPosting);
+    maxSetAsyncScheduler(TInlineScheduler.Create);
+    maxSetAsyncErrorHandler(
+      procedure(const aTopic: string; const aE: Exception)
+      begin
+        lTopic := aTopic;
+        lError := aE.Message;
+        lErrorEvent.SetEvent;
+      end);
+
+    lBus.SubscribeNamed('inline.async.try',
+      procedure
+      begin
+        raise Exception.Create('inline try boom');
+      end,
+      TmaxDelivery.Async);
+    Check(lBus.TryPostNamed('inline.async.try'));
+
+    Check(lErrorEvent.WaitFor(1000) = wrSignaled, 'Async error hook not invoked');
+    Check(SameText('inline.async.try', lTopic));
+    CheckEquals('inline try boom', lError);
+  finally
+    maxSetAsyncErrorHandler(nil);
+    maxSetAsyncScheduler(lPrevScheduler);
+    lErrorEvent.Free;
   end;
 end;
 
@@ -3287,6 +3459,133 @@ begin
     CheckEquals(0, lStats.DroppedTotal);
   finally
     lSub := nil;
+  end;
+end;
+
+procedure TTestNamedTopics.TryPostNamedDropNewestDrops;
+var
+  lBus: ImaxBus;
+  lSub: ImaxSubscription;
+  lProbe: TNamedQueueBlockProbe;
+  lStats: TmaxTopicStats;
+const
+  cName = 'trypost.named.dropnewest';
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lSub := nil;
+  lProbe := nil;
+  try
+    SetupNamedQueuePressure(lBus, cName, TmaxOverflow.DropNewest, 0, lSub, lProbe);
+    StartNamedPostThread(lBus, cName);
+    Check(lProbe.fStarted.WaitFor(2000) = wrSignaled);
+    Check(lBus.TryPostNamed(cName));
+    Check(not lBus.TryPostNamed(cName));
+    lProbe.fRelease.SetEvent;
+    WaitForNamedHits(lProbe, 1, 5000);
+    Sleep(150);
+    lStats := (lBus as ImaxBusMetrics).GetStatsNamed(cName);
+    Check(lStats.PostsTotal >= 3);
+    Check(lStats.DroppedTotal >= 1);
+  finally
+    lSub := nil;
+    lProbe.Free;
+  end;
+end;
+
+procedure TTestNamedTopics.TryPostNamedDropOldestDropsQueuedOldest;
+var
+  lBus: ImaxBus;
+  lSub: ImaxSubscription;
+  lProbe: TNamedQueueBlockProbe;
+  lStats: TmaxTopicStats;
+const
+  cName = 'trypost.named.dropoldest';
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lSub := nil;
+  lProbe := nil;
+  try
+    SetupNamedQueuePressure(lBus, cName, TmaxOverflow.DropOldest, 0, lSub, lProbe);
+    StartNamedPostThread(lBus, cName);
+    Check(lProbe.fStarted.WaitFor(2000) = wrSignaled);
+    Check(lBus.TryPostNamed(cName));
+    Check(lBus.TryPostNamed(cName));
+    lProbe.fRelease.SetEvent;
+    WaitForNamedHits(lProbe, 1, 5000);
+    Sleep(150);
+    lStats := (lBus as ImaxBusMetrics).GetStatsNamed(cName);
+    Check(lStats.PostsTotal >= 3);
+    Check(lStats.DroppedTotal >= 1);
+  finally
+    lSub := nil;
+    lProbe.Free;
+  end;
+end;
+
+procedure TTestNamedTopics.TryPostNamedBlockWaits;
+var
+  lBus: ImaxBus;
+  lSub: ImaxSubscription;
+  lProbe: TNamedQueueBlockProbe;
+  lStats: TmaxTopicStats;
+const
+  cName = 'trypost.named.block';
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lSub := nil;
+  lProbe := nil;
+  try
+    SetupNamedQueuePressure(lBus, cName, TmaxOverflow.Block, 0, lSub, lProbe);
+    StartNamedPostThread(lBus, cName);
+    Check(lProbe.fStarted.WaitFor(2000) = wrSignaled);
+    Check(lBus.TryPostNamed(cName));
+    Check(lBus.TryPostNamed(cName));
+    lProbe.fRelease.SetEvent;
+    WaitForNamedHits(lProbe, 3, 5000);
+    lStats := (lBus as ImaxBusMetrics).GetStatsNamed(cName);
+    CheckEquals(3, lStats.PostsTotal);
+    CheckEquals(3, lStats.DeliveredTotal);
+    CheckEquals(0, lStats.DroppedTotal);
+  finally
+    lSub := nil;
+    lProbe.Free;
+  end;
+end;
+
+procedure TTestNamedTopics.TryPostNamedDeadlineDrops;
+var
+  lBus: ImaxBus;
+  lSub: ImaxSubscription;
+  lProbe: TNamedQueueBlockProbe;
+  lStats: TmaxTopicStats;
+  lStart: UInt64;
+const
+  cName = 'trypost.named.deadline';
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lSub := nil;
+  lProbe := nil;
+  try
+    SetupNamedQueuePressure(lBus, cName, TmaxOverflow.Deadline, 50000, lSub, lProbe);
+    StartNamedPostThread(lBus, cName);
+    Check(lProbe.fStarted.WaitFor(2000) = wrSignaled);
+    Check(lBus.TryPostNamed(cName));
+    lStart := GetTickCount64;
+    Check(not lBus.TryPostNamed(cName));
+    Check(GetTickCount64 - lStart >= 40, 'Deadline overflow should wait before rejecting');
+    lProbe.fRelease.SetEvent;
+    WaitForNamedHits(lProbe, 1, 5000);
+    Sleep(250);
+    lStats := (lBus as ImaxBusMetrics).GetStatsNamed(cName);
+    Check(lStats.PostsTotal >= 3);
+    Check(lStats.DroppedTotal >= 1);
+  finally
+    lSub := nil;
+    lProbe.Free;
   end;
 end;
 
