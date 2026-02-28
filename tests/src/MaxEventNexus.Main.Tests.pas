@@ -312,6 +312,8 @@ type
     procedure TokenReleaseAutoUnsubscribes;
     procedure QueuedBeforeCancelSkipsExecution;
     procedure ClearInvalidatesOldHandlesWithoutCrossUnsubscribe;
+    procedure ClearInFlightAsyncNamedKeepsNewSubscriptionActive;
+    procedure ClearInFlightAsyncGuidKeepsNewSubscriptionActive;
   end;
 
   TTestPostResult = class(TmaxTestCase)
@@ -607,6 +609,22 @@ type
     procedure OnInt(const aValue: integer);
   end;
 
+  TAsyncClearProbe = class
+  public
+    fStarted: TEvent;
+    fRelease: TEvent;
+    fFinished: TEvent;
+    fDone: TEvent;
+    fOldHits: integer;
+    fNewHits: integer;
+    constructor Create;
+    destructor Destroy; override;
+    procedure OnOldNamed;
+    procedure OnNewNamed;
+    procedure OnOldGuid(const aValue: IIntEvent);
+    procedure OnNewGuid(const aValue: IIntEvent);
+  end;
+
   TNamedQueueBlockProbe = class
   public
     fStarted: TEvent;
@@ -720,6 +738,58 @@ begin
     fStarted.SetEvent;
     fRelease.WaitFor(5000);
   end;
+end;
+
+constructor TAsyncClearProbe.Create;
+begin
+  inherited Create;
+  fStarted := TEvent.Create(nil, True, False, '');
+  fRelease := TEvent.Create(nil, True, False, '');
+  fFinished := TEvent.Create(nil, True, False, '');
+  fDone := TEvent.Create(nil, True, False, '');
+  fOldHits := 0;
+  fNewHits := 0;
+end;
+
+destructor TAsyncClearProbe.Destroy;
+begin
+  fDone.Free;
+  fFinished.Free;
+  fRelease.Free;
+  fStarted.Free;
+  inherited;
+end;
+
+procedure TAsyncClearProbe.OnOldNamed;
+begin
+  Inc(fOldHits);
+  fStarted.SetEvent;
+  fRelease.WaitFor(5000);
+  fFinished.SetEvent;
+end;
+
+procedure TAsyncClearProbe.OnNewNamed;
+begin
+  Inc(fNewHits);
+  fDone.SetEvent;
+end;
+
+procedure TAsyncClearProbe.OnOldGuid(const aValue: IIntEvent);
+begin
+  if aValue = nil then
+    Exit;
+  Inc(fOldHits);
+  fStarted.SetEvent;
+  fRelease.WaitFor(5000);
+  fFinished.SetEvent;
+end;
+
+procedure TAsyncClearProbe.OnNewGuid(const aValue: IIntEvent);
+begin
+  if aValue = nil then
+    Exit;
+  Inc(fNewHits);
+  fDone.SetEvent;
 end;
 
 procedure StartNamedPostThread(const aBus: ImaxBus; const aName: TmaxString);
@@ -4810,6 +4880,84 @@ begin
   finally
     lNewSub := nil;
     lOldSub := nil;
+  end;
+end;
+
+procedure TTestSubscriptionTokens.ClearInFlightAsyncNamedKeepsNewSubscriptionActive;
+var
+  lBus: ImaxBus;
+  lPrevScheduler: IEventNexusScheduler;
+  lProbe: TAsyncClearProbe;
+  lOldSub: ImaxSubscription;
+  lNewSub: ImaxSubscription;
+begin
+  lPrevScheduler := maxGetAsyncScheduler;
+  maxSetAsyncScheduler(TmaxRawThreadScheduler.Create);
+  lBus := maxBus;
+  lBus.Clear;
+  lProbe := TAsyncClearProbe.Create;
+  lOldSub := nil;
+  lNewSub := nil;
+  try
+    lOldSub := lBus.SubscribeNamed('clear.named.async', lProbe.OnOldNamed, TmaxDelivery.Async);
+    lBus.PostNamed('clear.named.async');
+    Check(lProbe.fStarted.WaitFor(5000) = wrSignaled);
+
+    lBus.Clear;
+    lNewSub := lBus.SubscribeNamed('clear.named.async', lProbe.OnNewNamed, TmaxDelivery.Async);
+    lOldSub.Unsubscribe;
+    Check(lNewSub.IsActive, 'Old named handle must be inert after Clear');
+
+    lProbe.fRelease.SetEvent;
+    Check(lProbe.fFinished.WaitFor(5000) = wrSignaled);
+    lBus.PostNamed('clear.named.async');
+    Check(lProbe.fDone.WaitFor(5000) = wrSignaled);
+    CheckEquals(1, lProbe.fOldHits);
+    CheckEquals(1, lProbe.fNewHits);
+  finally
+    lNewSub := nil;
+    lOldSub := nil;
+    lProbe.Free;
+    maxSetAsyncScheduler(lPrevScheduler);
+  end;
+end;
+
+procedure TTestSubscriptionTokens.ClearInFlightAsyncGuidKeepsNewSubscriptionActive;
+var
+  lBus: ImaxBus;
+  lPrevScheduler: IEventNexusScheduler;
+  lProbe: TAsyncClearProbe;
+  lOldSub: ImaxSubscription;
+  lNewSub: ImaxSubscription;
+begin
+  lPrevScheduler := maxGetAsyncScheduler;
+  maxSetAsyncScheduler(TmaxRawThreadScheduler.Create);
+  lBus := maxBus;
+  lBus.Clear;
+  lProbe := TAsyncClearProbe.Create;
+  lOldSub := nil;
+  lNewSub := nil;
+  try
+    lOldSub := maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(lProbe.OnOldGuid, TmaxDelivery.Async);
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(11));
+    Check(lProbe.fStarted.WaitFor(5000) = wrSignaled);
+
+    lBus.Clear;
+    lNewSub := maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(lProbe.OnNewGuid, TmaxDelivery.Async);
+    lOldSub.Unsubscribe;
+    Check(lNewSub.IsActive, 'Old guid handle must be inert after Clear');
+
+    lProbe.fRelease.SetEvent;
+    Check(lProbe.fFinished.WaitFor(5000) = wrSignaled);
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(22));
+    Check(lProbe.fDone.WaitFor(5000) = wrSignaled);
+    CheckEquals(1, lProbe.fOldHits);
+    CheckEquals(1, lProbe.fNewHits);
+  finally
+    lNewSub := nil;
+    lOldSub := nil;
+    lProbe.Free;
+    maxSetAsyncScheduler(lPrevScheduler);
   end;
 end;
 
