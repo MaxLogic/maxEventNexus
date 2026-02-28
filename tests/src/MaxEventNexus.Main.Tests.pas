@@ -361,9 +361,11 @@ type
     procedure NamedOfDelayedPostWaitsBeforeDelivery;
     procedure GuidDelayedPostWaitsBeforeDelivery;
     procedure CancelPreventsTypedDelayedDelivery;
+    procedure CancelNearDeadlineHasConsistentOutcome;
     procedure ClearDropsPendingDelayedPosts;
     procedure ZeroDelayDispatchesAndUpdatesMetrics;
     procedure LargeDelayRemainsPendingUntilCanceled;
+    procedure TypedLargeDelayRemainsPendingUntilCanceled;
   end;
 
   TTestMetricsCallbackTotals = class(TmaxTestCase)
@@ -5759,6 +5761,51 @@ begin
   end;
 end;
 
+procedure TTestDelayedPosting.CancelNearDeadlineHasConsistentOutcome;
+var
+  lBus: ImaxBus;
+  lSub: ImaxSubscription;
+  lDone: TEvent;
+  lHandle: ImaxDelayedPost;
+  lCanceled: boolean;
+  lHits: integer;
+  i: integer;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lHits := 0;
+  lDone := TEvent.Create(nil, True, False, '');
+  try
+    lSub := maxBusObj(lBus).Subscribe<integer>(
+      procedure(const aValue: integer)
+      begin
+        Inc(lHits);
+        lDone.SetEvent;
+      end,
+      TmaxDelivery.Posting);
+    for i := 1 to 8 do
+    begin
+      lDone.ResetEvent;
+      lHandle := maxBusObj(lBus).PostDelayed<integer>(i, 25);
+      Check(lHandle <> nil);
+      Sleep(20);
+      lCanceled := lHandle.Cancel;
+      if lCanceled then
+      begin
+        Check(lDone.WaitFor(120) = wrTimeout, 'Canceled near-deadline post should not dispatch');
+      end else begin
+        Check(lDone.WaitFor(250) = wrSignaled, 'Non-canceled near-deadline post should dispatch');
+      end;
+      Check(not lHandle.IsPending, 'Handle should not remain pending after cancel/fire boundary');
+      Check(not lHandle.Cancel, 'Second cancel should be idempotent false');
+    end;
+    Check(lHits >= 0);
+    lSub := nil;
+  finally
+    lDone.Free;
+  end;
+end;
+
 procedure TTestDelayedPosting.ClearDropsPendingDelayedPosts;
 var
   lBus: ImaxBus;
@@ -5874,6 +5921,50 @@ begin
     Check(lHandle.Cancel, 'Cancel should succeed for a still-pending large-delay post');
     Check(not lHandle.IsPending);
     Check(lDone.WaitFor(200) = wrTimeout, 'Canceled large-delay post should remain canceled');
+    CheckEquals(0, lHits);
+    lSub := nil;
+  finally
+    maxSetAsyncScheduler(lPrevScheduler);
+    lDone.Free;
+  end;
+end;
+
+procedure TTestDelayedPosting.TypedLargeDelayRemainsPendingUntilCanceled;
+const
+  cLongDelayMs = 30000;
+var
+  lBus: ImaxBus;
+  lSub: ImaxSubscription;
+  lHandle: ImaxDelayedPost;
+  lDone: TEvent;
+  lHits: integer;
+  lPrevScheduler: IEventNexusScheduler;
+begin
+  lBus := maxBus;
+  lPrevScheduler := maxGetAsyncScheduler;
+  maxSetAsyncScheduler(THoldDelayedScheduler.Create);
+  lBus.Clear;
+  lHits := 0;
+  lDone := TEvent.Create(nil, True, False, '');
+  try
+    lSub := maxBusObj(lBus).Subscribe<integer>(
+      procedure(const aValue: integer)
+      begin
+        Inc(lHits);
+        lDone.SetEvent;
+      end,
+      TmaxDelivery.Posting);
+
+    lHandle := maxBusObj(lBus).PostDelayed<integer>(77, cLongDelayMs);
+    Check(lHandle <> nil);
+    Check(lHandle.IsPending);
+    Check(lDone.WaitFor(200) = wrTimeout, 'Large-delay typed post fired unexpectedly early');
+    CheckEquals(0, lHits);
+
+    Check(lHandle.Cancel, 'Cancel should succeed for pending typed delayed post');
+    Check(not lHandle.IsPending);
+    Check(not lHandle.Cancel);
+    Check(lDone.WaitFor(200) = wrTimeout, 'Canceled typed delayed post should remain canceled');
     CheckEquals(0, lHits);
     lSub := nil;
   finally
