@@ -353,6 +353,7 @@ type
     procedure PrefixAndGlobalWildcardMatch;
     procedure UnsubscribeStopsWildcardDelivery;
     procedure WildcardDispatchesWithoutPrecreatedNamedTopic;
+    procedure SamePrefixLengthUsesSubscriptionOrder;
   end;
 
   TTestDelayedPosting = class(TmaxTestCase)
@@ -5611,6 +5612,37 @@ begin
   lResult := maxBusObj(lBus).PostResultNamed('dynamic.alpha');
   CheckEquals(Integer(TmaxPostResult.DispatchedInline), Integer(lResult));
   CheckEquals(1, lHits);
+end;
+
+procedure TTestWildcardNamed.SamePrefixLengthUsesSubscriptionOrder;
+var
+  lBus: ImaxBus;
+  lOrder: TList<string>;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lOrder := TList<string>.Create;
+  try
+    maxBusObj(lBus).SubscribeNamedWildcard('room.*',
+      procedure
+      begin
+        lOrder.Add('first');
+      end,
+      TmaxDelivery.Posting);
+    maxBusObj(lBus).SubscribeNamedWildcard('room.*',
+      procedure
+      begin
+        lOrder.Add('second');
+      end,
+      TmaxDelivery.Posting);
+
+    maxBusObj(lBus).PostNamed('room.42');
+    CheckEquals(2, lOrder.Count);
+    CheckEquals('first', lOrder[0]);
+    CheckEquals('second', lOrder[1]);
+  finally
+    lOrder.Free;
+  end;
 end;
 
 { TTestDelayedPosting }
