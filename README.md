@@ -16,30 +16,43 @@
 
 EventNexus is a type-safe event bus for Delphi 12+ with typed, named, and GUID topic routing, delivery-mode control, sticky cache, coalescing, and queue policies.
 
-## Performance and Scope Snapshot (2026-02-27)
+## Performance and Scope Snapshot (2026-02-28)
 
 The cross-library benchmark uses a deliberately small common surface (`subscribe + post`) across EventNexus, iPub, and EventHorizon.
 So raw speed numbers below do not include advanced features such as delayed posting, queue policies, tracing, or sticky/coalescing behavior.
 
 Method:
 
-- Tool: `bench/SchedulerCompare.exe`
+- Tool: `bench/SchedulerCompare.exe` with `bench/run-framework-isolated.sh`
 - Isolated-process medians (fresh process per sample)
-- Posting profile: 9 successful samples (`--events=5000 --consumers=4 --runs=1 --delivery=posting`)
-- Async profile: 9 successful samples out of 10 attempts (`--events=2000 --consumers=2 --runs=1 --delivery=async --max-inflight=64`)
+- Async profile: `--events=2000 --consumers=2 --runs=1 --delivery=async --max-inflight=64`
+- Successful samples per framework: `5` (retry budget `max-attempts=20`)
+- Platform lanes: Win32 and Win64
 
-Median framework results:
+Median async framework results (Win32):
 
-| Profile | EventNexus weak avg us | EventNexus strong avg us | iPub avg us | EventNexus weak throughput | EventNexus strong throughput | iPub throughput |
-|---|---:|---:|---:|---:|---:|---:|
-| posting | 2561 | 2426 | 2018 | 7,809,449 | 8,244,023 | 9,910,802 |
-| async | 15506 | 15872 | 15103 | 257,964 | 252,016 | 264,848 |
+| Framework | Median avg us | Median throughput evt/s | Successful samples | Attempts |
+|---|---:|---:|---:|---:|
+| EventNexus(TTask-weak) | 30967 | 129169 | 5 | 5 |
+| EventNexus(TTask-strong) | 47795 | 83690 | 5 | 5 |
+| iPub | 44833 | 89219 | 5 | 5 |
+| EventHorizon | 46160 | 86655 | 5 | 6 |
+
+Median async framework results (Win64):
+
+| Framework | Median avg us | Median throughput evt/s | Successful samples | Attempts |
+|---|---:|---:|---:|---:|
+| EventNexus(TTask-weak) | 34380 | 116346 | 5 | 5 |
+| EventNexus(TTask-strong) | 57959 | 69014 | 5 | 5 |
+| iPub | 27783 | 143972 | 5 | 5 |
+| EventHorizon | 44085 | 90733 | 5 | 6 |
 
 Interpretation:
 
-- Posting: iPub is faster; EventNexus strong narrows the gap compared with EventNexus weak.
-- Async: EventNexus weak is close to iPub (about `+2.7%` latency and `-2.6%` throughput in this run set).
-- EventNexus priority is keeping this performance band while offering broader built-in behavior in one API.
+- Win32 async: EventNexus weak is ahead of iPub in this run set; EventNexus strong is slightly behind iPub.
+- Win64 async: iPub is ahead of both EventNexus weak and EventNexus strong in this run set.
+- EventHorizon needed retries in both lanes (`wait-drain` transient failures), which is why we report successful-sample counts and attempt counts.
+- This update reports async-only medians; posting will be refreshed in a follow-up run with the same isolated-process method.
 
 Feature scope beyond baseline pub/sub:
 
