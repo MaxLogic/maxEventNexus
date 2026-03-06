@@ -684,6 +684,7 @@ uses
   Winapi.Windows,
   {$ENDIF}
   maxLogic.Utils,
+  maxLogic.EventNexus.Threading.MaxAsync,
   maxLogic.EventNexus.Threading.RawThread
   ;
 
@@ -2980,7 +2981,7 @@ begin
   if gAsyncScheduler <> nil then
     exit(gAsyncScheduler);
   if gAsyncFallback = nil then
-    gAsyncFallback := TmaxRawThreadScheduler.Create;
+    gAsyncFallback := CreateMaxAsyncScheduler;
   Result := gAsyncFallback;
 end;
 
