@@ -204,9 +204,15 @@ maxSetQueuePresetGuid(StringToGUID('{00000000-0000-0000-0000-000000000000}'), Tm
 
 `IEventNexusScheduler` implementations shipped in this repo:
 
-- `maxLogic.EventNexus.Threading.RawThread` (default fallback)
-- `maxLogic.EventNexus.Threading.MaxAsync`
+- `maxLogic.EventNexus.Threading.MaxAsync` (recommended default)
+- `maxLogic.EventNexus.Threading.RawThread` (threading fallback)
 - `maxLogic.EventNexus.Threading.TTask`
+
+Recommendation:
+
+- Default to `MaxAsync` for lowest async latency and highest throughput on current Delphi targets.
+- Use `RawThread` when you want a minimal dependency chain and predictable behavior in constrained runtime environments.
+- Use `TTask` when you explicitly want RTL-native scheduling semantics.
 
 Inject at runtime:
 
