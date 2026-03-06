@@ -651,6 +651,93 @@ type
     function IsMainThread: Boolean;
   end;
 
+function BuildQueuePolicy(aMaxDepth: integer; aOverflow: TmaxOverflow; aDeadlineUs: Int64): TmaxQueuePolicy;
+begin
+  Result.MaxDepth := aMaxDepth;
+  Result.Overflow := aOverflow;
+  Result.DeadlineUs := aDeadlineUs;
+end;
+
+procedure PostIntegerValue(const aBus: ImaxBus; aValue: integer);
+begin
+  {$IFDEF max_FPC}
+  aBus.Post<integer>(aValue);
+  {$ELSE}
+  maxBusObj(aBus).Post<integer>(aValue);
+  {$ENDIF}
+end;
+
+procedure PostKeyedValues(const aBus: ImaxBus; const aValues: array of TKeyed);
+var
+  lValue: TKeyed;
+begin
+  for lValue in aValues do
+  begin
+    {$IFDEF max_FPC}
+    aBus.Post<TKeyed>(lValue);
+    {$ELSE}
+    maxBusObj(aBus).Post<TKeyed>(lValue);
+    {$ENDIF}
+  end;
+end;
+
+procedure PostGuidValues(const aBus: ImaxBus; const aValues: array of integer);
+var
+  i: integer;
+begin
+  for i := Low(aValues) to High(aValues) do
+  begin
+    {$IFDEF max_FPC}
+    aBus.PostGuidOf<IIntEvent>(TIntEvent.Create(aValues[i]));
+    {$ELSE}
+    maxBusObj(aBus).PostGuidOf<IIntEvent>(TIntEvent.Create(aValues[i]));
+    {$ENDIF}
+  end;
+end;
+
+procedure AssertLockedKeyedCount(const aLock: TCriticalSection; const aValues: TList<TKeyed>; aExpected: integer);
+begin
+  aLock.Enter;
+  try
+    if aValues.Count <> aExpected then
+      raise Exception.CreateFmt('Expected keyed count %d but got %d.', [aExpected, aValues.Count]);
+  finally
+    aLock.Leave;
+  end;
+end;
+
+procedure AssertLockedIntegerState(const aLock: TCriticalSection; const aValues: TList<integer>; aExpectedCount,
+  aExpectedFirst: integer);
+begin
+  aLock.Enter;
+  try
+    if aValues.Count <> aExpectedCount then
+      raise Exception.CreateFmt('Expected integer count %d but got %d.', [aExpectedCount, aValues.Count]);
+    if aValues[0] <> aExpectedFirst then
+      raise Exception.CreateFmt('Expected first integer %d but got %d.', [aExpectedFirst, aValues[0]]);
+  finally
+    aLock.Leave;
+  end;
+end;
+
+procedure ReleaseAndJoinThread(const aRelease: TEvent; var aThread: TThread);
+begin
+  if aRelease <> nil then
+    aRelease.SetEvent;
+  if aThread <> nil then
+  begin
+    aThread.WaitFor;
+    aThread.Free;
+    aThread := nil;
+  end;
+end;
+
+procedure RestoreAsyncSchedulerState(const aPrevScheduler: IEventNexusScheduler);
+begin
+  maxSetAsyncErrorHandler(nil);
+  maxSetAsyncScheduler(aPrevScheduler);
+end;
+
 procedure TABATarget.OnInt(const aValue: integer);
 begin
   if aValue = 1 then
@@ -1134,24 +1221,9 @@ begin
       end);
     {$ENDIF}
     try
-      {$IFDEF max_FPC}
-      lBus.Post<TKeyed>(MakeKeyed('A', 1));
-      lBus.Post<TKeyed>(MakeKeyed('A', 2));
-      lBus.Post<TKeyed>(MakeKeyed('B', 10));
-      lBus.Post<TKeyed>(MakeKeyed('B', 11));
-      {$ELSE}
-      maxBusObj(lBus).Post<TKeyed>(MakeKeyed('A', 1));
-      maxBusObj(lBus).Post<TKeyed>(MakeKeyed('A', 2));
-      maxBusObj(lBus).Post<TKeyed>(MakeKeyed('B', 10));
-      maxBusObj(lBus).Post<TKeyed>(MakeKeyed('B', 11));
-      {$ENDIF}
+      PostKeyedValues(lBus, [MakeKeyed('A', 1), MakeKeyed('A', 2), MakeKeyed('B', 10), MakeKeyed('B', 11)]);
       WaitForKeyedCount(lLock, lValues, 2, 2000);
-      lLock.Enter;
-      try
-        CheckEquals(2, lValues.Count);
-      finally
-        lLock.Leave;
-      end;
+      AssertLockedKeyedCount(lLock, lValues, 2);
       CheckEquals(2, FindKeyedValue(lLock, lValues, 'A'));
       CheckEquals(11, FindKeyedValue(lLock, lValues, 'B'));
     finally
@@ -1385,7 +1457,7 @@ end;
 
 { TTestMetricsConcurrent }
 
-procedure TTestMetricsConcurrent.TotalsReadWhilePostingAndCreatingTopics;
+procedure TTestMetricsConcurrent.TotalsReadWhilePostingAndCreatingTopics; //FI:C103 Test scenario keeps thread handles/events explicit for teardown safety.
 const
   cPostThreads = 4;
   cPostsPerThread = 25000;
@@ -1491,7 +1563,7 @@ begin
   end;
 end;
 
-procedure TTestMetricsConcurrent.StatsReadsAreSafeDuringTopicPublish;
+procedure TTestMetricsConcurrent.StatsReadsAreSafeDuringTopicPublish; //FI:C103 Test scenario keeps queue, metrics, and thread state explicit for race coverage.
 const
   cTopicCount = 300;
   cReadIterations = 4000;
@@ -2044,21 +2116,9 @@ begin
         end;
       end);
     {$ENDIF}
-    {$IFDEF max_FPC}
-    lBus.PostGuidOf<IIntEvent>(TIntEvent.Create(1));
-    lBus.PostGuidOf<IIntEvent>(TIntEvent.Create(2));
-    {$ELSE}
-    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(1));
-    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(2));
-    {$ENDIF}
+    PostGuidValues(lBus, [1, 2]);
     Sleep(10);
-    lLock.Enter;
-    try
-      CheckEquals(1, lCount);
-      CheckEquals(2, lValues[0]);
-    finally
-      lLock.Leave;
-    end;
+    AssertLockedIntegerState(lLock, lValues, 1, 2);
   finally
     {$IFDEF max_FPC}
     (lBus as ImaxBusAdvanced).EnableCoalesceGuidOf<IIntEvent>(nil);
@@ -4833,7 +4893,6 @@ begin
   try
     {$IFDEF max_FPC}
     lOldSub := lBus.Subscribe<integer>(@Handler, TmaxDelivery.Posting);
-    lBus.Post<integer>(1);
     {$ELSE}
     lOldSub := maxBusObj(lBus).Subscribe<integer>(
       procedure(const aValue: integer)
@@ -4841,8 +4900,8 @@ begin
         Inc(lHits);
       end,
       TmaxDelivery.Posting);
-    maxBusObj(lBus).Post<integer>(1);
     {$ENDIF}
+    PostIntegerValue(lBus, 1);
     CheckEquals(1, lHits);
 
     lBus.Clear;
@@ -4862,20 +4921,12 @@ begin
     lOldSub.Unsubscribe;
     Check(lNewSub.IsActive, 'Old handle must not affect post-Clear subscription');
 
-    {$IFDEF max_FPC}
-    lBus.Post<integer>(2);
-    {$ELSE}
-    maxBusObj(lBus).Post<integer>(2);
-    {$ENDIF}
+    PostIntegerValue(lBus, 2);
     CheckEquals(2, lHits, 'New subscription must still receive after old handle unsubscribe');
 
     lNewSub.Unsubscribe;
 
-    {$IFDEF max_FPC}
-    lBus.Post<integer>(3);
-    {$ELSE}
-    maxBusObj(lBus).Post<integer>(3);
-    {$ENDIF}
+    PostIntegerValue(lBus, 3);
     CheckEquals(2, lHits);
   finally
     lNewSub := nil;
@@ -5152,9 +5203,7 @@ begin
   lRelease := TEvent.Create(nil, True, False, '');
   lThread := nil;
   try
-    lPolicy.MaxDepth := 2;
-    lPolicy.Overflow := TmaxOverflow.DropNewest;
-    lPolicy.DeadlineUs := 0;
+    lPolicy := BuildQueuePolicy(2, TmaxOverflow.DropNewest, 0);
     maxBusObj(lBus).SetPolicyFor<integer>(lPolicy);
 
     maxBusObj(lBus).Subscribe<integer>(
@@ -5180,12 +5229,7 @@ begin
     lQueuedResult := maxBusObj(lBus).PostResult<integer>(22);
     CheckEquals(Integer(TmaxPostResult.Queued), Integer(lQueuedResult));
   finally
-    lRelease.SetEvent;
-    if lThread <> nil then
-    begin
-      lThread.WaitFor;
-      lThread.Free;
-    end;
+    ReleaseAndJoinThread(lRelease, lThread);
     lRelease.Free;
     lStarted.Free;
   end;
@@ -5354,10 +5398,7 @@ begin
   lBus.Clear;
   lSignal := TEvent.Create(nil, True, False, '');
   lPrevScheduler := maxGetAsyncScheduler;
-  lCaptured.TopicName := '';
-  lCaptured.WasDispatchError := False;
-  lCaptured.InnerCount := 0;
-  lCaptured.Details := nil;
+  lCaptured := Default(TCoalescedCapture);
   maxSetAsyncScheduler(TInlineScheduler.Create);
   maxSetAsyncErrorHandler(
     procedure(const aTopic: string; const aE: Exception)
@@ -5396,8 +5437,7 @@ begin
     AssertSingleCoalescedDetail(lCaptured.TopicName, lCaptured.Details);
   finally
     maxBusObj(lBus).EnableCoalesceOf<TKeyed>(nil);
-    maxSetAsyncErrorHandler(nil);
-    maxSetAsyncScheduler(lPrevScheduler);
+    RestoreAsyncSchedulerState(lPrevScheduler);
     lSignal.Free;
   end;
 end;
