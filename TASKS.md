@@ -2,43 +2,14 @@
 Next task ID: T-1100
 
 ## Summary
-Open tasks: 3 (In Progress: 0, Next Today: 0, Next This Week: 3, Next Later: 0, Blocked: 0)
-Done tasks: 119
+Open tasks: 1 (In Progress: 0, Next Today: 0, Next This Week: 1, Next Later: 0, Blocked: 0)
+Done tasks: 121
 
 ## In Progress
 
 ## Next – Today
 
 ## Next – This Week
-
-### T-1099 [BENCH] Add a benchmark-contract smoke step to the default verification flow
-Outcome:
-- The normal verification path runs a lightweight `SchedulerCompare` smoke profile that writes a CSV and validates the documented benchmark output contract.
-- The smoke step checks at least the CSV header/schema and required `status` rows so benchmark-contract drift fails automatically instead of relying on manual proof.
-- The added verification stays lightweight enough for routine local runs; heavier throughput-threshold gates can remain separate.
-Proof:
-- Run: `./build-and-run-tests.sh`
-  Expect: the default flow includes a benchmark smoke step and exits `0` when the benchmark contract remains valid.
-- Run: `rg -n "SchedulerCompare|benchmark|csv|status,error|check-benchmark" build-and-run-tests.bat build-and-run-tests.sh build/ bench/`
-  Expect: the repo contains an automated benchmark-contract smoke proof path wired into the standard verification flow.
-Touches: build-and-run-tests.sh, build-and-run-tests.bat, build/, bench/
-Verify: integration-test, cli-proof
-Notes: Implements the proposed fix for gap `G-005`; keep the smoke workload small and focused on contract validity rather than full performance gating.
-
-### T-1098 [DOC] Close spec-review doc drift in README and benchmark docs
-Outcome:
-- `README.md` no longer publishes stale unit-test coverage numbers or wording that will drift immediately after routine suite growth.
-- `bench/readme.md` references only build targets and commands that exist in the repository, removing the dead `CompareBuses.dproj` guidance.
-- The doc contract surfaces called out by the spec review are aligned with the current repo state.
-Proof:
-- Run: `rg -n "Coverage depth|published test methods|CompareBuses\\.dproj|SchedulerCompare" README.md bench/readme.md`
-  Expect: README wording is current and benchmark docs no longer reference nonexistent build targets.
-- Run: `./build-and-run-tests.sh`
-  Expect: docs-only cleanup leaves the default verification flow green.
-Touches: README.md, bench/readme.md
-Verify: manual
-Ceremony: reduced
-Notes: Complements existing README-sync task `T-1088` by closing the specific spec-review drift items from gap `G-004`.
 
 ### T-1087 [TEST] Add a discoverable root stress command
 Outcome: Provide a root-level stress entrypoint that exercises async, delayed-post, and coalescing paths so remediation and release workflows can run a concrete stress command after the main test suite.
@@ -66,6 +37,26 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1099 [BENCH] Add a benchmark-contract smoke step to the default verification flow
+Summary: The standard verification entrypoint now exercises `SchedulerCompare` directly and fails automatically if the documented benchmark CSV contract drifts.
+
+Details:
+- Extended `build-and-run-tests.bat` to build `bench/SchedulerCompare.dproj`, run a lightweight smoke profile, and validate the emitted CSV before static analysis/reporting continues.
+- Added `build/check-benchmark-smoke.bat` plus a WSL wrapper `build/check-benchmark-smoke.sh` to verify required CSV columns and required `status=ok` scheduler/framework rows.
+- Expanded the diagnostics allowlist with the existing foundation hints emitted by `SchedulerCompare` so the new default flow stays green without modifying external foundation sources.
+- Proof: `./build-and-run-tests.sh` (exit `0`, including benchmark build/run/smoke validation).
+- Proof: `rg -n "SchedulerCompare|benchmark-smoke|check-benchmark-smoke|status|error" build-and-run-tests.bat build/check-benchmark-smoke.bat build/check-benchmark-smoke.sh build/diagnostics-policy.regex` (smoke path + contract validation present).
+
+### T-1098 [DOC] Close spec-review doc drift in README and benchmark docs
+Summary: Synced the user-facing docs with the supported benchmark path and the now-automated verification flow.
+
+Details:
+- Updated `README.md` to describe the non-fragile current test coverage wording and to note that default verification includes benchmark smoke validation.
+- Removed the dead `CompareBuses.dproj` build guidance from `bench/readme.md` and replaced it with the supported `SchedulerCompare` smoke command.
+- Clarified that `CompareBuses.dpr` remains legacy source only and is not the maintained benchmark build path.
+- Proof: `rg -n "Coverage depth|CompareBuses\\.dproj|SchedulerCompare|benchmark-smoke" README.md bench/readme.md` (current wording + supported benchmark guidance present).
+- Proof: `./build-and-run-tests.sh` (exit `0` after doc/build-flow updates).
 
 ### T-1085 [CORE] Prove or fix DefaultAsync fallback race
 Summary: Closed the unsynchronized `DefaultAsync` fallback-initialization path and added a fresh-process race probe to prove singleton behavior under concurrent first access.
