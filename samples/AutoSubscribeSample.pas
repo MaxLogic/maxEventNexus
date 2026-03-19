@@ -20,14 +20,16 @@ begin
 end;
 
 var
-  LWorker: TWorker;
+  lBus: TmaxBus;
+  lWorker: TWorker;
 begin
-  LWorker := TWorker.Create;
+  lBus := maxBusObj;
+  lWorker := TWorker.Create;
   try
-    AutoSubscribe(LWorker);
-    maxBus.Post<Integer>(42);
-    AutoUnsubscribe(LWorker);
+    AutoSubscribe(lWorker);
+    lBus.Post<Integer>(42);
+    AutoUnsubscribe(lWorker);
   finally
-    LWorker.Free;
+    lWorker.Free;
   end;
 end.

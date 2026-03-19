@@ -1,15 +1,57 @@
 # Tasks
-Next task ID: T-1085
+Next task ID: T-1094
 
 ## Summary
-Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
-Done tasks: 107
+Open tasks: 4 (In Progress: 0, Next Today: 2, Next This Week: 2, Next Later: 0, Blocked: 0)
+Done tasks: 112
 
 ## In Progress
 
 ## Next – Today
 
+### T-1085 [CORE] Prove or fix DefaultAsync fallback race
+Outcome: Determine whether `DefaultAsync` can create competing fallback scheduler instances under concurrent first access, then either add a deterministic regression test plus minimal synchronization fix or document the finding as disproven.
+Proof:
+- Command: `./build-and-run-tests.sh`
+- Expect: build, DUnitX suite, analysis thresholds, and API coverage all pass after the race investigation changes.
+- Command: `rg -n "DefaultAsync|gAsyncFallback|gBusLock" maxLogic.EventNexus.Core.pas tests/src/MaxEventNexus.Main.Tests.pas`
+- Expect: the runtime and regression-test coverage for fallback scheduler initialization are both present.
+Touches: maxLogic.EventNexus.Core.pas, tests/src/MaxEventNexus.Main.Tests.pas
+Notes: Follow-up from remediation review on 2026-03-06; target the fallback path around `DefaultAsync` without changing public API signatures.
+
+### T-1086 [CORE] Define and test maxAsync enqueue-failure contract
+Outcome: Make the `maxAsync` scheduler behavior explicit when async enqueue/submission fails, with deterministic proof that the implementation either preserves async semantics or intentionally degrades in a documented way.
+Proof:
+- Command: `./build-and-run-tests.sh`
+- Expect: build, DUnitX suite, analysis thresholds, and API coverage all pass after adding fault-injection coverage.
+- Command: `rg -n "ScheduleAsync|RunAsync|RunDelayed|InlineScheduler|fault|enqueue" maxLogic.EventNexus.Threading.MaxAsync.pas tests/src/MaxEventNexus.Main.Tests.pas`
+- Expect: the scheduler path and deterministic regression coverage for enqueue/submission failure are present.
+Touches: maxLogic.EventNexus.Threading.MaxAsync.pas, tests/src/MaxEventNexus.Main.Tests.pas, README.md, spec.md
+Notes: Follow-up from remediation review on 2026-03-06; align behavior with spec section 3/4 if the current fallback is retained.
+
 ## Next – This Week
+
+### T-1087 [TEST] Add a discoverable root stress command
+Outcome: Provide a root-level stress entrypoint that exercises async, delayed-post, and coalescing paths so remediation and release workflows can run a concrete stress command after the main test suite.
+Proof:
+- Command: `rg --files -g '*stress*'`
+- Expect: repo root includes a stress runner or wrapper that is discoverable by name.
+- Command: `./build-and-run-tests.sh`
+- Expect: baseline build/test/analysis flow still passes after stress-entrypoint integration.
+- Command: `<new-root-stress-command>`
+- Expect: stress runner executes successfully and reports completion without hanging.
+Touches: build-and-run-tests.sh, build-and-run-tests.bat, tests/, bench/, README.md
+Notes: This task exists because the 2026-03-06 remediation workflow could not auto-discover a root stress command.
+
+### T-1088 [DOC] Refresh README after scheduler/default and suite changes
+Outcome: Update `README.md` so the published guidance reflects the current default scheduler recommendation, current unit-test counts, and the latest benchmark interpretation.
+Proof:
+- Command: `rg -n "recommended default|Tests \(DUnitX\)|Coverage depth|Performance and Scope Snapshot" README.md`
+- Expect: README reflects the current scheduler recommendation, updated test-count wording, and current benchmark notes.
+- Command: `./build-and-run-tests.sh`
+- Expect: docs-only updates do not break the normal build/test/analysis gate.
+Touches: README.md
+Notes: Complements ongoing task `T-1042`; use the current verified suite counts instead of stale numbers.
 
 ## Next – Later
 
@@ -25,6 +67,54 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1093 [DOC] Realign samples with the Delphi-only public API contract
+Summary: Updated the supported sample set to use the Delphi bridge contract (`TmaxBus` / `maxBusObj(...)`) and removed stale FPC-only sample residue.
+
+Details:
+- Rewrote touched samples to call generic APIs through `TmaxBus` / `maxBusObj(...)` instead of unsupported generic interface calls.
+- Removed the stale `fpc_delphimode.inc` include from `samples/ConsoleSample.pas` and the leftover `cthreads` conditional from `samples/UISampleConsole.pas`.
+- Updated `samples/readme.md` to document the Delphi-only bridge rule for generic sample APIs.
+- Proof: `./build-delphi.sh maxEventNexusGroup.groupproj -config Debug` (exit `0`).
+- Proof: `./build-and-run-tests.sh` (exit `0` after sample/doc updates).
+
+### T-1092 [CORE] Preserve delayed-post semantics on delayed scheduler submission failure
+Summary: Kept delayed-post handles contract-correct when delayed scheduler submission fails instead of degrading to immediate execution.
+
+Details:
+- Replaced the immediate fallback path in `ScheduleDelayedPost` with a delay-preserving anonymous-thread fallback that re-checks the clear epoch before dispatch.
+- Extended delayed-post handles so `IsPending` / `Cancel` invalidate immediately across `Clear` boundaries, including fallback-scheduled handles.
+- Added regression coverage for failing `RunDelayed` submission, including wait-before-delivery, `Cancel`, and `Clear` behavior.
+- Proof: `./build-and-run-tests.sh` (exit `0`).
+- Proof: `rg -n "ScheduleDelayedPost|RunDelayed|IsPending|Cancel|Clear" maxLogic.EventNexus.Core.pas tests/src/MaxEventNexus.Main.Tests.pas` (delay-preserving fallback + regression coverage present).
+
+### T-1091 [CORE] Enforce deferred per-topic ordering without scheduler FIFO assumptions
+Summary: Moved same-topic deferred ordering guarantees into the bus so deferred typed, named-of, and guid-of delivery no longer depends on scheduler FIFO behavior.
+
+Details:
+- Added per-topic deferred batch serialization to `TTypedTopic<T>` so only one same-topic deferred batch becomes runnable at a time.
+- Introduced a deferred batch runner that preserves ordering for direct `Post*` and `PostMany*` paths across `Async`, console `Main`, and `Background` deliveries.
+- Added deterministic reorder-scheduler regression coverage for typed, named-of, and guid-of direct/bulk posting.
+- Proof: `./build-and-run-tests.sh` (exit `0`).
+- Proof: `rg -n "EnqueueDeferredBatch|CompleteDeferredBatch|TypedAsyncPostsPreserveOrderAgainstReorderingScheduler|NamedOfMainPostsPreserveOrderAgainstReorderingScheduler|GuidOfBackgroundPostsPreserveOrderAgainstReorderingScheduler|TypedAsyncBulkPreservesOrderAgainstReorderingScheduler" maxLogic.EventNexus.Core.pas tests/src/MaxEventNexus.Main.Tests.pas` (serialization logic + direct/bulk ordering coverage present).
+
+### T-1090 [CORE] Reject all invalid AutoSubscribe attributed methods
+Summary: `AutoSubscribe` now fails fast for spec-invalid attributed methods instead of silently skipping unsupported forms.
+
+Details:
+- Added explicit validation for attributed class methods, constructors, destructors, repeated attributes, and abstract methods before binding subscriptions.
+- Kept valid attributed instance handlers working while broadening regression coverage for invalid forms.
+- Proof: `./build-and-run-tests.sh` (exit `0`).
+- Proof: `rg -n "MethodIsAbstract|Class method|Constructor|Destructor|InvalidAttributedFormsRaise" maxLogic.EventNexus.Core.pas tests/src/MaxEventNexus.Main.Tests.pas` (validation + regression coverage present).
+
+### T-1089 [CORE] Restore aggregate dispatch errors on inline Main and Background
+Summary: Restored synchronous aggregate error propagation for inline `Main` and inline `Background` dispatch while keeping async-hook forwarding intact.
+
+Details:
+- Inline `Main` on the main thread, console `DegradeToPosting`, and inline worker-thread `Background` now re-raise handler failures instead of reporting false success.
+- Added typed, named, and GUID regression coverage proving inline failures still forward to the async hook and now surface as `EmaxDispatchError`.
+- Proof: `./build-and-run-tests.sh` (exit `0`).
+- Proof: `rg -n "InlineMainOnMainThreadRaisesAndForwardsHookForTyped|DegradeToPostingRaisesAndForwardsHookForNamed|InlineBackgroundOnWorkerThreadRaisesAndForwardsHookForGuid" tests/src/MaxEventNexus.Main.Tests.pas` (inline aggregate-error regressions present).
 
 ### T-1082 [BENCH] Build cross-library benchmarks versus iPub and EventHorizon
 Summary: Extended `SchedulerCompare` to emit cross-library comparison rows for EventNexus, iPub, and EventHorizon in the same CSV contract used for scheduler benchmarks.

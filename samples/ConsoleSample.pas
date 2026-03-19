@@ -1,6 +1,5 @@
 program ConsoleSample;
 
-{$I ../fpc_delphimode.inc}
 {$APPTYPE CONSOLE}
 
 uses
@@ -32,10 +31,10 @@ begin
   Result := fText;
 end;
 
-  var
-    lBus: ImaxBus;
-    lPolicy: TmaxQueuePolicy;
-    lSub: ImaxSubscription;
+var
+  lBus: TmaxBus;
+  lPolicy: TmaxQueuePolicy;
+  lSub: ImaxSubscription;
 
 procedure OnInt(const aValue: Integer);
 begin
@@ -62,27 +61,19 @@ begin
   Result := IntToStr(aValue mod 10);
 end;
 
-  begin
-    lBus := maxBus;
+begin
+  lBus := maxBusObj;
 
   lPolicy.MaxDepth := 1;
   lPolicy.Overflow := DropOldest;
   lPolicy.DeadlineUs := 0;
-    (lBus as ImaxBusQueues).SetPolicyFor<Integer>(lPolicy);
-    (lBus as ImaxBusAdvanced).EnableSticky<Integer>(True);
-{$IFDEF FPC}
-    (lBus as ImaxBusAdvanced).EnableCoalesceOf<Integer>(@KeyOfInt);
-    lSub := lBus.Subscribe<Integer>(@OnInt);
-    lBus.SubscribeNamed('tick', @OnNamed);
-    lBus.SubscribeGuidOf<ITextMsg>(@OnGuid);
-    lBus.Subscribe<string>(@OnAsync, TmaxDelivery.Async);
-{$ELSE}
-    (lBus as ImaxBusAdvanced).EnableCoalesceOf<Integer>(KeyOfInt);
-    lSub := lBus.Subscribe<Integer>(OnInt);
-    lBus.SubscribeNamed('tick', OnNamed);
-    lBus.SubscribeGuidOf<ITextMsg>(OnGuid);
-    lBus.Subscribe<string>(OnAsync, TmaxDelivery.Async);
-{$ENDIF}
+  lBus.SetPolicyFor<Integer>(lPolicy);
+  lBus.EnableSticky<Integer>(True);
+  lBus.EnableCoalesceOf<Integer>(KeyOfInt);
+  lSub := lBus.Subscribe<Integer>(OnInt);
+  lBus.SubscribeNamed('tick', OnNamed);
+  lBus.SubscribeGuidOf<ITextMsg>(OnGuid);
+  lBus.Subscribe<string>(OnAsync, TmaxDelivery.Async);
 
   lBus.Post<Integer>(1);
   lBus.Post<Integer>(2);
@@ -95,4 +86,3 @@ end;
   Sleep(50);
   lSub.Unsubscribe;
 end.
-

@@ -363,6 +363,8 @@ type
 
   TTypedTopic<t> = class(TmaxTopicBase)
   private
+    fDeferredActive: boolean;
+    fDeferredBatches: TQueue<TmaxProc>;
     fSubs: TArray<TTypedSubscriber<t>>;
     fSubsVersion: UInt64;
     fSnapshotVersion: UInt64;
@@ -388,6 +390,8 @@ type
     procedure RemoveByToken(aToken: TmaxSubscriptionToken);
     function Snapshot: TArray<TTypedSubscriber<t>>;
     function SnapshotAndTryBeginDirectDispatch(out aSubs: TArray<TTypedSubscriber<t>>): boolean;
+    function EnqueueDeferredBatch(const aBatch: TmaxProc): boolean;
+    function CompleteDeferredBatch(out aNextBatch: TmaxProc): boolean;
     procedure RemoveByTarget(const aTarget: TObject); override;
     procedure SetSticky(aEnable: boolean); override;
     procedure ResetTopic; override;
@@ -406,6 +410,8 @@ type
   end;
 
   type
+    TmaxBus = class;
+
     TInvokeBox<T> = class
     private
       class var fPoolLock: TObject;
@@ -425,6 +431,34 @@ type
       procedure ReleaseToPool;
       class procedure Execute(const aBox: TInvokeBox<T>); static;
       class function MakeProc(const aBox: TInvokeBox<T>): TmaxProc; static;
+    end;
+
+    TDeferredDispatchItem<T> = record
+      Box: TInvokeBox<T>;
+      Mode: TmaxDelivery;
+      Token: TmaxSubscriptionToken;
+      SubscriberIndex: integer;
+    end;
+
+    TDeferredBatchRunner<T> = class(TInterfacedObject)
+    private
+      fKeepAlive: IInterface;
+      fBus: TmaxBus;
+      fItems: TArray<TDeferredDispatchItem<T>>;
+      fRaiseMainThreadRequired: boolean;
+      fTopic: TTypedTopic<T>;
+      fTopicName: TmaxString;
+      fErrors: TmaxExceptionList;
+      fErrorDetails: TArray<TmaxDispatchErrorDetail>;
+      procedure AddError(aMode: TmaxDelivery; aToken: TmaxSubscriptionToken; aSubscriberIndex: integer;
+        const aError: Exception);
+      procedure AbortWithMainThreadRequired(const aError: EmaxMainThreadRequired);
+      procedure Finish;
+      procedure RunNext(aIndex: integer);
+    public
+      constructor Create(const aBus: TmaxBus; const aTopicName: TmaxString; const aTopic: TTypedTopic<T>;
+        const aItems: TArray<TDeferredDispatchItem<T>>; aRaiseMainThreadRequired: boolean);
+      procedure Start;
     end;
 
   TmaxBus = class(TInterfacedObject, ImaxBus, ImaxBusAdvanced, ImaxBusQueues, ImaxBusMetrics, ImaxBusImpl)
@@ -662,9 +696,13 @@ type
 
   TmaxDelayedPostHandle = class(TInterfacedObject, ImaxDelayedPost)
   private
+    fBus: TmaxBus;
+    fEpoch: Int64;
     // 0 = pending, 1 = consumed (canceled, executed, or dropped)
     fState: integer;
+    procedure SyncEpoch;
   public
+    constructor Create(const aBus: TmaxBus; aEpoch: Int64);
     function Cancel: boolean;
     function IsPending: boolean;
   end;
@@ -2174,6 +2212,8 @@ end;
 constructor TTypedTopic<t>.Create;
 begin
   inherited Create;
+  fDeferredActive := False;
+  fDeferredBatches := TQueue<TmaxProc>.Create;
   fPendingLock := TmaxMonitorObject.Create;
   fNextToken := 1;
   fStickyFast := 0;
@@ -2366,6 +2406,44 @@ begin
     gDispatchTrace(lTrace);
 end;
 
+function TTypedTopic<t>.EnqueueDeferredBatch(const aBatch: TmaxProc): boolean;
+begin
+  Result := False;
+  if not Assigned(aBatch) then
+    Exit;
+
+  TMonitor.Enter(Self);
+  try
+    if not fDeferredActive then
+    begin
+      fDeferredActive := True;
+      Exit(True);
+    end;
+    fDeferredBatches.Enqueue(aBatch);
+  finally
+    TMonitor.Exit(Self);
+  end;
+end;
+
+function TTypedTopic<t>.CompleteDeferredBatch(out aNextBatch: TmaxProc): boolean;
+begin
+  aNextBatch := nil;
+  TMonitor.Enter(Self);
+  try
+    if fDeferredBatches.Count = 0 then
+    begin
+      fDeferredActive := False;
+      Exit(False);
+    end;
+    aNextBatch := fDeferredBatches.Dequeue();
+    Result := Assigned(aNextBatch);
+    if not Result then
+      fDeferredActive := False;
+  finally
+    TMonitor.Exit(Self);
+  end;
+end;
+
 procedure TTypedTopic<t>.RemoveByTarget(const aTarget: TObject);
 var
   lCount, lIdx, lOut: integer;
@@ -2434,6 +2512,8 @@ begin
     fHasLast := False;
     TInterlocked.Exchange(fStickyFast, 0);
     TInterlocked.Exchange(fHasDeferredFast, 0);
+    fDeferredActive := False;
+    fDeferredBatches.Clear;
   finally
     TMonitor.Exit(Self);
   end;
@@ -2630,6 +2710,7 @@ end;
 
 destructor TTypedTopic<t>.Destroy;
 begin
+  fDeferredBatches.Free;
   TMonitor.Enter(fPendingLock);
   try
     if fPending <> nil then
@@ -2966,13 +3047,29 @@ end;
 
 { TmaxDelayedPostHandle }
 
+constructor TmaxDelayedPostHandle.Create(const aBus: TmaxBus; aEpoch: Int64);
+begin
+  inherited Create;
+  fBus := aBus;
+  fEpoch := aEpoch;
+  fState := 0;
+end;
+
+procedure TmaxDelayedPostHandle.SyncEpoch;
+begin
+  if (fBus <> nil) and (TInterlocked.CompareExchange(fBus.fDelayedPostEpoch, 0, 0) <> fEpoch) then
+    TInterlocked.CompareExchange(fState, 1, 0);
+end;
+
 function TmaxDelayedPostHandle.Cancel: boolean;
 begin
+  SyncEpoch;
   Result := TInterlocked.CompareExchange(fState, 1, 0) = 0;
 end;
 
 function TmaxDelayedPostHandle.IsPending: boolean;
 begin
+  SyncEpoch;
   Result := TInterlocked.CompareExchange(fState, 0, 0) = 0;
 end;
 
@@ -3235,6 +3332,119 @@ begin
     begin
       Execute(aBox);
     end;
+end;
+
+{ TDeferredBatchRunner<T> }
+
+constructor TDeferredBatchRunner<T>.Create(const aBus: TmaxBus; const aTopicName: TmaxString;
+  const aTopic: TTypedTopic<T>; const aItems: TArray<TDeferredDispatchItem<T>>; aRaiseMainThreadRequired: boolean);
+begin
+  inherited Create;
+  fKeepAlive := Self;
+  fBus := aBus;
+  fItems := aItems;
+  fRaiseMainThreadRequired := aRaiseMainThreadRequired;
+  fTopic := aTopic;
+  fTopicName := aTopicName;
+end;
+
+procedure TDeferredBatchRunner<T>.AddError(aMode: TmaxDelivery; aToken: TmaxSubscriptionToken;
+  aSubscriberIndex: integer; const aError: Exception);
+begin
+  TmaxBus.AddDispatchError(fTopicName, aMode, aToken, aSubscriberIndex, aError, fErrors, fErrorDetails);
+end;
+
+procedure TDeferredBatchRunner<T>.AbortWithMainThreadRequired(const aError: EmaxMainThreadRequired);
+var
+  lKeepAlive: IInterface;
+  lNextBatch: TmaxProc;
+begin
+  lKeepAlive := fKeepAlive;
+  fKeepAlive := nil;
+  if fTopic.CompleteDeferredBatch(lNextBatch) then
+    try
+      lNextBatch();
+    except
+      on e: Exception do
+        if Assigned(gAsyncError) then
+          gAsyncError(fTopicName, e);
+    end;
+  raise EmaxMainThreadRequired.Create(aError.Message);
+end;
+
+procedure TDeferredBatchRunner<T>.Finish;
+var
+  lKeepAlive: IInterface;
+  lNextBatch: TmaxProc;
+begin
+  lKeepAlive := fKeepAlive;
+  fKeepAlive := nil;
+  if fTopic.CompleteDeferredBatch(lNextBatch) then
+    try
+      lNextBatch();
+    except
+      on e: Exception do
+        if Assigned(gAsyncError) then
+          gAsyncError(fTopicName, e);
+    end;
+  if fErrors <> nil then
+    raise EmaxDispatchError.Create(fErrors, fErrorDetails);
+end;
+
+procedure TDeferredBatchRunner<T>.RunNext(aIndex: integer);
+var
+  lItem: TDeferredDispatchItem<T>;
+  lReturned: boolean;
+  lStarted: boolean;
+  lStateObj: TmaxSubscriptionState;
+begin
+  if aIndex > High(fItems) then
+  begin
+    Finish;
+    Exit;
+  end;
+
+  lItem := fItems[aIndex];
+  lReturned := False;
+  lStarted := False;
+  try
+    fBus.Dispatch(fTopicName, lItem.Mode,
+      procedure
+      begin
+        lStarted := True;
+        try
+          TInvokeBox<T>.Execute(lItem.Box);
+        finally
+          if lReturned then
+            RunNext(aIndex + 1);
+        end;
+      end,
+      nil);
+    lReturned := True;
+    if lStarted then
+      RunNext(aIndex + 1);
+  except
+    on e: Exception do
+    begin
+      lReturned := True;
+      if not lStarted then
+      begin
+        lStateObj := lItem.Box.StateObj;
+        lItem.Box.ReleaseToPool;
+        if lStateObj <> nil then
+          lStateObj.Leave;
+      end;
+      if (e is EmaxMainThreadRequired) and fRaiseMainThreadRequired then
+        AbortWithMainThreadRequired(EmaxMainThreadRequired(e));
+      AddError(lItem.Mode, lItem.Token, lItem.SubscriberIndex, e);
+      RunNext(aIndex + 1);
+    end;
+  end;
+end;
+
+procedure TDeferredBatchRunner<T>.Start;
+begin
+  RunNext(0);
 end;
 
 type
@@ -3588,9 +3798,19 @@ begin
 end;
 
 procedure TmaxBus.AutoSubscribeInstance(const aInstance: TObject);
+const
+  cRttiMethodFlagAbstract = 1 shl 7;
 var
   lCtx: TRttiContext;
   lType: TRttiType;
+
+  function MethodIsAbstract(const aMethod: TRttiMethod): boolean;
+  begin
+    Result := aMethod.CodeAddress = nil;
+    if Result then
+      Exit;
+    Result := aMethod.HasExtendedInfo and ((PVmtMethodExEntry(aMethod.Handle)^.Flags and cRttiMethodFlagAbstract) <> 0);
+  end;
 
   procedure ProcessType(const aType: TRttiType);
   var
@@ -3611,8 +3831,6 @@ var
         Continue;
       if not (lMethod.Visibility in [mvPublic, mvProtected, mvPublished]) then
         Continue;
-      if lMethod.IsClassMethod or lMethod.IsConstructor or lMethod.IsDestructor then
-        Continue;
       lAttrInstance := nil;
       for lAttr in lMethod.GetAttributes do
         if lAttr is maxSubscribeAttribute then
@@ -3623,6 +3841,12 @@ var
         end;
       if lAttrInstance = nil then
         Continue;
+      if lMethod.IsClassMethod then
+        raise EmaxInvalidSubscription.CreateFmt('Class method %s.%s cannot be subscribed', [aType.ToString, lMethod.Name]);
+      if lMethod.IsConstructor then
+        raise EmaxInvalidSubscription.CreateFmt('Constructor %s.%s cannot be subscribed', [aType.ToString, lMethod.Name]);
+      if lMethod.IsDestructor then
+        raise EmaxInvalidSubscription.CreateFmt('Destructor %s.%s cannot be subscribed', [aType.ToString, lMethod.Name]);
       if lMethod.MethodKind <> mkProcedure then
         raise EmaxInvalidSubscription.CreateFmt('Method %s.%s must be a procedure', [aType.ToString, lMethod.Name]);
       lParams := lMethod.GetParameters;
@@ -3643,7 +3867,7 @@ var
         lFlags := lParams[0].Flags;
         if (pfVar in lFlags) or (pfOut in lFlags) then
           raise EmaxInvalidSubscription.CreateFmt('Parameter of %s.%s must be passed by value or const', [aType.ToString, lMethod.Name]);
-        if lMethod.CodeAddress = nil then
+        if MethodIsAbstract(lMethod) then
           raise EmaxInvalidSubscription.CreateFmt('Method %s.%s is abstract and cannot be subscribed', [aType.ToString, lMethod.Name]);
         lMethodPtr.Code := lMethod.CodeAddress;
         lMethodPtr.Data := aInstance;
@@ -3658,7 +3882,7 @@ var
       begin
         if Length(lParams) = 0 then
         begin
-          if lMethod.CodeAddress = nil then
+          if MethodIsAbstract(lMethod) then
             raise EmaxInvalidSubscription.CreateFmt('Method %s.%s is abstract and cannot be subscribed', [aType.ToString, lMethod.Name]);
           lMethodPtr.Code := lMethod.CodeAddress;
           lMethodPtr.Data := aInstance;
@@ -3674,7 +3898,7 @@ var
           lFlags := lParams[0].Flags;
           if (pfVar in lFlags) or (pfOut in lFlags) then
             raise EmaxInvalidSubscription.CreateFmt('Parameter of %s.%s must be passed by value or const', [aType.ToString, lMethod.Name]);
-          if lMethod.CodeAddress = nil then
+          if MethodIsAbstract(lMethod) then
             raise EmaxInvalidSubscription.CreateFmt('Method %s.%s is abstract and cannot be subscribed', [aType.ToString, lMethod.Name]);
           lMethodPtr.Code := lMethod.CodeAddress;
           lMethodPtr.Data := aInstance;
@@ -3712,31 +3936,28 @@ procedure TmaxBus.DispatchTypedSubscribers<t>(const aTopicName: TmaxString; cons
   const aSubs: TArray<TTypedSubscriber<t>>; const aValue: t; aRaiseMainThreadRequired: boolean);
 var
   i: Integer;
-  lBatchIdx: integer;
+  lBatchStart: TmaxProc;
+  lDeferredCapacity: integer;
+  lDeferredCount: integer;
+  lDeferredItems: TArray<TDeferredDispatchItem<t>>;
   lHandler: TmaxProcOf<t>;
   lMode: TmaxDelivery;
+  lRunner: TDeferredBatchRunner<t>;
   lToken: TmaxSubscriptionToken;
   lStateObj: TmaxSubscriptionState;
   lErrs: TmaxExceptionList;
   lErrDetails: TArray<TmaxDispatchErrorDetail>;
   lBox: TInvokeBox<t>;
   lDeliveredCount: integer;
-  lAsyncBoxes: TArray<TInvokeBox<t>>;
-  lAsyncTokens: TArray<TmaxSubscriptionToken>;
-  lAsyncIndexes: TArray<integer>;
-  lAsyncCount: integer;
-  lAsyncCapacity: integer;
   lHasDeferred: boolean;
 begin
   lErrs := nil;
   lErrDetails := nil;
+  lDeferredCount := 0;
+  lDeferredCapacity := 0;
   lDeliveredCount := 0;
-  lAsyncCount := 0;
-  lAsyncCapacity := 0;
   lHasDeferred := aTopic.HasDeferredSubscribers;
-  SetLength(lAsyncBoxes, 0);
-  SetLength(lAsyncTokens, 0);
-  SetLength(lAsyncIndexes, 0);
+  SetLength(lDeferredItems, 0);
 
   // Pass 1: inline subscribers (Posting).
   if lHasDeferred then
@@ -3872,103 +4093,52 @@ begin
         Continue;
       end;
 
-      if lMode = Async then
+      lBox := TInvokeBox<t>.Acquire;
+      lBox.Topic := aTopic;
+      lBox.Handler := lHandler;
+      lBox.Value := aValue;
+      lBox.Token := lToken;
+      lBox.StateObj := lStateObj;
+      if lDeferredCount = lDeferredCapacity then
       begin
-        lBox := TInvokeBox<t>.Acquire;
-        lBox.Topic := aTopic;
-        lBox.Handler := lHandler;
-        lBox.Value := aValue;
-        lBox.Token := lToken;
-        lBox.StateObj := lStateObj;
-        if lAsyncCount = lAsyncCapacity then
-        begin
-          Inc(lAsyncCapacity, 16);
-          SetLength(lAsyncBoxes, lAsyncCapacity);
-          SetLength(lAsyncTokens, lAsyncCapacity);
-          SetLength(lAsyncIndexes, lAsyncCapacity);
-        end;
-        lAsyncBoxes[lAsyncCount] := lBox;
-        lAsyncTokens[lAsyncCount] := lToken;
-        lAsyncIndexes[lAsyncCount] := i;
-        Inc(lAsyncCount);
-        Continue;
+        Inc(lDeferredCapacity, 16);
+        SetLength(lDeferredItems, lDeferredCapacity);
       end;
-
-      try
-        lBox := TInvokeBox<t>.Acquire;
-        lBox.Topic := aTopic;
-        lBox.Handler := lHandler;
-        lBox.Value := aValue;
-        lBox.Token := lToken;
-        lBox.StateObj := lStateObj;
-        try
-          Dispatch(aTopicName, lMode, TInvokeBox<t>.MakeProc(lBox), nil);
-        except
-          lBox.ReleaseToPool;
-          if lStateObj <> nil then
-            lStateObj.Leave;
-          raise;
-        end;
-      except
-        on e: EmaxMainThreadRequired do
-        begin
-          if aRaiseMainThreadRequired then
-            raise;
-          AddDispatchError(aTopicName, lMode, lToken, i, e, lErrs, lErrDetails);
-        end;
-        on e: Exception do
-        begin
-          AddDispatchError(aTopicName, lMode, lToken, i, e, lErrs, lErrDetails);
-        end;
-      end;
+      lDeferredItems[lDeferredCount].Box := lBox;
+      lDeferredItems[lDeferredCount].Mode := lMode;
+      lDeferredItems[lDeferredCount].Token := lToken;
+      lDeferredItems[lDeferredCount].SubscriberIndex := i;
+      Inc(lDeferredCount);
     end;
 
-    if lAsyncCount > 0 then
+    if lDeferredCount > 0 then
     begin
-      SetLength(lAsyncBoxes, lAsyncCount);
-      SetLength(lAsyncTokens, lAsyncCount);
-      SetLength(lAsyncIndexes, lAsyncCount);
-      try
-        Dispatch(aTopicName, Async,
-          procedure
-          var
-            lIdx: integer;
-          begin
-            for lIdx := 0 to High(lAsyncBoxes) do
-              try
-                InvokeWithTrace(aTopicName, Async, TInvokeBox<t>.MakeProc(lAsyncBoxes[lIdx]));
-              except
-                on e: Exception do
-                  if Assigned(gAsyncError) then
-                    gAsyncError(aTopicName, e);
-              end;
-          end, nil);
-      except
-        on e: EmaxMainThreadRequired do
+      SetLength(lDeferredItems, lDeferredCount);
+      lRunner := TDeferredBatchRunner<t>.Create(Self, aTopicName, aTopic, lDeferredItems, aRaiseMainThreadRequired);
+      lBatchStart :=
+        procedure
         begin
-          for lBatchIdx := 0 to lAsyncCount - 1 do
-          begin
-            lStateObj := lAsyncBoxes[lBatchIdx].StateObj;
-            lAsyncBoxes[lBatchIdx].ReleaseToPool;
-            if lStateObj <> nil then
-              lStateObj.Leave;
-          end;
-          if aRaiseMainThreadRequired then
-            raise;
-          for lBatchIdx := 0 to lAsyncCount - 1 do
-            AddDispatchError(aTopicName, Async, lAsyncTokens[lBatchIdx], lAsyncIndexes[lBatchIdx], e, lErrs, lErrDetails);
+          lRunner.Start;
         end;
-        on e: Exception do
-        begin
-          for lBatchIdx := 0 to lAsyncCount - 1 do
+      if aTopic.EnqueueDeferredBatch(lBatchStart) then
+      begin
+        try
+          lRunner.Start;
+        except
+          on e: EmaxMainThreadRequired do
           begin
-            lStateObj := lAsyncBoxes[lBatchIdx].StateObj;
-            lAsyncBoxes[lBatchIdx].ReleaseToPool;
-            if lStateObj <> nil then
-              lStateObj.Leave;
+            if aRaiseMainThreadRequired then
+              raise;
+            AddDispatchError(aTopicName, Posting, 0, -1, e, lErrs, lErrDetails);
           end;
-          for lBatchIdx := 0 to lAsyncCount - 1 do
-            AddDispatchError(aTopicName, Async, lAsyncTokens[lBatchIdx], lAsyncIndexes[lBatchIdx], e, lErrs, lErrDetails);
+          on e: EmaxDispatchError do
+          begin
+            MergeDispatchError(e, lErrs, lErrDetails);
+          end;
+          on e: Exception do
+          begin
+            AddDispatchError(aTopicName, Posting, 0, -1, e, lErrs, lErrDetails);
+          end;
         end;
       end;
     end;
@@ -4133,13 +4303,15 @@ end;
 
 function TmaxBus.ScheduleDelayedPost(const aPostProc: TmaxProc; aDelayMs: Cardinal): ImaxDelayedPost;
 var
+  lDelayMsCopy: Cardinal;
   lDelayUs: integer;
   lEpoch: Int64;
+  lFallbackThread: TThread;
   lHandle: ImaxDelayedPost;
 begin
-  lHandle := TmaxDelayedPostHandle.Create;
   lDelayUs := DelayMsToUs(aDelayMs);
   lEpoch := TInterlocked.CompareExchange(fDelayedPostEpoch, 0, 0);
+  lHandle := TmaxDelayedPostHandle.Create(Self, lEpoch);
   try
     fAsync.RunDelayed(
       procedure
@@ -4156,9 +4328,25 @@ begin
       end,
       lDelayUs);
   except
-    // Keep progress even when delayed scheduler submission fails.
-    if lHandle.Cancel and Assigned(aPostProc) then
-      aPostProc();
+    // Preserve delayed-post timing semantics even when the scheduler rejects delayed submission.
+    lDelayMsCopy := aDelayMs;
+    lFallbackThread := TThread.CreateAnonymousThread(
+      procedure
+      begin
+        if lDelayMsCopy > 0 then
+          Sleep(lDelayMsCopy);
+        if TInterlocked.CompareExchange(fDelayedPostEpoch, 0, 0) <> lEpoch then
+        begin
+          lHandle.Cancel;
+          Exit;
+        end;
+        if not lHandle.Cancel then
+          Exit;
+        if Assigned(aPostProc) then
+          aPostProc();
+      end);
+    lFallbackThread.FreeOnTerminate := True;
+    lFallbackThread.Start;
   end;
   Result := lHandle;
 end;
@@ -4338,6 +4526,7 @@ begin
               aOnException();
             if Assigned(gAsyncError) then
               gAsyncError(aTopic, e);
+            raise;
           end;
         end;
       end
@@ -4347,11 +4536,11 @@ begin
         begin
           fAsync.RunOnMain(
             procedure
-            begin
-              try
-                InvokeWithTrace(aTopic, aDelivery, aHandler);
-              except
-                on e: Exception do
+                begin
+                  try
+                    InvokeWithTrace(aTopic, aDelivery, aHandler);
+                  except
+                    on e: Exception do
                 begin
                   if Assigned(aOnException) then
                     aOnException();
@@ -4397,6 +4586,7 @@ begin
                       aOnException();
                     if Assigned(gAsyncError) then
                       gAsyncError(aTopic, e);
+                    raise;
                   end;
                 end;
               end;
@@ -4450,6 +4640,7 @@ begin
             aOnException();
           if Assigned(gAsyncError) then
             gAsyncError(aTopic, e);
+          raise;
         end;
       end;
   end;
