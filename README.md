@@ -219,6 +219,7 @@ Recommendation:
 - Default to `MaxAsync` for lowest async latency and highest throughput on current Delphi targets.
 - Use `RawThread` when you want a minimal dependency chain and predictable behavior in constrained runtime environments.
 - Use `TTask` when you explicitly want RTL-native scheduling semantics.
+- `MaxAsync` preserves async/delayed semantics on backend submission failure by falling back to dedicated-thread execution before any final inline safety net.
 
 Delay-resolution note:
 
@@ -269,7 +270,7 @@ maxSetMetricCallback(
 - Build tests: `./build-tests.sh`
 - Build + run tests: `./build-and-run-tests.sh`
 - Binary: `tests/MaxEventNexusTests.exe`
-- Coverage depth (current suite): 32 legacy test classes with 111 published test methods executed via the DUnitX compatibility fixture.
+- Coverage depth (current suite): the DUnitX compatibility fixture executes the active published-method regression suite from `tests/src`, including dedicated scheduler-contract coverage.
 - Diagnostics policy gate: build scripts enforce `build/diagnostics-policy.regex` and fail on untriaged warnings/hints.
 - API coverage proxy: `./build/report-api-test-coverage.sh --enforce-target` (target in `build/api-test-coverage-target.txt`, report in `build/analysis/test-api-coverage.md`).
 

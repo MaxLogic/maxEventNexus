@@ -2,8 +2,8 @@
 Next task ID: T-1100
 
 ## Summary
-Open tasks: 7 (In Progress: 0, Next Today: 3, Next This Week: 4, Next Later: 0, Blocked: 0)
-Done tasks: 115
+Open tasks: 5 (In Progress: 0, Next Today: 2, Next This Week: 3, Next Later: 0, Blocked: 0)
+Done tasks: 117
 
 ## In Progress
 
@@ -32,16 +32,6 @@ Proof:
 - Expect: the runtime and regression-test coverage for fallback scheduler initialization are both present.
 Touches: maxLogic.EventNexus.Core.pas, tests/src/MaxEventNexus.Main.Tests.pas
 Notes: Follow-up from remediation review on 2026-03-06; target the fallback path around `DefaultAsync` without changing public API signatures.
-
-### T-1086 [CORE] Define and test maxAsync enqueue-failure contract
-Outcome: Make the `maxAsync` scheduler behavior explicit when async enqueue/submission fails, with deterministic proof that the implementation either preserves async semantics or intentionally degrades in a documented way.
-Proof:
-- Command: `./build-and-run-tests.sh`
-- Expect: build, DUnitX suite, analysis thresholds, and API coverage all pass after adding fault-injection coverage.
-- Command: `rg -n "ScheduleAsync|RunAsync|RunDelayed|InlineScheduler|fault|enqueue" maxLogic.EventNexus.Threading.MaxAsync.pas tests/src/MaxEventNexus.Main.Tests.pas`
-- Expect: the scheduler path and deterministic regression coverage for enqueue/submission failure are present.
-Touches: maxLogic.EventNexus.Threading.MaxAsync.pas, tests/src/MaxEventNexus.Main.Tests.pas, README.md, spec.md
-Notes: Follow-up from remediation review on 2026-03-06; align behavior with spec section 3/4 if the current fallback is retained.
 
 ## Next – This Week
 
@@ -74,21 +64,6 @@ Verify: manual
 Ceremony: reduced
 Notes: Complements existing README-sync task `T-1088` by closing the specific spec-review drift items from gap `G-004`.
 
-### T-1097 [CORE] Normalize positive sub-millisecond RunDelayed semantics across schedulers
-Outcome:
-- Shipped scheduler adapters (`MaxAsync`, `TTask`, `RawThread`) use the same rule for positive sub-millisecond `aDelayUs` values so `1..999` microseconds never collapse to immediate execution on some backends and delayed execution on others.
-- Regression coverage proves the adapters preserve the agreed contract: negative delays clamp to `0`, `0` is immediate-eligible, and any positive delay remains delayed with rounding to supported timer granularity.
-- Coalescing behavior no longer varies by scheduler solely because adapters convert `aDelayUs` differently.
-Proof:
-- Run: `./build-and-run-tests.sh`
-  Expect: build, DUnitX suite, analysis thresholds, and API coverage all pass after scheduler normalization changes.
-- Run: `rg -n "RunDelayed|aDelayUs|SubMillisecond|round|delay" maxLogic.EventNexus.Threading.MaxAsync.pas maxLogic.EventNexus.Threading.TTask.pas maxLogic.EventNexus.Threading.RawThread.pas tests/src/MaxEventNexus.Main.Tests.pas`
-  Expect: adapters implement one positive-delay policy and deterministic parity tests exist.
-Touches: maxLogic.EventNexus.Threading.MaxAsync.pas, maxLogic.EventNexus.Threading.TTask.pas, maxLogic.EventNexus.Threading.RawThread.pas, tests/src/MaxEventNexus.Main.Tests.pas
-Deps: T-1095
-Verify: unit-test, build-only
-Notes: Implements the agreed 2026-03-19 proposal from gap `G-003`: preserve positive-delay semantics by rounding up to supported timer resolution instead of silently executing immediately.
-
 ### T-1087 [TEST] Add a discoverable root stress command
 Outcome: Provide a root-level stress entrypoint that exercises async, delayed-post, and coalescing paths so remediation and release workflows can run a concrete stress command after the main test suite.
 Proof:
@@ -115,6 +90,26 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1097 [CORE] Normalize positive sub-millisecond RunDelayed semantics across schedulers
+Summary: Unified the shipped scheduler adapters on one positive-delay rule and added runtime parity coverage so sub-millisecond delays no longer drift by backend.
+
+Details:
+- Added shared positive-delay rounding helpers to `TmaxAsyncScheduler`, `TmaxTTaskScheduler`, and `TmaxRawThreadScheduler` so negative delays clamp to `0`, `0` remains immediate-eligible, and `1..999us` rounds up instead of collapsing to immediate execution.
+- Added `TTestSchedulerContracts` with deterministic runtime coverage for zero-delay completion, positive sub-millisecond non-inline execution, and helper-level rounding parity across `MaxAsync`, `TTask`, and `RawThread`.
+- Wired the new scheduler fixture into `tests/MaxEventNexusTests.dpr` and refreshed the README test-suite wording to avoid stale numeric counts.
+- Proof: `./build-and-run-tests.sh` (exit `0`).
+- Proof: `rg -n "DelayUsToDelayMs|RuntimeDelayContractAcrossSchedulers|PositiveSubMillisecondDelaysRoundUpAcrossSchedulers" maxLogic.EventNexus.Threading.MaxAsync.pas maxLogic.EventNexus.Threading.TTask.pas maxLogic.EventNexus.Threading.RawThread.pas tests/src/MaxEventNexus.Scheduler.Tests.pas` (shared delay policy + runtime parity coverage present).
+
+### T-1086 [CORE] Define and test maxAsync enqueue-failure contract
+Summary: Made `maxAsync` enqueue and delayed-submission failure handling explicit, documented, and regression-tested.
+
+Details:
+- Refactored `TmaxAsyncScheduler.ScheduleAsync` into explicit enqueue, delayed-submit, and dedicated-thread fallback paths so backend submission failures preserve async/delayed semantics before a final inline safety net.
+- Added fault-injection scheduler tests proving enqueue failure stays off-thread and delayed-submit failure both stays off-thread and preserves the delay boundary.
+- Updated `spec.md` and `README.md` to document the retained contract for backend submission failure handling.
+- Proof: `./build-and-run-tests.sh` (exit `0`).
+- Proof: `rg -n "ScheduleAsync|EnqueueWork|SubmitDelayedWork|RunFallbackAsync|MaxAsyncEnqueueFailureFallsBackOffThread|MaxAsyncDelayedSubmissionFailureFallsBackOffThread" maxLogic.EventNexus.Threading.MaxAsync.pas tests/src/MaxEventNexus.Scheduler.Tests.pas` (explicit contract + deterministic fault-injection coverage present).
 
 ### T-1088 [DOC] Refresh README after scheduler/default and suite changes
 Summary: Refreshed the README to match the current scheduler guidance, current suite counts, and the documented delay/lifetime contracts.

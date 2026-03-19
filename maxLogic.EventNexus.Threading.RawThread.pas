@@ -8,6 +8,8 @@ uses
 
 type
   TmaxRawThreadScheduler = class(TInterfacedObject, IEventNexusScheduler)
+  protected
+    class function DelayUsToDelayMs(aDelayUs: Integer): Integer; static;
   public
     procedure RunAsync(const aProc: TmaxProc);
     procedure RunOnMain(const aProc: TmaxProc);
@@ -59,16 +61,20 @@ begin
     lProc();
 end;
 
+class function TmaxRawThreadScheduler.DelayUsToDelayMs(aDelayUs: Integer): Integer;
+begin
+  if aDelayUs <= 0 then
+    Exit(0);
+  Result := (aDelayUs + 999) div 1000;
+end;
+
 class procedure TmaxProcThread.StartAsync(const aProc: TmaxProc; aDelayUs: Integer);
 var
   lDelayMs: Integer;
 begin
   if not ProcAssigned(aProc) then
     Exit;
-  if aDelayUs > 0 then
-    lDelayMs := (aDelayUs + 999) div 1000
-  else
-    lDelayMs := 0;
+  lDelayMs := TmaxRawThreadScheduler.DelayUsToDelayMs(aDelayUs);
   TTask.Run(
     procedure
     begin
@@ -97,14 +103,8 @@ begin
 end;
 
 procedure TmaxRawThreadScheduler.RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);
-var
-  lDelay: Integer;
 begin
-  if aDelayUs < 0 then
-    lDelay := 0
-  else
-    lDelay := aDelayUs;
-  TmaxProcThread.StartAsync(aProc, lDelay);
+  TmaxProcThread.StartAsync(aProc, aDelayUs);
 end;
 
 function TmaxRawThreadScheduler.IsMainThread: Boolean;

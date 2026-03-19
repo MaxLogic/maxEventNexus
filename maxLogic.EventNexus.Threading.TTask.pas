@@ -10,6 +10,8 @@ type
   TmaxTTaskScheduler = class(TInterfacedObject, IEventNexusScheduler)
   private
     fPool: TThreadPool;
+  protected
+    class function DelayUsToDelayMs(aDelayUs: Integer): Integer; static;
   public
     constructor Create;
     destructor Destroy; override;
@@ -50,6 +52,13 @@ begin
   inherited Destroy;
 end;
 
+class function TmaxTTaskScheduler.DelayUsToDelayMs(aDelayUs: Integer): Integer;
+begin
+  if aDelayUs <= 0 then
+    Exit(0);
+  Result := (aDelayUs + 999) div 1000;
+end;
+
 procedure TmaxTTaskScheduler.RunAsync(const aProc: TmaxProc);
 begin
   if not ProcAssigned(aProc) then
@@ -81,26 +90,25 @@ begin
 end;
 
 procedure TmaxTTaskScheduler.RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);
+var
+  lDelayMs: Integer;
 begin
   if not ProcAssigned(aProc) then
     Exit;
+  lDelayMs := DelayUsToDelayMs(aDelayUs);
   try
     TTask.Run(
       procedure
-      var
-        lDelayMs: Integer;
       begin
-        if aDelayUs > 0 then
+        if lDelayMs > 0 then
         begin
-          lDelayMs := aDelayUs div 1000;
-          if lDelayMs > 0 then
-            TThread.Sleep(lDelayMs);
+          TThread.Sleep(lDelayMs);
         end;
         aProc();
       end, fPool);
   except
-    if aDelayUs > 0 then
-      TThread.Sleep(aDelayUs div 1000);
+    if lDelayMs > 0 then
+      TThread.Sleep(lDelayMs);
     aProc();
   end;
 end;

@@ -16,6 +16,7 @@ uses
   maxLogic.EventNexus.Threading.RawThread in '..\maxLogic.EventNexus.Threading.RawThread.pas',
   maxLogic.EventNexus.Threading.TTask in '..\maxLogic.EventNexus.Threading.TTask.pas',
   MaxEventNexus.Main.Tests in 'src\MaxEventNexus.Main.Tests.pas',
+  MaxEventNexus.Scheduler.Tests in 'src\MaxEventNexus.Scheduler.Tests.pas',
   MaxEventNexus.Testing in 'src\MaxEventNexus.Testing.pas';
 
 type
@@ -56,6 +57,7 @@ begin
     TTestBulkDispatch,
     TTestWildcardNamed,
     TTestDelayedPosting,
+    TTestSchedulerContracts,
     TTestUnsubscribeAll,
     TTestWeakTargets,
     TTestStrongTargets,

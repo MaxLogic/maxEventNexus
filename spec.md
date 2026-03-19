@@ -129,6 +129,7 @@ Delay timing contract:
 - Negative delays clamp to `0`.
 - `0` means "eligible immediately".
 - Any positive `aDelayUs` must remain delayed, even if an adapter rounds up to the nearest supported timer resolution.
+- The shipped `maxAsync` adapter preserves async/delayed semantics on primary-backend submission failure by falling back to dedicated-thread execution; inline execution is a final safety net only if even thread creation fails.
 
 ## 4. Delivery semantics
 
