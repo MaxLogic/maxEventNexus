@@ -1,6 +1,12 @@
 # EventNexus Samples
 
-Sample programs demonstrating current Delphi EventNexus usage.
+Sample programs demonstrating the supported Delphi 12+ EventNexus usage.
+
+Bridge rule for samples:
+
+- Use `TmaxBus` / `maxBusObj(...)` when calling generic bus APIs such as `Subscribe<T>`, `Post<T>`, `PostMany*`, `EnableSticky<T>`, and `EnableCoalesce*`.
+- Keep interface-typed references only for non-generic APIs.
+- The samples are Delphi-only; stale FPC-only include patterns are intentionally not used here.
 
 - `AutoSubscribeSample.pas`: attribute-based registration with `AutoSubscribe` / `AutoUnsubscribe`.
 - `ManualSubscribeSample.pas`: explicit subscribe/unsubscribe patterns.

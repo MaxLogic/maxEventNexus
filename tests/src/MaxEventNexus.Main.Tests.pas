@@ -50,7 +50,9 @@ type
 
   TTestAsyncExceptions = class(TmaxTestCase)
   published
-    procedure ErrorsForwardToHookNoRaise;
+    procedure InlineMainOnMainThreadRaisesAndForwardsHookForTyped;
+    procedure DegradeToPostingRaisesAndForwardsHookForNamed;
+    procedure InlineBackgroundOnWorkerThreadRaisesAndForwardsHookForGuid;
     procedure InlineSchedulerPostNamedAsyncForwardsError;
     procedure InlineSchedulerTryPostNamedAsyncForwardsError;
   end;
@@ -158,6 +160,32 @@ type
     procedure Execute; override;
   end;
 
+  TNamedDispatchCaptureThread = class(TThread)
+  public
+    fBus: ImaxBus;
+    fDelivery: integer;
+    fRaisedClass: string;
+    fRaisedMessage: string;
+    fRaisedTopic: string;
+    fTopicName: TmaxString;
+    constructor Create(const aBus: ImaxBus; const aTopicName: TmaxString);
+  protected
+    procedure Execute; override;
+  end;
+
+  TGuidDispatchCaptureThread = class(TThread)
+  public
+    fBus: ImaxBus;
+    fDelivery: integer;
+    fRaisedClass: string;
+    fRaisedMessage: string;
+    fRaisedTopic: string;
+    fValue: integer;
+    constructor Create(const aBus: ImaxBus; aValue: integer);
+  protected
+    procedure Execute; override;
+  end;
+
   TTestNamedTopics = class(TmaxTestCase)
   published
     procedure StickyAndCoalesceNamed;
@@ -246,7 +274,7 @@ type
     procedure RegistersTypedNamedAndInherited;
     procedure AutoUnsubscribeClearsHandlers;
     procedure UnsubscribeAllForClearsAutoSubscriptions;
-    procedure InvalidSignatureRaises;
+    procedure InvalidAttributedFormsRaise;
     procedure NamedNoArgBindsCorrectMethod;
     procedure GuidOneParamBindsAndUnsubscribes;
   end;
@@ -348,6 +376,12 @@ type
     procedure NamedOfBulkPreservesOrder;
     procedure GuidOfBulkPreservesOrder;
     procedure BulkAggregatesAcrossItems;
+    procedure TypedAsyncPostsPreserveOrderAgainstReorderingScheduler;
+    procedure NamedOfMainPostsPreserveOrderAgainstReorderingScheduler;
+    procedure GuidOfBackgroundPostsPreserveOrderAgainstReorderingScheduler;
+    procedure TypedAsyncBulkPreservesOrderAgainstReorderingScheduler;
+    procedure NamedOfMainBulkPreservesOrderAgainstReorderingScheduler;
+    procedure GuidOfBackgroundBulkPreservesOrderAgainstReorderingScheduler;
   end;
 
   TTestWildcardNamed = class(TmaxTestCase)
@@ -369,6 +403,8 @@ type
     procedure ZeroDelayDispatchesAndUpdatesMetrics;
     procedure LargeDelayRemainsPendingUntilCanceled;
     procedure TypedLargeDelayRemainsPendingUntilCanceled;
+    procedure SchedulerFailureStillWaitsBeforeNamedDelivery;
+    procedure SchedulerFailureCancelAndClearPreventDelayedDelivery;
   end;
 
   TTestMetricsCallbackTotals = class(TmaxTestCase)
@@ -447,6 +483,37 @@ type
     procedure Bad(const aFirst, aSecond: integer);
   end;
 
+  TBadAutoSubClassMethod = class
+  public
+    [maxSubscribe]
+    class procedure BadClass(const aValue: integer);
+  end;
+
+  TBadAutoSubCtor = class
+  public
+    [maxSubscribe]
+    constructor Create;
+  end;
+
+  TBadAutoSubDtor = class
+  public
+    [maxSubscribe]
+    destructor Destroy; override;
+  end;
+
+  TAbstractAutoSub = class abstract
+  public
+    [maxSubscribe]
+    procedure OnInt(const aValue: integer); virtual; abstract;
+  end;
+
+  TRepeatedAutoSub = class
+  public
+    [maxSubscribe]
+    [maxSubscribe('dup')]
+    procedure OnInt(const aValue: integer);
+  end;
+
   TAutoSubNamedNoArg = class
   public
     FirstHits: integer;
@@ -487,6 +554,28 @@ end;
 procedure TBadAutoSub.Bad(const aFirst, aSecond: integer);
 begin
   if aFirst = aSecond then
+    Exit;
+end;
+
+class procedure TBadAutoSubClassMethod.BadClass(const aValue: integer);
+begin
+  if aValue = -1 then
+    Exit;
+end;
+
+constructor TBadAutoSubCtor.Create;
+begin
+  inherited Create;
+end;
+
+destructor TBadAutoSubDtor.Destroy;
+begin
+  inherited Destroy;
+end;
+
+procedure TRepeatedAutoSub.OnInt(const aValue: integer);
+begin
+  if aValue = -1 then
     Exit;
 end;
 
@@ -645,6 +734,32 @@ type
 
   THoldDelayedScheduler = class(TInterfacedObject, IEventNexusScheduler)
   public
+    procedure RunAsync(const aProc: TmaxProc);
+    procedure RunOnMain(const aProc: TmaxProc);
+    procedure RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);
+    function IsMainThread: Boolean;
+  end;
+
+  TRaiseDelayedScheduler = class(TInterfacedObject, IEventNexusScheduler)
+  public
+    procedure RunAsync(const aProc: TmaxProc);
+    procedure RunOnMain(const aProc: TmaxProc);
+    procedure RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);
+    function IsMainThread: Boolean;
+  end;
+
+  TReverseScheduler = class(TInterfacedObject, IEventNexusScheduler)
+  private
+    fAsyncQueue: TList<TmaxProc>;
+    fMainQueue: TList<TmaxProc>;
+    procedure DrainReverse(const aQueue: TList<TmaxProc>);
+  public
+    constructor Create;
+    destructor Destroy; override;
+    function AsyncCount: integer;
+    function MainCount: integer;
+    procedure DrainAsyncReverse;
+    procedure DrainMainReverse;
     procedure RunAsync(const aProc: TmaxProc);
     procedure RunOnMain(const aProc: TmaxProc);
     procedure RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);
@@ -968,6 +1083,98 @@ begin
 end;
 
 function THoldDelayedScheduler.IsMainThread: Boolean;
+begin
+  Result := False;
+end;
+
+procedure TRaiseDelayedScheduler.RunAsync(const aProc: TmaxProc);
+begin
+  if ProcAssigned(aProc) then
+    aProc();
+end;
+
+procedure TRaiseDelayedScheduler.RunOnMain(const aProc: TmaxProc);
+begin
+  if ProcAssigned(aProc) then
+    aProc();
+end;
+
+procedure TRaiseDelayedScheduler.RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);
+begin
+  if aDelayUs = -1 then
+    Exit;
+  raise Exception.Create('run-delayed submit failed');
+end;
+
+function TRaiseDelayedScheduler.IsMainThread: Boolean;
+begin
+  Result := False;
+end;
+
+constructor TReverseScheduler.Create;
+begin
+  inherited Create;
+  fAsyncQueue := TList<TmaxProc>.Create;
+  fMainQueue := TList<TmaxProc>.Create;
+end;
+
+destructor TReverseScheduler.Destroy;
+begin
+  fMainQueue.Free;
+  fAsyncQueue.Free;
+  inherited Destroy;
+end;
+
+function TReverseScheduler.AsyncCount: integer;
+begin
+  Result := fAsyncQueue.Count;
+end;
+
+function TReverseScheduler.MainCount: integer;
+begin
+  Result := fMainQueue.Count;
+end;
+
+procedure TReverseScheduler.DrainReverse(const aQueue: TList<TmaxProc>);
+var
+  lProc: TmaxProc;
+begin
+  while aQueue.Count > 0 do
+  begin
+    lProc := aQueue[aQueue.Count - 1];
+    aQueue.Delete(aQueue.Count - 1);
+    if ProcAssigned(lProc) then
+      lProc();
+  end;
+end;
+
+procedure TReverseScheduler.DrainAsyncReverse;
+begin
+  DrainReverse(fAsyncQueue);
+end;
+
+procedure TReverseScheduler.DrainMainReverse;
+begin
+  DrainReverse(fMainQueue);
+end;
+
+procedure TReverseScheduler.RunAsync(const aProc: TmaxProc);
+begin
+  fAsyncQueue.Add(aProc);
+end;
+
+procedure TReverseScheduler.RunOnMain(const aProc: TmaxProc);
+begin
+  fMainQueue.Add(aProc);
+end;
+
+procedure TReverseScheduler.RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);
+begin
+  if (aDelayUs = 0) and ProcAssigned(aProc) then
+    aProc();
+end;
+
+function TReverseScheduler.IsMainThread: Boolean;
 begin
   Result := False;
 end;
@@ -1676,6 +1883,7 @@ begin
   Randomize;
   lBus := maxBus;
   lBus.Clear;
+  maxSetMainThreadPolicy(TmaxMainThreadPolicy.DegradeToPosting);
   lDelivered := 0;
   for i := Low(lSubs) to High(lSubs) do
   begin
@@ -1707,94 +1915,170 @@ end;
 
 { TTestAsyncExceptions }
 
-procedure TTestAsyncExceptions.ErrorsForwardToHookNoRaise;
-const
-  cTopicAsync = 0;
-  cTopicMain = 1;
-  cTopicBg = 2;
-  cTopicNames: array[0..2] of string = ('t.async', 't.main', 't.bg');
-  cExpectedMessages: array[0..2] of string = ('async boom', 'main boom', 'bg boom');
-  cModes: array[0..2] of TmaxDelivery = (TmaxDelivery.Async, TmaxDelivery.Main, TmaxDelivery.Background);
+procedure TTestAsyncExceptions.InlineMainOnMainThreadRaisesAndForwardsHookForTyped;
 var
   lBus: ImaxBus;
-  lEvents: array[0..2] of TEvent;
-  lMessages: array[0..2] of string;
-  lIdx: integer;
-  lTry: integer;
+  lErrorEvent: TEvent;
+  lError: string;
+  lSub: ImaxSubscription;
+  lTopic: string;
+  lTypeName: string;
 begin
   lBus := maxBus;
   lBus.Clear;
   maxSetMainThreadPolicy(TmaxMainThreadPolicy.DegradeToPosting);
-
-  for lIdx := Low(lEvents) to High(lEvents) do
-  begin
-    lEvents[lIdx] := TEvent.Create(nil, True, False, '');
-    lMessages[lIdx] := '';
-  end;
+  lErrorEvent := TEvent.Create(nil, True, False, '');
+  lError := '';
+  lTopic := '';
+  lTypeName := GetTypeName(TypeInfo(integer));
   try
     maxSetAsyncErrorHandler(
       procedure(const aTopic: string; const aE: Exception)
-      var
-        i: integer;
       begin
-        for i := Low(cTopicNames) to High(cTopicNames) do
-        begin
-          if SameText(aTopic, cTopicNames[i]) then
-          begin
-            lMessages[i] := aE.Message;
-            lEvents[i].SetEvent;
-            Break;
-          end;
-        end;
+        lTopic := aTopic;
+        lError := aE.Message;
+        lErrorEvent.SetEvent;
       end);
 
-    lBus.SubscribeNamed(cTopicNames[cTopicAsync],
-      procedure
+    lSub := maxBusObj(lBus).Subscribe<integer>(
+      procedure(const aValue: integer)
       begin
-        raise Exception.Create(cExpectedMessages[cTopicAsync]);
+        raise Exception.Create('typed main boom');
       end,
-      cModes[cTopicAsync]);
-    lBus.SubscribeNamed(cTopicNames[cTopicMain],
-      procedure
-      begin
-        raise Exception.Create(cExpectedMessages[cTopicMain]);
-      end,
-      cModes[cTopicMain]);
-    lBus.SubscribeNamed(cTopicNames[cTopicBg],
-      procedure
-      begin
-        raise Exception.Create(cExpectedMessages[cTopicBg]);
-      end,
-      cModes[cTopicBg]);
+      TmaxDelivery.Main);
 
     try
-      for lIdx := Low(cTopicNames) to High(cTopicNames) do
-        lBus.PostNamed(cTopicNames[lIdx]);
+      maxBusObj(lBus).Post<integer>(7);
+      Check(False, 'Expected EmaxDispatchError for inline Main typed post');
     except
-      on e: Exception do
-        Check(False, 'No exception should escape PostNamed for Main/Async/Background; got ' + e.ClassName + ': ' + e.Message);
+      on lEx: EmaxDispatchError do
+      begin
+        CheckEquals(1, lEx.Inner.Count);
+        CheckEquals(1, Length(lEx.Details));
+        CheckEquals('typed main boom', lEx.Details[0].ExceptionMessage);
+        CheckEquals(lTypeName, lEx.Details[0].Topic);
+        CheckEquals(Integer(TmaxDelivery.Main), Integer(lEx.Details[0].Delivery));
+      end;
     end;
 
-    {$IFDEF max_DELPHI}
-    lTry := 0;
-    while lTry <= 200 do
-    begin
-      if lEvents[cTopicMain].WaitFor(0) = wrSignaled then
-        Break;
-      CheckSynchronize(25);
-      Inc(lTry);
-    end;
-    {$ENDIF}
-
-    Check(lEvents[cTopicMain].WaitFor(5000) = wrSignaled, 'Main error hook not invoked');
-    Check(lEvents[cTopicAsync].WaitFor(5000) = wrSignaled, 'Async error hook not invoked');
-    Check(lEvents[cTopicBg].WaitFor(5000) = wrSignaled, 'Background error hook not invoked');
-    for lIdx := Low(cExpectedMessages) to High(cExpectedMessages) do
-      CheckEquals(cExpectedMessages[lIdx], lMessages[lIdx]);
+    Check(lErrorEvent.WaitFor(1000) = wrSignaled, 'Inline Main typed hook not invoked');
+    CheckEquals(lTypeName, lTopic);
+    CheckEquals('typed main boom', lError);
   finally
     maxSetAsyncErrorHandler(nil);
-    for lIdx := Low(lEvents) to High(lEvents) do
-      lEvents[lIdx].Free;
+    lSub := nil;
+    lBus.Clear;
+    lErrorEvent.Free;
+  end;
+end;
+
+procedure TTestAsyncExceptions.DegradeToPostingRaisesAndForwardsHookForNamed;
+var
+  lBus: ImaxBus;
+  lErrorEvent: TEvent;
+  lError: string;
+  lSub: ImaxSubscription;
+  lThread: TNamedDispatchCaptureThread;
+  lTopic: string;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  maxSetMainThreadPolicy(TmaxMainThreadPolicy.DegradeToPosting);
+  lErrorEvent := TEvent.Create(nil, True, False, '');
+  lError := '';
+  lTopic := '';
+  try
+    maxSetAsyncErrorHandler(
+      procedure(const aTopic: string; const aE: Exception)
+      begin
+        lTopic := aTopic;
+        lError := aE.Message;
+        lErrorEvent.SetEvent;
+      end);
+
+    lSub := lBus.SubscribeNamed('inline.main.named',
+      procedure
+      begin
+        raise Exception.Create('named main boom');
+      end,
+      TmaxDelivery.Main);
+
+    lThread := TNamedDispatchCaptureThread.Create(lBus, 'inline.main.named');
+    try
+      lThread.Start;
+      lThread.WaitFor;
+      CheckEquals('EmaxDispatchError', lThread.fRaisedClass);
+      CheckEquals('named main boom', lThread.fRaisedMessage);
+      CheckEquals(UpperCase('inline.main.named'), lThread.fRaisedTopic);
+      CheckEquals(Integer(TmaxDelivery.Main), lThread.fDelivery);
+    finally
+      lThread.Free;
+    end;
+
+    Check(lErrorEvent.WaitFor(1000) = wrSignaled, 'Named Main hook not invoked');
+    CheckEquals(UpperCase('inline.main.named'), lTopic);
+    CheckEquals('named main boom', lError);
+  finally
+    maxSetAsyncErrorHandler(nil);
+    lSub := nil;
+    lBus.Clear;
+    lErrorEvent.Free;
+  end;
+end;
+
+procedure TTestAsyncExceptions.InlineBackgroundOnWorkerThreadRaisesAndForwardsHookForGuid;
+var
+  lBus: ImaxBus;
+  lErrorEvent: TEvent;
+  lError: string;
+  lSub: ImaxSubscription;
+  lThread: TGuidDispatchCaptureThread;
+  lTopic: string;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  maxSetMainThreadPolicy(TmaxMainThreadPolicy.DegradeToPosting);
+  lErrorEvent := TEvent.Create(nil, True, False, '');
+  lError := '';
+  lTopic := '';
+  try
+    maxSetAsyncErrorHandler(
+      procedure(const aTopic: string; const aE: Exception)
+      begin
+        lTopic := aTopic;
+        lError := aE.Message;
+        lErrorEvent.SetEvent;
+      end);
+
+    lSub := maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
+      procedure(const aValue: IIntEvent)
+      begin
+        if aValue = nil then
+          Exit;
+        raise Exception.Create('guid bg boom');
+      end,
+      TmaxDelivery.Background);
+
+    lThread := TGuidDispatchCaptureThread.Create(lBus, 9);
+    try
+      lThread.Start;
+      lThread.WaitFor;
+      CheckEquals('EmaxDispatchError', lThread.fRaisedClass);
+      CheckEquals('guid bg boom', lThread.fRaisedMessage);
+      Check(lThread.fRaisedTopic <> '', 'Expected a guid-topic detail key');
+      CheckEquals(Integer(TmaxDelivery.Background), lThread.fDelivery);
+    finally
+      lThread.Free;
+    end;
+
+    Check(lErrorEvent.WaitFor(1000) = wrSignaled, 'Guid Background hook not invoked');
+    Check(lTopic <> '', 'Expected guid async hook topic');
+    CheckEquals('guid bg boom', lError);
+  finally
+    maxSetAsyncErrorHandler(nil);
+    lSub := nil;
+    lBus.Clear;
+    lErrorEvent.Free;
   end;
 end;
 
@@ -2675,25 +2959,104 @@ begin
   end;
 end;
 
-procedure TTestAutoSubscribe.InvalidSignatureRaises;
+procedure TTestAutoSubscribe.InvalidAttributedFormsRaise;
 var
-  lBad: TBadAutoSub;
+  lAbstract: TAbstractAutoSub;
+  lInvalid: TObject;
   lRaised: boolean;
 begin
-  lBad := TBadAutoSub.Create;
+  lAbstract := nil;
   try
     maxBus.Clear;
+
+    lInvalid := TBadAutoSub.Create;
+    try
+      lRaised := False;
+      try
+        AutoSubscribe(lInvalid);
+      except
+        on E: EmaxInvalidSubscription do
+          lRaised := True;
+      end;
+      Check(lRaised, 'Expected multi-parameter attributed method to raise EmaxInvalidSubscription');
+    finally
+      AutoUnsubscribe(lInvalid);
+      lInvalid.Free;
+    end;
+
+    lInvalid := TBadAutoSubClassMethod.Create;
+    try
+      lRaised := False;
+      try
+        AutoSubscribe(lInvalid);
+      except
+        on E: EmaxInvalidSubscription do
+          lRaised := True;
+      end;
+      Check(lRaised, 'Expected attributed class method to raise EmaxInvalidSubscription');
+    finally
+      AutoUnsubscribe(lInvalid);
+      lInvalid.Free;
+    end;
+
+    lInvalid := TBadAutoSubCtor.Create;
+    try
+      lRaised := False;
+      try
+        AutoSubscribe(lInvalid);
+      except
+        on E: EmaxInvalidSubscription do
+          lRaised := True;
+      end;
+      Check(lRaised, 'Expected attributed constructor to raise EmaxInvalidSubscription');
+    finally
+      AutoUnsubscribe(lInvalid);
+      lInvalid.Free;
+    end;
+
+    lInvalid := TBadAutoSubDtor.Create;
+    try
+      lRaised := False;
+      try
+        AutoSubscribe(lInvalid);
+      except
+        on E: EmaxInvalidSubscription do
+          lRaised := True;
+      end;
+      Check(lRaised, 'Expected attributed destructor to raise EmaxInvalidSubscription');
+    finally
+      AutoUnsubscribe(lInvalid);
+      lInvalid.Free;
+    end;
+
+    lInvalid := TRepeatedAutoSub.Create;
+    try
+      lRaised := False;
+      try
+        AutoSubscribe(lInvalid);
+      except
+        on E: EmaxInvalidSubscription do
+          lRaised := True;
+      end;
+      Check(lRaised, 'Expected repeated maxSubscribe attributes to raise EmaxInvalidSubscription');
+    finally
+      AutoUnsubscribe(lInvalid);
+      lInvalid.Free;
+    end;
+
+    lAbstract := TAbstractAutoSub(TAbstractAutoSub.NewInstance);
     lRaised := False;
     try
-      AutoSubscribe(lBad);
+      AutoSubscribe(lAbstract);
     except
       on E: EmaxInvalidSubscription do
         lRaised := True;
     end;
-    Check(lRaised, 'Expected EmaxInvalidSubscription to be raised');
+    Check(lRaised, 'Expected abstract attributed method to raise EmaxInvalidSubscription');
   finally
-    AutoUnsubscribe(lBad);
-    lBad.Free;
+    AutoUnsubscribe(lAbstract);
+    if lAbstract <> nil then
+      lAbstract.FreeInstance;
     maxBus.Clear;
   end;
 end;
@@ -2795,6 +3158,70 @@ begin
     begin
       fRaised := True;
       fRaisedClass := E.ClassName;
+    end;
+  end;
+end;
+
+{ TNamedDispatchCaptureThread }
+
+constructor TNamedDispatchCaptureThread.Create(const aBus: ImaxBus; const aTopicName: TmaxString);
+begin
+  inherited Create(True);
+  FreeOnTerminate := False;
+  fBus := aBus;
+  fDelivery := -1;
+  fRaisedClass := '';
+  fRaisedMessage := '';
+  fRaisedTopic := '';
+  fTopicName := aTopicName;
+end;
+
+procedure TNamedDispatchCaptureThread.Execute;
+begin
+  try
+    fBus.PostNamed(fTopicName);
+  except
+    on lEx: EmaxDispatchError do
+    begin
+      fRaisedClass := lEx.ClassName;
+      if Length(lEx.Details) > 0 then
+      begin
+        fRaisedMessage := lEx.Details[0].ExceptionMessage;
+        fRaisedTopic := lEx.Details[0].Topic;
+        fDelivery := Integer(lEx.Details[0].Delivery);
+      end;
+    end;
+  end;
+end;
+
+{ TGuidDispatchCaptureThread }
+
+constructor TGuidDispatchCaptureThread.Create(const aBus: ImaxBus; aValue: integer);
+begin
+  inherited Create(True);
+  FreeOnTerminate := False;
+  fBus := aBus;
+  fDelivery := -1;
+  fRaisedClass := '';
+  fRaisedMessage := '';
+  fRaisedTopic := '';
+  fValue := aValue;
+end;
+
+procedure TGuidDispatchCaptureThread.Execute;
+begin
+  try
+    maxBusObj(fBus).PostGuidOf<IIntEvent>(TIntEvent.Create(fValue));
+  except
+    on lEx: EmaxDispatchError do
+    begin
+      fRaisedClass := lEx.ClassName;
+      if Length(lEx.Details) > 0 then
+      begin
+        fRaisedMessage := lEx.Details[0].ExceptionMessage;
+        fRaisedTopic := lEx.Details[0].Topic;
+        fDelivery := Integer(lEx.Details[0].Delivery);
+      end;
     end;
   end;
 end;
@@ -5701,6 +6128,262 @@ begin
   end;
 end;
 
+procedure TTestBulkDispatch.TypedAsyncPostsPreserveOrderAgainstReorderingScheduler;
+var
+  lBus: ImaxBus;
+  lPreviousScheduler: IEventNexusScheduler;
+  lScheduler: TReverseScheduler;
+  lValues: TList<integer>;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lPreviousScheduler := maxGetAsyncScheduler;
+  lScheduler := TReverseScheduler.Create;
+  lValues := TList<integer>.Create;
+  try
+    maxSetAsyncScheduler(lScheduler);
+    maxBusObj(lBus).Subscribe<integer>(
+      procedure(const aValue: integer)
+      begin
+        lValues.Add(aValue);
+      end,
+      TmaxDelivery.Async);
+    maxBusObj(lBus).Post<integer>(1);
+    maxBusObj(lBus).Post<integer>(2);
+    maxBusObj(lBus).Post<integer>(3);
+    CheckEquals(1, lScheduler.AsyncCount, 'Same-topic async posts should expose only one runnable batch at a time');
+    lScheduler.DrainAsyncReverse;
+    CheckEquals(3, lValues.Count);
+    CheckEquals(1, lValues[0]);
+    CheckEquals(2, lValues[1]);
+    CheckEquals(3, lValues[2]);
+  finally
+    maxSetAsyncScheduler(lPreviousScheduler);
+    lValues.Free;
+  end;
+end;
+
+procedure TTestBulkDispatch.NamedOfMainPostsPreserveOrderAgainstReorderingScheduler;
+var
+  lBus: ImaxBus;
+  lDone: TEvent;
+  lPreviousScheduler: IEventNexusScheduler;
+  lRaisedMessage: string;
+  lScheduler: TReverseScheduler;
+  lThread: TThread;
+  lValues: TList<integer>;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lPreviousScheduler := maxGetAsyncScheduler;
+  lScheduler := TReverseScheduler.Create;
+  lDone := TEvent.Create(nil, True, False, '');
+  lValues := TList<integer>.Create;
+  try
+    maxSetAsyncScheduler(lScheduler);
+    maxSetMainThreadPolicy(TmaxMainThreadPolicy.DegradeToAsync);
+    maxBusObj(lBus).SubscribeNamedOf<integer>('post.ordered.main',
+      procedure(const aValue: integer)
+      begin
+        lValues.Add(aValue);
+      end,
+      TmaxDelivery.Main);
+    lRaisedMessage := '';
+    lThread := TThread.CreateAnonymousThread(
+      procedure
+      begin
+        try
+          maxBusObj(lBus).PostNamedOf<integer>('post.ordered.main', 4);
+          maxBusObj(lBus).PostNamedOf<integer>('post.ordered.main', 5);
+          maxBusObj(lBus).PostNamedOf<integer>('post.ordered.main', 6);
+        except
+          on e: Exception do
+            lRaisedMessage := e.ClassName + ': ' + e.Message;
+        end;
+        lDone.SetEvent;
+      end);
+    lThread.FreeOnTerminate := False;
+    lThread.Start;
+    Check(lDone.WaitFor(1000) = wrSignaled, 'Timed out waiting for off-main named posts');
+    lThread.WaitFor;
+    lThread.Free;
+    CheckEquals('', lRaisedMessage);
+    CheckEquals(1, lScheduler.AsyncCount, 'Main delivery posts should serialize same-topic batches before scheduler dequeue');
+    lScheduler.DrainAsyncReverse;
+    CheckEquals(3, lValues.Count);
+    CheckEquals(4, lValues[0]);
+    CheckEquals(5, lValues[1]);
+    CheckEquals(6, lValues[2]);
+  finally
+    maxSetMainThreadPolicy(TmaxMainThreadPolicy.DegradeToPosting);
+    maxSetAsyncScheduler(lPreviousScheduler);
+    lDone.Free;
+    lValues.Free;
+  end;
+end;
+
+procedure TTestBulkDispatch.GuidOfBackgroundPostsPreserveOrderAgainstReorderingScheduler;
+var
+  lBus: ImaxBus;
+  lPreviousScheduler: IEventNexusScheduler;
+  lScheduler: TReverseScheduler;
+  lValues: TList<integer>;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lPreviousScheduler := maxGetAsyncScheduler;
+  lScheduler := TReverseScheduler.Create;
+  lValues := TList<integer>.Create;
+  try
+    maxSetAsyncScheduler(lScheduler);
+    maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
+      procedure(const aValue: IIntEvent)
+      begin
+        lValues.Add(aValue.GetValue);
+      end,
+      TmaxDelivery.Background);
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(7));
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(8));
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(9));
+    CheckEquals(1, lScheduler.AsyncCount, 'Background delivery posts should preserve same-topic order without scheduler FIFO');
+    lScheduler.DrainAsyncReverse;
+    CheckEquals(3, lValues.Count);
+    CheckEquals(7, lValues[0]);
+    CheckEquals(8, lValues[1]);
+    CheckEquals(9, lValues[2]);
+  finally
+    maxSetAsyncScheduler(lPreviousScheduler);
+    lValues.Free;
+  end;
+end;
+
+procedure TTestBulkDispatch.TypedAsyncBulkPreservesOrderAgainstReorderingScheduler;
+var
+  lBus: ImaxBus;
+  lPreviousScheduler: IEventNexusScheduler;
+  lScheduler: TReverseScheduler;
+  lValues: TList<integer>;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lPreviousScheduler := maxGetAsyncScheduler;
+  lScheduler := TReverseScheduler.Create;
+  lValues := TList<integer>.Create;
+  try
+    maxSetAsyncScheduler(lScheduler);
+    maxBusObj(lBus).Subscribe<integer>(
+      procedure(const aValue: integer)
+      begin
+        lValues.Add(aValue);
+      end,
+      TmaxDelivery.Async);
+    maxBusObj(lBus).PostMany<integer>([1, 2, 3]);
+    CheckEquals(1, lScheduler.AsyncCount, 'Same-topic async bulk should expose only one runnable batch at a time');
+    lScheduler.DrainAsyncReverse;
+    CheckEquals(3, lValues.Count);
+    CheckEquals(1, lValues[0]);
+    CheckEquals(2, lValues[1]);
+    CheckEquals(3, lValues[2]);
+  finally
+    maxSetAsyncScheduler(lPreviousScheduler);
+    lValues.Free;
+  end;
+end;
+
+procedure TTestBulkDispatch.NamedOfMainBulkPreservesOrderAgainstReorderingScheduler;
+var
+  lBus: ImaxBus;
+  lDone: TEvent;
+  lPreviousScheduler: IEventNexusScheduler;
+  lRaisedMessage: string;
+  lScheduler: TReverseScheduler;
+  lThread: TThread;
+  lValues: TList<integer>;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lPreviousScheduler := maxGetAsyncScheduler;
+  lScheduler := TReverseScheduler.Create;
+  lDone := TEvent.Create(nil, True, False, '');
+  lValues := TList<integer>.Create;
+  try
+    maxSetAsyncScheduler(lScheduler);
+    maxSetMainThreadPolicy(TmaxMainThreadPolicy.DegradeToAsync);
+    maxBusObj(lBus).SubscribeNamedOf<integer>('bulk.ordered.main',
+      procedure(const aValue: integer)
+      begin
+        lValues.Add(aValue);
+      end,
+      TmaxDelivery.Main);
+    lRaisedMessage := '';
+    lThread := TThread.CreateAnonymousThread(
+      procedure
+      begin
+        try
+          maxBusObj(lBus).PostManyNamedOf<integer>('bulk.ordered.main', [4, 5, 6]);
+        except
+          on e: Exception do
+            lRaisedMessage := e.ClassName + ': ' + e.Message;
+        end;
+        lDone.SetEvent;
+      end);
+    lThread.FreeOnTerminate := False;
+    lThread.Start;
+    Check(lDone.WaitFor(1000) = wrSignaled, 'Timed out waiting for off-main named bulk post');
+    lThread.WaitFor;
+    lThread.Free;
+    CheckEquals('', lRaisedMessage);
+    CheckEquals(1, lScheduler.AsyncCount, 'Main delivery in console mode should serialize same-topic batches before scheduler dequeue');
+    lScheduler.DrainAsyncReverse;
+    CheckEquals(3, lValues.Count);
+    CheckEquals(4, lValues[0]);
+    CheckEquals(5, lValues[1]);
+    CheckEquals(6, lValues[2]);
+  finally
+    maxSetMainThreadPolicy(TmaxMainThreadPolicy.DegradeToPosting);
+    maxSetAsyncScheduler(lPreviousScheduler);
+    lDone.Free;
+    lValues.Free;
+  end;
+end;
+
+procedure TTestBulkDispatch.GuidOfBackgroundBulkPreservesOrderAgainstReorderingScheduler;
+var
+  lBus: ImaxBus;
+  lPreviousScheduler: IEventNexusScheduler;
+  lScheduler: TReverseScheduler;
+  lValues: TList<integer>;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lPreviousScheduler := maxGetAsyncScheduler;
+  lScheduler := TReverseScheduler.Create;
+  lValues := TList<integer>.Create;
+  try
+    maxSetAsyncScheduler(lScheduler);
+    maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
+      procedure(const aValue: IIntEvent)
+      begin
+        lValues.Add(aValue.GetValue);
+      end,
+      TmaxDelivery.Background);
+    maxBusObj(lBus).PostManyGuidOf<IIntEvent>([
+      IIntEvent(TIntEvent.Create(7)),
+      IIntEvent(TIntEvent.Create(8)),
+      IIntEvent(TIntEvent.Create(9))
+    ]);
+    CheckEquals(1, lScheduler.AsyncCount, 'Background delivery should preserve same-topic order without relying on scheduler FIFO');
+    lScheduler.DrainAsyncReverse;
+    CheckEquals(3, lValues.Count);
+    CheckEquals(7, lValues[0]);
+    CheckEquals(8, lValues[1]);
+    CheckEquals(9, lValues[2]);
+  finally
+    maxSetAsyncScheduler(lPreviousScheduler);
+    lValues.Free;
+  end;
+end;
+
 { TTestWildcardNamed }
 
 procedure TTestWildcardNamed.PrefixAndGlobalWildcardMatch;
@@ -6188,6 +6871,97 @@ begin
     CheckEquals(0, lHits);
     lSub := nil;
   finally
+    maxSetAsyncScheduler(lPrevScheduler);
+    lDone.Free;
+  end;
+end;
+
+procedure TTestDelayedPosting.SchedulerFailureStillWaitsBeforeNamedDelivery;
+const
+  cDelayMs = 150;
+var
+  lBus: ImaxBus;
+  lDone: TEvent;
+  lHandle: ImaxDelayedPost;
+  lHits: integer;
+  lPrevScheduler: IEventNexusScheduler;
+  lSub: ImaxSubscription;
+begin
+  lBus := maxBus;
+  lPrevScheduler := maxGetAsyncScheduler;
+  maxSetAsyncScheduler(TRaiseDelayedScheduler.Create);
+  lBus.Clear;
+  lDone := TEvent.Create(nil, True, False, '');
+  lHits := 0;
+  try
+    lSub := lBus.SubscribeNamed('delayed.fail.named',
+      procedure
+      begin
+        Inc(lHits);
+        lDone.SetEvent;
+      end,
+      TmaxDelivery.Posting);
+
+    lHandle := lBus.PostDelayedNamed('delayed.fail.named', cDelayMs);
+    Check(lHandle <> nil);
+    Check(lHandle.IsPending);
+    Check(lDone.WaitFor(50) = wrTimeout, 'Delayed scheduler fallback dispatched too early');
+    Check(lHandle.IsPending, 'Delayed scheduler fallback should remain pending before the delay expires');
+    CheckEquals(0, lHits);
+
+    Check(lDone.WaitFor(3000) = wrSignaled, 'Delayed scheduler fallback never delivered');
+    CheckEquals(1, lHits);
+    Check(not lHandle.IsPending, 'Handle should not stay pending after fallback delivery');
+  finally
+    lSub := nil;
+    maxSetAsyncScheduler(lPrevScheduler);
+    lDone.Free;
+  end;
+end;
+
+procedure TTestDelayedPosting.SchedulerFailureCancelAndClearPreventDelayedDelivery;
+const
+  cDelayMs = 400;
+var
+  lBus: ImaxBus;
+  lDone: TEvent;
+  lHandleCancel: ImaxDelayedPost;
+  lHandleClear: ImaxDelayedPost;
+  lHits: integer;
+  lPrevScheduler: IEventNexusScheduler;
+  lSub: ImaxSubscription;
+begin
+  lBus := maxBus;
+  lPrevScheduler := maxGetAsyncScheduler;
+  maxSetAsyncScheduler(TRaiseDelayedScheduler.Create);
+  lBus.Clear;
+  lDone := TEvent.Create(nil, True, False, '');
+  lHits := 0;
+  try
+    lSub := lBus.SubscribeNamed('delayed.fail.control',
+      procedure
+      begin
+        Inc(lHits);
+        lDone.SetEvent;
+      end,
+      TmaxDelivery.Posting);
+
+    lHandleCancel := lBus.PostDelayedNamed('delayed.fail.control', cDelayMs);
+    Check(lHandleCancel <> nil);
+    Check(lHandleCancel.IsPending);
+    Check(lHandleCancel.Cancel, 'Cancel should succeed while fallback delayed post is pending');
+    Check(not lHandleCancel.IsPending);
+
+    lHandleClear := lBus.PostDelayedNamed('delayed.fail.control', cDelayMs);
+    Check(lHandleClear <> nil);
+    Check(lHandleClear.IsPending);
+    lBus.Clear;
+    Check(not lHandleClear.IsPending, 'Clear should invalidate fallback delayed handles created before the clear boundary');
+
+    Check(lDone.WaitFor(900) = wrTimeout, 'Canceled or cleared delayed fallback posts should not deliver');
+    CheckEquals(0, lHits);
+  finally
+    lSub := nil;
     maxSetAsyncScheduler(lPrevScheduler);
     lDone.Free;
   end;

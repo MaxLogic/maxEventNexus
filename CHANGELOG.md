@@ -6,9 +6,16 @@
 - Expanded DUnitX coverage for delayed named-of/guid posting, GUID queue-preset precedence, and `PostResult` named-of/guid paths. (T-1081)
 - Expanded `TTestPostResult` with GUID queue-pressure assertions for `PostResultGuidOf<T>` (`Queued` and `Dropped` outcomes). (T-1084)
 - Added lightweight API coverage proxy reporting with numeric target enforcement (`build/report-api-test-coverage.*`, target file, and default test-flow gate). (T-1084)
+- Deferred typed, named-of, and guid-of ordering now serializes same-topic deferred batches inside the bus, with deterministic reorder-scheduler coverage for direct `Post*` and `PostMany*` paths. (T-1091)
+- Supported samples now use the Delphi bridge contract (`TmaxBus` / `maxBusObj(...)`) and the sample docs explicitly document Delphi-only generic API usage. (T-1093)
 - `bench/SchedulerCompare` now emits cross-library comparison rows (`framework-compare`) for `EventNexus(TTask)`, `iPub`, and `EventHorizon` in the same CSV contract as scheduler rows. (T-1082)
 - Benchmark threshold gates now validate only `scheduler-compare` rows, so cross-library rows can coexist without breaking scheduler regression checks. (T-1082)
 - Scheduler benchmark project search paths now include `reference/` so iPub/EventHorizon comparison units build in CLI workflows. (T-1082)
+
+### Fixed
+- Inline `Main` dispatch on the main thread, console `DegradeToPosting`, and inline worker-thread `Background` now re-raise synchronous handler failures as `EmaxDispatchError` while still forwarding the async hook. (T-1089)
+- `AutoSubscribe` now rejects attributed class methods, constructors, destructors, repeated attributes, and abstract methods instead of silently skipping invalid bindings. (T-1090)
+- Delayed post fallback no longer executes immediately when delayed scheduler submission fails, and delayed handles now invalidate correctly across `Cancel` / `Clear` boundaries. (T-1092)
 
 ## [1.1.0] - 2026-02-26
 

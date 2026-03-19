@@ -18,13 +18,15 @@ begin
 end;
 
 var
+  lBus: TmaxBus;
   lWorker: TWorker;
   lSub: ImaxSubscription;
 begin
+  lBus := maxBusObj;
   lWorker := TWorker.Create;
   try
-    lSub := maxBus.Subscribe<Integer>(lWorker.OnPing);
-    maxBus.Post<Integer>(42);
+    lSub := lBus.Subscribe<Integer>(lWorker.OnPing);
+    lBus.Post<Integer>(42);
     lSub.Unsubscribe;
   finally
     lWorker.Free;

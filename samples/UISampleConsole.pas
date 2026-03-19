@@ -3,7 +3,6 @@ program UISampleConsole;
 {$APPTYPE CONSOLE}
 
 uses
-  {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils,
   Classes,
   maxLogic.EventNexus;
@@ -35,17 +34,19 @@ var
 begin
   for i := 1 to 1000 do
   begin
-    maxBus.Post<Integer>(i);
+    maxBusObj.Post<Integer>(i);
     Sleep(1);
   end;
 end;
 
 var
+  lBus: TmaxBus;
   lProd: TProducer;
   lSub: ImaxSubscription;
 begin
-  (maxBus as ImaxBusAdvanced).EnableCoalesceOf<Integer>(@KeyOf, 100000);
-  lSub := maxBus.Subscribe<Integer>(@OnValue, TmaxDelivery.Main);
+  lBus := maxBusObj;
+  lBus.EnableCoalesceOf<Integer>(KeyOf, 100000);
+  lSub := lBus.Subscribe<Integer>(OnValue, TmaxDelivery.Main);
   lProd := TProducer.Create(False);
   while not gDone do
     CheckSynchronize(10);
@@ -53,4 +54,3 @@ begin
   lProd.Free;
   lSub.Unsubscribe;
 end.
-
