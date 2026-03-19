@@ -105,6 +105,163 @@ begin
   end;
 end;
 
+function RunStressSuite: Integer;
+const
+  cAsyncPosts = 2000;
+  cDelayedPosts = 40;
+var
+  lAsyncDone: TEvent;
+  lAsyncHits: Integer;
+  lBus: ImaxBus;
+  lCoalesceDone: TEvent;
+  lCoalesceHits: Integer;
+  lCoalesceLock: TObject;
+  lDeliveredByKey: TDictionary<string, Integer>;
+  lDelayedDone: TEvent;
+  lDelayedHits: Integer;
+
+  procedure RunAsyncPhase;
+  var
+    lIdx: Integer;
+    lLock: TObject;
+    lValue: Integer;
+  begin
+    lAsyncDone := TEvent.Create(nil, True, False, '');
+    lLock := TObject.Create;
+    lAsyncHits := 0;
+    try
+      lBus.Clear;
+      maxBusObj(lBus).Subscribe<Integer>(
+        procedure(const aEvent: Integer)
+        begin
+          TMonitor.Enter(lLock);
+          try
+            Inc(lAsyncHits);
+            lValue := lAsyncHits;
+          finally
+            TMonitor.Exit(lLock);
+          end;
+          if lValue = cAsyncPosts then
+            lAsyncDone.SetEvent;
+        end,
+        TmaxDelivery.Async);
+      for lIdx := 1 to cAsyncPosts do
+        maxBusObj(lBus).Post<Integer>(lIdx);
+      if lAsyncDone.WaitFor(10000) <> wrSignaled then
+        raise Exception.Create('Stress async phase timed out');
+      if lAsyncHits <> cAsyncPosts then
+        raise Exception.CreateFmt('Stress async phase expected %d hits but got %d', [cAsyncPosts, lAsyncHits]);
+    finally
+      lLock.Free;
+      lAsyncDone.Free;
+    end;
+  end;
+
+  procedure RunDelayedPhase;
+  var
+    lIdx: Integer;
+    lLock: TObject;
+    lValue: Integer;
+  begin
+    lDelayedDone := TEvent.Create(nil, True, False, '');
+    lLock := TObject.Create;
+    lDelayedHits := 0;
+    try
+      lBus.Clear;
+      lBus.SubscribeNamed('stress.delayed',
+        procedure
+        begin
+          TMonitor.Enter(lLock);
+          try
+            Inc(lDelayedHits);
+            lValue := lDelayedHits;
+          finally
+            TMonitor.Exit(lLock);
+          end;
+          if lValue = cDelayedPosts then
+            lDelayedDone.SetEvent;
+        end,
+        TmaxDelivery.Posting);
+      for lIdx := 1 to cDelayedPosts do
+        lBus.PostDelayedNamed('stress.delayed', 15);
+      if lDelayedDone.WaitFor(10000) <> wrSignaled then
+        raise Exception.Create('Stress delayed-post phase timed out');
+      if lDelayedHits <> cDelayedPosts then
+        raise Exception.CreateFmt('Stress delayed-post phase expected %d hits but got %d',
+          [cDelayedPosts, lDelayedHits]);
+    finally
+      lLock.Free;
+      lDelayedDone.Free;
+    end;
+  end;
+
+  procedure RunCoalescePhase;
+  var
+    lEvent: TKeyed;
+    lIdx: Integer;
+  begin
+    lCoalesceDone := TEvent.Create(nil, True, False, '');
+    lCoalesceHits := 0;
+    lCoalesceLock := TObject.Create;
+    lDeliveredByKey := TDictionary<string, Integer>.Create;
+    try
+      lBus.Clear;
+      maxBusObj(lBus).EnableCoalesceOf<TKeyed>(
+        function(const aValue: TKeyed): TmaxString
+        begin
+          Result := aValue.Key;
+        end,
+        0);
+      maxBusObj(lBus).Subscribe<TKeyed>(
+        procedure(const aValue: TKeyed)
+        begin
+          TMonitor.Enter(lCoalesceLock);
+          try
+            lDeliveredByKey.AddOrSetValue(aValue.Key, aValue.Value);
+            Inc(lCoalesceHits);
+            if (lDeliveredByKey.Count = 2) and lDeliveredByKey.ContainsKey('A') and lDeliveredByKey.ContainsKey('B') and
+              (lDeliveredByKey['A'] = 100) and (lDeliveredByKey['B'] = 200) then
+              lCoalesceDone.SetEvent;
+          finally
+            TMonitor.Exit(lCoalesceLock);
+          end;
+        end,
+        TmaxDelivery.Posting);
+      for lIdx := 1 to 100 do
+      begin
+        lEvent.Key := 'A';
+        lEvent.Value := lIdx;
+        maxBusObj(lBus).Post<TKeyed>(lEvent);
+      end;
+      for lIdx := 1 to 200 do
+      begin
+        lEvent.Key := 'B';
+        lEvent.Value := lIdx;
+        maxBusObj(lBus).Post<TKeyed>(lEvent);
+      end;
+      if lCoalesceDone.WaitFor(5000) <> wrSignaled then
+        raise Exception.Create('Stress coalesce phase timed out');
+      if lCoalesceHits < 2 then
+        raise Exception.CreateFmt('Stress coalesce phase expected at least 2 deliveries but got %d', [lCoalesceHits]);
+    finally
+      lDeliveredByKey.Free;
+      lCoalesceLock.Free;
+      lCoalesceDone.Free;
+    end;
+  end;
+begin
+  lBus := TmaxBus.Create(CreateMaxAsyncScheduler);
+  try
+    RunAsyncPhase;
+    RunDelayedPhase;
+    RunCoalescePhase;
+    Writeln('STRESS PASS');
+    Result := 0;
+  finally
+    lBus := nil;
+  end;
+end;
+
 procedure TEventNexusLegacyFixture.RunLegacySuite;
 begin
   RunPublishedTests('MaxEventNexus', [
@@ -154,6 +311,8 @@ var
 begin
   if HasArg('--default-async-race-probe') then
     Halt(RunDefaultAsyncRaceProbe);
+  if HasArg('--stress-suite') then
+    Halt(RunStressSuite);
 
   lLogsDir := TPath.Combine(ExtractFilePath(ParamStr(0)), 'logs');
   if TDirectory.Exists(lLogsDir) then

@@ -79,6 +79,7 @@ type
   TTestStress = class(TmaxTestCase)
   published
     procedure OneMillionPosts;
+    procedure StressSuiteSwitchRunsSuccessfully;
   end;
 
   TPostBurstThread = class(TThread)
@@ -2330,6 +2331,15 @@ begin
       lSubs[i] := nil;
     maxSetAsyncScheduler(lPrevSched);
   end;
+end;
+
+procedure TTestStress.StressSuiteSwitchRunsSuccessfully;
+var
+  lExitCode: Cardinal;
+begin
+  lExitCode := RunProcessAndGetExitCode(ParamStr(0), '--stress-suite');
+  CheckEquals(0, Integer(lExitCode),
+    Format('Stress suite switch reported exit code %d', [lExitCode]));
 end;
 
 { TIntEvent }
