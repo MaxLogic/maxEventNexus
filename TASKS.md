@@ -2,26 +2,14 @@
 Next task ID: T-1100
 
 ## Summary
-Open tasks: 1 (In Progress: 0, Next Today: 0, Next This Week: 1, Next Later: 0, Blocked: 0)
-Done tasks: 121
+Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
+Done tasks: 122
 
 ## In Progress
 
 ## Next – Today
 
 ## Next – This Week
-
-### T-1087 [TEST] Add a discoverable root stress command
-Outcome: Provide a root-level stress entrypoint that exercises async, delayed-post, and coalescing paths so remediation and release workflows can run a concrete stress command after the main test suite.
-Proof:
-- Command: `rg --files -g '*stress*'`
-- Expect: repo root includes a stress runner or wrapper that is discoverable by name.
-- Command: `./build-and-run-tests.sh`
-- Expect: baseline build/test/analysis flow still passes after stress-entrypoint integration.
-- Command: `<new-root-stress-command>`
-- Expect: stress runner executes successfully and reports completion without hanging.
-Touches: build-and-run-tests.sh, build-and-run-tests.bat, tests/, bench/, README.md
-Notes: This task exists because the 2026-03-06 remediation workflow could not auto-discover a root stress command.
 
 ## Next – Later
 
@@ -37,6 +25,18 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1087 [TEST] Add a discoverable root stress command
+Summary: Added a root-level stress runner and a dedicated `--stress-suite` path so remediation and release workflows can run a concrete async/delayed/coalesce stress command after the normal suite.
+
+Details:
+- Added root wrappers `run-stress.sh` and `run-stress.bat` that build the test binary and execute `tests/MaxEventNexusTests.exe --stress-suite`.
+- Extended `tests/MaxEventNexusTests.dpr` with a dedicated stress suite covering async delivery, delayed-post delivery, and coalescing convergence, and reporting `STRESS PASS` on success.
+- Added `TTestStress.StressSuiteSwitchRunsSuccessfully` so the normal test suite regression-covers the new stress entrypoint.
+- Updated `README.md` to advertise the root stress command.
+- Proof: `rg --files -g '*stress*'` (root stress runner files present).
+- Proof: `./build-and-run-tests.sh` (exit `0`, including the stress-switch regression test).
+- Proof: `./run-stress.sh` (exit `0`, outputs `STRESS PASS`).
 
 ### T-1099 [BENCH] Add a benchmark-contract smoke step to the default verification flow
 Summary: The standard verification entrypoint now exercises `SchedulerCompare` directly and fails automatically if the documented benchmark CSV contract drifts.

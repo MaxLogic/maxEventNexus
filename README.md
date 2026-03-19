@@ -269,6 +269,7 @@ maxSetMetricCallback(
 
 - Build tests: `./build-tests.sh`
 - Build + run tests: `./build-and-run-tests.sh`
+- Stress runner: `./run-stress.sh`
 - Binary: `tests/MaxEventNexusTests.exe`
 - Coverage depth (current suite): the DUnitX compatibility fixture executes the active published-method regression suite from `tests/src`, including dedicated scheduler-contract coverage.
 - Default verification also runs a lightweight `bench/SchedulerCompare` smoke profile and validates the documented benchmark CSV contract.

@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- Added root stress entrypoints `run-stress.sh` / `run-stress.bat` and a dedicated `--stress-suite` mode in the test binary for on-demand async/delayed/coalesce stress runs. (T-1087)
 - Default verification now builds `bench/SchedulerCompare`, runs a lightweight smoke profile, and validates the benchmark CSV contract automatically before completing the normal green gate. (T-1099)
 - Shipped scheduler adapters (`MaxAsync`, `TTask`, `RawThread`) now share one positive-delay conversion rule: negative clamps to `0`, `0` stays immediate-eligible, and `1..999us` rounds up instead of collapsing inline on some backends. (T-1097)
 - Documented intentional `SubscribeStrong*` APIs plus their caller-owned lifetime contract in the spec, README, design notes, and migration guide. (T-1094)
