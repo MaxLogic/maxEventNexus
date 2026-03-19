@@ -7,6 +7,7 @@ This guide maps common iPub/NX Horizon usage into current EventNexus APIs and ru
 - Interface layer (`ImaxBus*`) is non-generic on Delphi.
 - Generic APIs live on `TmaxBus`.
 - Use `maxBusObj` (or `maxBusObj(aBusInterface)`) when we need generic `TmaxBus` calls.
+- Object-method subscriptions are weak-liveness tracked by default; `SubscribeStrong*` variants intentionally opt out when we fully own subscriber lifetime.
 - Test harness is DUnitX (`tests/MaxEventNexusTests.dpr`).
 
 ## Recommended subscription lifetime pattern
@@ -16,6 +17,7 @@ This guide maps common iPub/NX Horizon usage into current EventNexus APIs and ru
 - Keep token in a field for lifecycle ownership.
 - Set token to `nil` in teardown/destructor for auto-unsubscribe.
 - Explicit `Unsubscribe` remains valid and idempotent.
+- Prefer default weak subscriptions unless we intentionally choose `SubscribeStrong*` and can guarantee subscriber lifetime until teardown.
 
 ## iPub to EventNexus mapping
 

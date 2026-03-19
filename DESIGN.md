@@ -37,6 +37,7 @@ For object-method subscriptions we capture a weak target token (pointer + genera
 - Object destruction increments generation via the weak registry hook.
 - Dispatch compares stored generation vs current generation.
 - Mismatch means stale target; invocation is skipped and subscription is pruned.
+- `SubscribeStrong*` variants intentionally bypass this weak-target path for callers that own subscriber lifetime explicitly.
 
 This avoids AV-probing as a liveness strategy.
 
@@ -77,6 +78,7 @@ Coalescing:
 - Optional key selector maps event to coalesce key.
 - Pending dictionary stores latest event per key.
 - Flush is scheduled by scheduler (`RunDelayed`) to avoid blocking waits.
+- Scheduler delay requests are best-effort; positive sub-millisecond values may round up to backend timer resolution, but they must not collapse into immediate execution.
 
 ## Queue policy and presets
 
