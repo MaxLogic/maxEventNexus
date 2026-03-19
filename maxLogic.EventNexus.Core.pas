@@ -739,6 +739,7 @@ var
   gMetricSampleIntervalMs: Cardinal = 1000;
   gMetricSampleIntervalTicks: UInt64 = 0;
   gBusLock: TmaxMonitorObject = nil;
+  gAsyncLock: TmaxMonitorObject = nil;
   gBus: ImaxBus = nil;
   gAsyncScheduler: IEventNexusScheduler = nil;
   gAsyncFallback: IEventNexusScheduler = nil;
@@ -3075,11 +3076,16 @@ end;
 
 function DefaultAsync: IEventNexusScheduler;
 begin
-  if gAsyncScheduler <> nil then
-    exit(gAsyncScheduler);
-  if gAsyncFallback = nil then
-    gAsyncFallback := CreateMaxAsyncScheduler;
-  Result := gAsyncFallback;
+  TMonitor.Enter(gAsyncLock);
+  try
+    if gAsyncScheduler <> nil then
+      Exit(gAsyncScheduler);
+    if gAsyncFallback = nil then
+      gAsyncFallback := CreateMaxAsyncScheduler;
+    Result := gAsyncFallback;
+  finally
+    TMonitor.Exit(gAsyncLock);
+  end;
 end;
 
 function maxBus: ImaxBus;
@@ -3167,12 +3173,24 @@ var
 begin
   TMonitor.Enter(gBusLock);
   try
-    gAsyncScheduler := aScheduler;
+    TMonitor.Enter(gAsyncLock);
+    try
+      gAsyncScheduler := aScheduler;
+      if gAsyncScheduler <> nil then
+        lAsync := gAsyncScheduler
+      else
+      begin
+        if gAsyncFallback = nil then
+          gAsyncFallback := CreateMaxAsyncScheduler;
+        lAsync := gAsyncFallback;
+      end;
+    finally
+      TMonitor.Exit(gAsyncLock);
+    end;
     if gBus <> nil then
     begin
       if not Supports(gBus, ImaxBusImpl, lBusImpl) then
         raise Exception.Create(SInvalidBusImplementation);
-      lAsync := DefaultAsync;
       TmaxBus(lBusImpl.GetSelf).SetAsyncScheduler(lAsync);
     end;
   finally
@@ -3182,10 +3200,7 @@ end;
 
 function maxGetAsyncScheduler: IEventNexusScheduler;
 begin
-  if gAsyncScheduler <> nil then
-    Result := gAsyncScheduler
-  else
-    Result := DefaultAsync;
+  Result := DefaultAsync;
 end;
 
 procedure maxSetMainThreadPolicy(aPolicy: TmaxMainThreadPolicy);
@@ -8000,6 +8015,7 @@ end;
 
 initialization
   gBusLock := TmaxMonitorObject.Create;
+  gAsyncLock := TmaxMonitorObject.Create;
   if gMetricSampleIntervalMs = 0 then
     gMetricSampleIntervalTicks := 0
   else
@@ -8011,6 +8027,7 @@ initialization
   gDelphiWeakRegistry := TDelphiWeakRegistry.Create;
 
 finalization
+  FreeAndNil(gAsyncLock);
   FreeAndNil(gBusLock);
   FreeAndNil(gDelphiWeakRegistry);
 
