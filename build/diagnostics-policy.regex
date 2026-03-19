@@ -18,5 +18,8 @@
 ^maxLogic\.EventNexus\.Core\.pas\(\d+\): Hint warning H2077: Value assigned to 'lAlreadyProcessing' never used \[[^\]]+\]$
 ^lib\\maxlogicfoundation\\maxAsync\.pas\(\d+\): Hint warning H2077: Value assigned to 'NoItem' never used \[[^\]]+\]$
 ^lib\\maxlogicfoundation\\maxAsync\.pas\(\d+\): Hint warning H2077: Value assigned to 'aException' never used \[[^\]]+\]$
+^lib\\maxlogicfoundation\\MaxLogic\.PortableTimer\.pas\(\d+\): Hint warning H2077: Value assigned to 'lRes' never used \[[^\]]+\]$
+^lib\\maxlogicfoundation\\maxAsync\.pas\(\d+\): Hint warning H2077: Value assigned to 'lReplayCompletion' never used \[[^\]]+\]$
+^lib\\maxlogicfoundation\\maxAsync\.pas\(\d+\): Hint warning H2219: Private symbol '(RunIteration|RunFinished|fLockFreeEnqueuePosPad|fLockFreeDequeuePosPad|fPendingItemsPad|fCompletionStatePad|TryDequeueItem|TryEnqueueItem|EnqueueItem)' declared but never used \[[^\]]+\]$
 ^reference\\iPub\.Rtl\.Messaging\.pas\(\d+\): Hint warning H2164: Variable 'LSubscription' is declared but never used in 'TipMessageManager\.DoPost<[Tt]>' \[[^\]]+\]$
 ^SchedulerCompare\.dpr\(\d+\): Hint warning H2077: Value assigned to '.+' never used \[[^\]]+\]$

@@ -5,7 +5,6 @@ This folder contains Delphi benchmark programs for EventNexus.
 ## Build
 
 - `./build-delphi.sh bench/SchedulerCompare.dproj -config Release`
-- `./build-delphi.sh bench/CompareBuses.dproj -config Release`
 
 ## EventNexus workload (`BenchHarness.pas`)
 
@@ -62,6 +61,13 @@ Example:
 bench\SchedulerCompare.exe --events=2000 --consumers=2 --runs=3 --delivery=async --metrics-readers=1 --metrics-reads=5000 --csv=bench\scheduler-summary.csv
 ```
 
+Default verification smoke:
+
+```batch
+bench\SchedulerCompare.exe --events=200 --consumers=1 --runs=1 --delivery=async --metrics-readers=0 --metrics-reads=0 --framework=weak --csv=build\analysis\benchmark-smoke.csv
+build\check-benchmark-smoke.bat build\analysis\benchmark-smoke.csv
+```
+
 Output contract (clock source, percentile method, CSV schema):
 
 - `docs/benchmarks/benchmark-output-contract.md`
@@ -82,7 +88,7 @@ This runner executes one framework row per process (`--skip-schedulers --framewo
 
 ## Legacy cross-framework runner (`CompareBuses.dpr`)
 
-`CompareBuses.dpr` remains as a standalone legacy harness, but the primary comparable output is now emitted directly by `SchedulerCompare.dpr`.
+`CompareBuses.dpr` remains as legacy source only. There is no maintained `CompareBuses.dproj`, and the supported comparable output path is `SchedulerCompare.dpr`.
 
 ## Notes
 

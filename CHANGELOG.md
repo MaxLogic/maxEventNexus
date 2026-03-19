@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- Default verification now builds `bench/SchedulerCompare`, runs a lightweight smoke profile, and validates the benchmark CSV contract automatically before completing the normal green gate. (T-1099)
 - Shipped scheduler adapters (`MaxAsync`, `TTask`, `RawThread`) now share one positive-delay conversion rule: negative clamps to `0`, `0` stays immediate-eligible, and `1..999us` rounds up instead of collapsing inline on some backends. (T-1097)
 - Documented intentional `SubscribeStrong*` APIs plus their caller-owned lifetime contract in the spec, README, design notes, and migration guide. (T-1094)
 - Clarified delayed/coalescing timing as best-effort rather than exact microsecond wake-up precision, while explicitly requiring positive delays to remain delayed. (T-1095, T-1088)
@@ -59,6 +60,7 @@
 - Default test-run entrypoints now include analyzer gating (`build-and-run-tests.bat` runs static analysis + `check-analysis-thresholds` after DUnitX execution). (T-1074)
 - Added ADR-0004 with Delphi 12 API-polish accept/reject decisions and explicit public-signature impact guardrails for Phase 2 work. (T-1056)
 - Added benchmark threshold gates (`build/check-benchmark-thresholds.sh` + `.bat`) with scheduler profile limits from `bench/scheduler-thresholds.csv` to fail CI/local runs on latency/throughput regressions. (T-1057)
+- Updated README and benchmark docs to remove the dead `CompareBuses.dproj` build guidance and document the supported `SchedulerCompare` smoke path. (T-1098)
 - Replaced legacy `maxAsBus(...)` shim with typed bridge overloads `maxBusObj` / `maxBusObj(aIntf)` and migrated runtime docs/tests/samples accordingly. (T-1048)
 - Scheduler benchmark now has a documented output contract (clock source + nearest-rank percentiles + CSV schema/status columns) and supports contention-focused metrics-reader load profiles. (T-1019)
 - Async benchmark harness now applies bounded queue/in-flight guards, uses `TTask.Future` metrics readers, and caps `maxAsync` to one in-process async run to avoid cumulative memory-pressure failures during scheduler comparisons. (T-1053, T-1054)

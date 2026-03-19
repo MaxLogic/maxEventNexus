@@ -271,6 +271,7 @@ maxSetMetricCallback(
 - Build + run tests: `./build-and-run-tests.sh`
 - Binary: `tests/MaxEventNexusTests.exe`
 - Coverage depth (current suite): the DUnitX compatibility fixture executes the active published-method regression suite from `tests/src`, including dedicated scheduler-contract coverage.
+- Default verification also runs a lightweight `bench/SchedulerCompare` smoke profile and validates the documented benchmark CSV contract.
 - Diagnostics policy gate: build scripts enforce `build/diagnostics-policy.regex` and fail on untriaged warnings/hints.
 - API coverage proxy: `./build/report-api-test-coverage.sh --enforce-target` (target in `build/api-test-coverage-target.txt`, report in `build/analysis/test-api-coverage.md`).
 
