@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Changed
+- Documented intentional `SubscribeStrong*` APIs plus their caller-owned lifetime contract in the spec, README, design notes, and migration guide. (T-1094)
+- Clarified delayed/coalescing timing as best-effort rather than exact microsecond wake-up precision, while explicitly requiring positive delays to remain delayed. (T-1095, T-1088)
 - Expanded DUnitX coverage for delayed named-of/guid posting, GUID queue-preset precedence, and `PostResult` named-of/guid paths. (T-1081)
 - Expanded `TTestPostResult` with GUID queue-pressure assertions for `PostResultGuidOf<T>` (`Queued` and `Dropped` outcomes). (T-1084)
 - Added lightweight API coverage proxy reporting with numeric target enforcement (`build/report-api-test-coverage.*`, target file, and default test-flow gate). (T-1084)

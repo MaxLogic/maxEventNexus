@@ -1,13 +1,27 @@
 # Tasks
-Next task ID: T-1094
+Next task ID: T-1100
 
 ## Summary
-Open tasks: 4 (In Progress: 0, Next Today: 2, Next This Week: 2, Next Later: 0, Blocked: 0)
-Done tasks: 112
+Open tasks: 7 (In Progress: 0, Next Today: 3, Next This Week: 4, Next Later: 0, Blocked: 0)
+Done tasks: 115
 
 ## In Progress
 
 ## Next – Today
+
+### T-1096 [CORE] Route delayed-post failures through the async error hook
+Outcome:
+- Delayed `Post*` execution wraps the deferred `Post<T>` / `PostNamed` / `PostNamedOf<T>` / `PostGuidOf<T>` call so handler failures raised after the delay boundary are not lost.
+- When delayed delivery executes asynchronously, `EmaxDispatchError` and other handler exceptions are forwarded through `maxSetAsyncErrorHandler` instead of disappearing on scheduler/fallback worker threads.
+- Existing delayed-post handle semantics (`Cancel`, `IsPending`, `Clear`) remain unchanged while new regression tests cover delayed typed/named/GUID failure paths.
+Proof:
+- Run: `./build-and-run-tests.sh`
+  Expect: build, DUnitX suite, analysis thresholds, and API coverage all pass after delayed-post failure-path changes.
+- Run: `rg -n "ScheduleDelayedPost|maxSetAsyncErrorHandler|Delayed.*Raises|Delayed.*Forwards|PostDelayed" maxLogic.EventNexus.Core.pas tests/src/MaxEventNexus.Main.Tests.pas`
+  Expect: the delayed-post wrapper and regression coverage for async-hook forwarding are present.
+Touches: maxLogic.EventNexus.Core.pas, tests/src/MaxEventNexus.Main.Tests.pas
+Verify: unit-test, build-only
+Notes: Implements the proposed fix from spec-review gap `G-001`; keep `Cancel` / `IsPending` / `Clear` behavior intact while making delayed failures observable.
 
 ### T-1085 [CORE] Prove or fix DefaultAsync fallback race
 Outcome: Determine whether `DefaultAsync` can create competing fallback scheduler instances under concurrent first access, then either add a deterministic regression test plus minimal synchronization fix or document the finding as disproven.
@@ -31,6 +45,50 @@ Notes: Follow-up from remediation review on 2026-03-06; align behavior with spec
 
 ## Next – This Week
 
+### T-1099 [BENCH] Add a benchmark-contract smoke step to the default verification flow
+Outcome:
+- The normal verification path runs a lightweight `SchedulerCompare` smoke profile that writes a CSV and validates the documented benchmark output contract.
+- The smoke step checks at least the CSV header/schema and required `status` rows so benchmark-contract drift fails automatically instead of relying on manual proof.
+- The added verification stays lightweight enough for routine local runs; heavier throughput-threshold gates can remain separate.
+Proof:
+- Run: `./build-and-run-tests.sh`
+  Expect: the default flow includes a benchmark smoke step and exits `0` when the benchmark contract remains valid.
+- Run: `rg -n "SchedulerCompare|benchmark|csv|status,error|check-benchmark" build-and-run-tests.bat build-and-run-tests.sh build/ bench/`
+  Expect: the repo contains an automated benchmark-contract smoke proof path wired into the standard verification flow.
+Touches: build-and-run-tests.sh, build-and-run-tests.bat, build/, bench/
+Verify: integration-test, cli-proof
+Notes: Implements the proposed fix for gap `G-005`; keep the smoke workload small and focused on contract validity rather than full performance gating.
+
+### T-1098 [DOC] Close spec-review doc drift in README and benchmark docs
+Outcome:
+- `README.md` no longer publishes stale unit-test coverage numbers or wording that will drift immediately after routine suite growth.
+- `bench/readme.md` references only build targets and commands that exist in the repository, removing the dead `CompareBuses.dproj` guidance.
+- The doc contract surfaces called out by the spec review are aligned with the current repo state.
+Proof:
+- Run: `rg -n "Coverage depth|published test methods|CompareBuses\\.dproj|SchedulerCompare" README.md bench/readme.md`
+  Expect: README wording is current and benchmark docs no longer reference nonexistent build targets.
+- Run: `./build-and-run-tests.sh`
+  Expect: docs-only cleanup leaves the default verification flow green.
+Touches: README.md, bench/readme.md
+Verify: manual
+Ceremony: reduced
+Notes: Complements existing README-sync task `T-1088` by closing the specific spec-review drift items from gap `G-004`.
+
+### T-1097 [CORE] Normalize positive sub-millisecond RunDelayed semantics across schedulers
+Outcome:
+- Shipped scheduler adapters (`MaxAsync`, `TTask`, `RawThread`) use the same rule for positive sub-millisecond `aDelayUs` values so `1..999` microseconds never collapse to immediate execution on some backends and delayed execution on others.
+- Regression coverage proves the adapters preserve the agreed contract: negative delays clamp to `0`, `0` is immediate-eligible, and any positive delay remains delayed with rounding to supported timer granularity.
+- Coalescing behavior no longer varies by scheduler solely because adapters convert `aDelayUs` differently.
+Proof:
+- Run: `./build-and-run-tests.sh`
+  Expect: build, DUnitX suite, analysis thresholds, and API coverage all pass after scheduler normalization changes.
+- Run: `rg -n "RunDelayed|aDelayUs|SubMillisecond|round|delay" maxLogic.EventNexus.Threading.MaxAsync.pas maxLogic.EventNexus.Threading.TTask.pas maxLogic.EventNexus.Threading.RawThread.pas tests/src/MaxEventNexus.Main.Tests.pas`
+  Expect: adapters implement one positive-delay policy and deterministic parity tests exist.
+Touches: maxLogic.EventNexus.Threading.MaxAsync.pas, maxLogic.EventNexus.Threading.TTask.pas, maxLogic.EventNexus.Threading.RawThread.pas, tests/src/MaxEventNexus.Main.Tests.pas
+Deps: T-1095
+Verify: unit-test, build-only
+Notes: Implements the agreed 2026-03-19 proposal from gap `G-003`: preserve positive-delay semantics by rounding up to supported timer resolution instead of silently executing immediately.
+
 ### T-1087 [TEST] Add a discoverable root stress command
 Outcome: Provide a root-level stress entrypoint that exercises async, delayed-post, and coalescing paths so remediation and release workflows can run a concrete stress command after the main test suite.
 Proof:
@@ -42,16 +100,6 @@ Proof:
 - Expect: stress runner executes successfully and reports completion without hanging.
 Touches: build-and-run-tests.sh, build-and-run-tests.bat, tests/, bench/, README.md
 Notes: This task exists because the 2026-03-06 remediation workflow could not auto-discover a root stress command.
-
-### T-1088 [DOC] Refresh README after scheduler/default and suite changes
-Outcome: Update `README.md` so the published guidance reflects the current default scheduler recommendation, current unit-test counts, and the latest benchmark interpretation.
-Proof:
-- Command: `rg -n "recommended default|Tests \(DUnitX\)|Coverage depth|Performance and Scope Snapshot" README.md`
-- Expect: README reflects the current scheduler recommendation, updated test-count wording, and current benchmark notes.
-- Command: `./build-and-run-tests.sh`
-- Expect: docs-only updates do not break the normal build/test/analysis gate.
-Touches: README.md
-Notes: Complements ongoing task `T-1042`; use the current verified suite counts instead of stale numbers.
 
 ## Next – Later
 
@@ -67,6 +115,34 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1088 [DOC] Refresh README after scheduler/default and suite changes
+Summary: Refreshed the README to match the current scheduler guidance, current suite counts, and the documented delay/lifetime contracts.
+
+Details:
+- Updated README delayed/scheduler notes to describe best-effort delay timing and the guarantee that positive delays remain delayed.
+- Added object-method lifetime guidance covering default weak subscriptions and the intentional `SubscribeStrong*` opt-out.
+- Refreshed the DUnitX coverage count to the current verified suite size.
+- Proof: `rg -n "RunDelayed|best-effort|SubscribeStrong|Coverage depth" README.md` (exit `0`, updated guidance present).
+- Proof: `./build-and-run-tests.sh` (exit `0`).
+
+### T-1095 [DOC] Clarify delayed scheduler timing contract
+Summary: Documented the agreed delay contract: best-effort timing, no exact microsecond wake-up guarantee, and a requirement that every positive delay remain delayed.
+
+Details:
+- Updated `spec.md` to define `RunDelayed(aDelayUs)` as a best-effort request with negative clamp, `0` immediate eligibility, and positive delays that remain delayed.
+- Updated `README.md` and `DESIGN.md` to mirror the same timing contract for delayed posting and coalescing.
+- Proof: `rg -n "best-effort|microsecond|positive.*delay|coalesce" spec.md README.md DESIGN.md` (exit `0`, timing contract present across docs).
+- Proof: `./build-and-run-tests.sh` (exit `0`).
+
+### T-1094 [DOC] Document intentional strong subscription APIs
+Summary: Brought the spec and supporting docs in line with the intentionally supported `SubscribeStrong*` API family.
+
+Details:
+- Added `SubscribeStrong<T>`, `SubscribeNamedOfStrong<T>`, and `SubscribeGuidOfStrong<T>` to the generic API contract in `spec.md`.
+- Documented the default weak-liveness model and the intentional strong-subscription opt-out in `spec.md`, `README.md`, `DESIGN.md`, and `MIGRATION.md`.
+- Proof: `rg -n "SubscribeStrong|SubscribeNamedOfStrong|SubscribeGuidOfStrong|weak-liveness|lifetime" spec.md README.md DESIGN.md MIGRATION.md` (exit `0`, strong-subscription contract present).
+- Proof: `./build-and-run-tests.sh` (exit `0`).
 
 ### T-1093 [DOC] Realign samples with the Delphi-only public API contract
 Summary: Updated the supported sample set to use the Delphi bridge contract (`TmaxBus` / `maxBusObj(...)`) and removed stale FPC-only sample residue.

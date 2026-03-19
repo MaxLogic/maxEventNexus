@@ -155,6 +155,12 @@ begin
 end;
 ```
 
+Timing note:
+
+- `PostDelayed*` delay values are configured in milliseconds.
+- Scheduler/coalescing internals use microsecond request units, but on current Delphi/Windows backends those requests are best-effort and may round up to the nearest supported timer resolution.
+- `0` remains immediate-eligible; any positive delay remains delayed.
+
 ## Queue policies
 
 Per-topic policy (`TmaxQueuePolicy`) controls bounded queue behavior:
@@ -214,6 +220,17 @@ Recommendation:
 - Use `RawThread` when you want a minimal dependency chain and predictable behavior in constrained runtime environments.
 - Use `TTask` when you explicitly want RTL-native scheduling semantics.
 
+Delay-resolution note:
+
+- `RunDelayed(aDelayUs)` is a best-effort request, not a promise of exact microsecond wake-up precision.
+- Shipped adapters preserve the semantic distinction between `0` and positive delay values; positive delays may round up to backend timer granularity.
+
+## Object-method lifetime modes
+
+- `Subscribe<T>(objproc)`, `SubscribeNamedOf<T>(objproc)`, and `SubscribeGuidOf<T>(objproc)` use weak-target liveness tracking by default.
+- `SubscribeStrong<T>`, `SubscribeNamedOfStrong<T>`, and `SubscribeGuidOfStrong<T>` intentionally skip weak-target checks for callers that can guarantee subscriber lifetime through unsubscribe/release.
+- Use the strong variants only when we fully control the subscriber lifetime and want to skip weak-liveness overhead.
+
 Inject at runtime:
 
 ```pascal
@@ -252,7 +269,7 @@ maxSetMetricCallback(
 - Build tests: `./build-tests.sh`
 - Build + run tests: `./build-and-run-tests.sh`
 - Binary: `tests/MaxEventNexusTests.exe`
-- Coverage depth (current suite): 32 legacy test classes with 88 published test methods executed via the DUnitX compatibility fixture.
+- Coverage depth (current suite): 32 legacy test classes with 111 published test methods executed via the DUnitX compatibility fixture.
 - Diagnostics policy gate: build scripts enforce `build/diagnostics-policy.regex` and fail on untriaged warnings/hints.
 - API coverage proxy: `./build/report-api-test-coverage.sh --enforce-target` (target in `build/api-test-coverage-target.txt`, report in `build/analysis/test-api-coverage.md`).
 
