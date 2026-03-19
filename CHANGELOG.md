@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- Shipped scheduler adapters (`MaxAsync`, `TTask`, `RawThread`) now share one positive-delay conversion rule: negative clamps to `0`, `0` stays immediate-eligible, and `1..999us` rounds up instead of collapsing inline on some backends. (T-1097)
 - Documented intentional `SubscribeStrong*` APIs plus their caller-owned lifetime contract in the spec, README, design notes, and migration guide. (T-1094)
 - Clarified delayed/coalescing timing as best-effort rather than exact microsecond wake-up precision, while explicitly requiring positive delays to remain delayed. (T-1095, T-1088)
 - Expanded DUnitX coverage for delayed named-of/guid posting, GUID queue-preset precedence, and `PostResult` named-of/guid paths. (T-1081)
@@ -15,6 +16,7 @@
 - Scheduler benchmark project search paths now include `reference/` so iPub/EventHorizon comparison units build in CLI workflows. (T-1082)
 
 ### Fixed
+- `maxAsync` now preserves async/delayed semantics when enqueue or delayed submission fails by falling back to dedicated-thread execution before any final inline safety net, with deterministic scheduler fault-injection coverage. (T-1086)
 - Inline `Main` dispatch on the main thread, console `DegradeToPosting`, and inline worker-thread `Background` now re-raise synchronous handler failures as `EmaxDispatchError` while still forwarding the async hook. (T-1089)
 - `AutoSubscribe` now rejects attributed class methods, constructors, destructors, repeated attributes, and abstract methods instead of silently skipping invalid bindings. (T-1090)
 - Delayed post fallback no longer executes immediately when delayed scheduler submission fails, and delayed handles now invalidate correctly across `Cancel` / `Clear` boundaries. (T-1092)

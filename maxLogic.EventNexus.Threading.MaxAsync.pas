@@ -19,8 +19,12 @@ type
   TmaxAsyncScheduler = class(TInterfacedObject, IEventNexusScheduler)
   private
     fProcessor: TAsyncCollectionProcessor<TMaxAsyncWorkItem>;
-    procedure EnqueueWork(const aProc: TmaxProc);
     procedure ScheduleAsync(const aProc: TmaxProc; aDelayUs: Integer);
+  protected
+    class function DelayUsToDelayMs(aDelayUs: Integer): Integer; static;
+    procedure EnqueueWork(const aProc: TmaxProc); virtual;
+    procedure SubmitDelayedWork(const aProc: TmaxProc; aDelayMs: Integer); virtual;
+    procedure RunFallbackAsync(const aProc: TmaxProc; aDelayMs: Integer); virtual;
   public
     constructor Create;
     destructor Destroy; override;
@@ -103,12 +107,65 @@ begin
   end;
 end;
 
+class function TmaxAsyncScheduler.DelayUsToDelayMs(aDelayUs: Integer): Integer;
+begin
+  if aDelayUs <= 0 then
+    Exit(0);
+  Result := (aDelayUs + 999) div 1000;
+end;
+
+procedure TmaxAsyncScheduler.SubmitDelayedWork(const aProc: TmaxProc; aDelayMs: Integer);
+var
+  lHandle: iAsync; //PALOFF lifetime anchor for async handle until completion callback
+  lSelf: IEventNexusScheduler;
+begin
+  lSelf := Self as IEventNexusScheduler;
+  lHandle := SimpleAsyncCall(
+    procedure
+    begin
+      if aDelayMs > 0 then
+        TThread.Sleep(aDelayMs);
+      lSelf.RunAsync(aProc);
+    end,
+    '',
+    procedure
+    begin
+      lHandle := nil;
+    end);
+end;
+
+procedure TmaxAsyncScheduler.RunFallbackAsync(const aProc: TmaxProc; aDelayMs: Integer);
+var
+  lDelayMsCopy: Integer;
+  lProcCopy: TmaxProc;
+  lThread: TThread;
+begin
+  if not ProcAssigned(aProc) then
+    Exit;
+  lDelayMsCopy := aDelayMs;
+  lProcCopy := aProc;
+  try
+    lThread := TThread.CreateAnonymousThread(
+      procedure
+      begin
+        if lDelayMsCopy > 0 then
+          TThread.Sleep(lDelayMsCopy);
+        if ProcAssigned(lProcCopy) then
+          lProcCopy();
+      end);
+    lThread.FreeOnTerminate := True;
+    lThread.Start;
+  except
+    if lDelayMsCopy > 0 then
+      TThread.Sleep(lDelayMsCopy);
+    aProc();
+  end;
+end;
+
 procedure TmaxAsyncScheduler.ScheduleAsync(const aProc: TmaxProc; aDelayUs: Integer);
 var
   lDelayMs: Integer;
-  lHandle: iAsync; //PALOFF lifetime anchor for async handle until completion callback
   lProc: TmaxProc;
-  lSelf: IEventNexusScheduler;
 begin
   if not ProcAssigned(aProc) then
     Exit;
@@ -118,34 +175,17 @@ begin
     try
       EnqueueWork(lProc);
     except
-      lProc();
+      RunFallbackAsync(lProc, 0);
     end;
     Exit;
   end;
 
-  if aDelayUs > 0 then
-    lDelayMs := aDelayUs div 1000
-  else
-    lDelayMs := 0;
-  lSelf := Self as IEventNexusScheduler;
+  lDelayMs := DelayUsToDelayMs(aDelayUs);
   try
-    lHandle := SimpleAsyncCall(
-      procedure
-      begin
-        if lDelayMs > 0 then
-          TThread.Sleep(lDelayMs);
-        lSelf.RunAsync(lProc);
-      end,
-      '',
-      procedure
-      begin
-        lHandle := nil;
-      end);
+    SubmitDelayedWork(lProc, lDelayMs);
   except
-    // If async backend submission fails, degrade to inline execution so callers keep progressing.
-    if lDelayMs > 0 then
-      TThread.Sleep(lDelayMs);
-    lProc();
+    // Keep async semantics even if the maxAsync backend rejects submission.
+    RunFallbackAsync(lProc, lDelayMs);
   end;
 end;
 
