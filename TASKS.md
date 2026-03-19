@@ -2,22 +2,12 @@
 Next task ID: T-1100
 
 ## Summary
-Open tasks: 4 (In Progress: 0, Next Today: 1, Next This Week: 3, Next Later: 0, Blocked: 0)
-Done tasks: 118
+Open tasks: 3 (In Progress: 0, Next Today: 0, Next This Week: 3, Next Later: 0, Blocked: 0)
+Done tasks: 119
 
 ## In Progress
 
 ## Next – Today
-
-### T-1085 [CORE] Prove or fix DefaultAsync fallback race
-Outcome: Determine whether `DefaultAsync` can create competing fallback scheduler instances under concurrent first access, then either add a deterministic regression test plus minimal synchronization fix or document the finding as disproven.
-Proof:
-- Command: `./build-and-run-tests.sh`
-- Expect: build, DUnitX suite, analysis thresholds, and API coverage all pass after the race investigation changes.
-- Command: `rg -n "DefaultAsync|gAsyncFallback|gBusLock" maxLogic.EventNexus.Core.pas tests/src/MaxEventNexus.Main.Tests.pas`
-- Expect: the runtime and regression-test coverage for fallback scheduler initialization are both present.
-Touches: maxLogic.EventNexus.Core.pas, tests/src/MaxEventNexus.Main.Tests.pas
-Notes: Follow-up from remediation review on 2026-03-06; target the fallback path around `DefaultAsync` without changing public API signatures.
 
 ## Next – This Week
 
@@ -76,6 +66,17 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1085 [CORE] Prove or fix DefaultAsync fallback race
+Summary: Closed the unsynchronized `DefaultAsync` fallback-initialization path and added a fresh-process race probe to prove singleton behavior under concurrent first access.
+
+Details:
+- Added `gAsyncLock` and synchronized `DefaultAsync`, `maxSetAsyncScheduler`, and `maxGetAsyncScheduler` so `gAsyncScheduler` / `gAsyncFallback` reads and writes no longer race across threads.
+- Added a fresh-process `--default-async-race-probe` mode to `tests/MaxEventNexusTests.dpr` that races concurrent first-time `maxGetAsyncScheduler` calls and exits nonzero if more than one scheduler instance appears.
+- Added `TTestSchedulers.DefaultAsyncProbeReturnsSingleInstanceAcrossThreads` to execute that probe from the main suite without exposing new production test hooks.
+- Proof: `./build-and-run-tests.sh` (exit `0`).
+- Proof: `./tests/MaxEventNexusTests.exe --default-async-race-probe` (exit `0`, one scheduler instance observed under concurrent first access).
+- Proof: `rg -n "DefaultAsync|gAsyncLock|default-async-race-probe|DefaultAsyncProbeReturnsSingleInstanceAcrossThreads" maxLogic.EventNexus.Core.pas tests/src/MaxEventNexus.Main.Tests.pas tests/MaxEventNexusTests.dpr` (synchronization + fresh-process regression probe present).
 
 ### T-1096 [CORE] Route delayed-post failures through the async error hook
 Summary: Delayed `Post*` execution now preserves the async error surface instead of losing handler failures on delayed worker threads.

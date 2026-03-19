@@ -16,6 +16,7 @@
 - Scheduler benchmark project search paths now include `reference/` so iPub/EventHorizon comparison units build in CLI workflows. (T-1082)
 
 ### Fixed
+- `DefaultAsync` fallback initialization is now synchronized, and the test suite includes a fresh-process race probe to prove concurrent first access still yields a single fallback scheduler instance. (T-1085)
 - Delayed `Post*` execution now forwards post-time `EmaxDispatchError` / handler exceptions through the async error hook in both the normal delayed path and the delayed-submission fallback thread. (T-1096)
 - `maxAsync` now preserves async/delayed semantics when enqueue or delayed submission fails by falling back to dedicated-thread execution before any final inline safety net, with deterministic scheduler fault-injection coverage. (T-1086)
 - Inline `Main` dispatch on the main thread, console `DegradeToPosting`, and inline worker-thread `Background` now re-raise synchronous handler failures as `EmaxDispatchError` while still forwarding the async hook. (T-1089)

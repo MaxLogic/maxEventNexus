@@ -7,6 +7,8 @@ interface
 uses
   // RTL
   Classes, SysUtils, SyncObjs, TypInfo, System.Generics.Collections,
+  // OS/API
+  Winapi.Windows,
   // Third-party
   MaxEventNexus.Testing,
   // Project
@@ -249,6 +251,7 @@ type
 	    procedure MaxAsyncScheduler;
 	    procedure TTaskScheduler;
 	    procedure SchedulerSwapUpdatesLiveBus;
+      procedure DefaultAsyncProbeReturnsSingleInstanceAcrossThreads;
 	    {$ENDIF}
 	  end;
 
@@ -907,6 +910,35 @@ begin
       ['1 exception(s) occurred', aCapture.ErrorMessage]);
   if aCapture.DetailMessage <> aExpectedDetail then
     raise Exception.CreateFmt('Expected delayed-post detail [%s] but got [%s]', [aExpectedDetail, aCapture.DetailMessage]);
+end;
+
+function RunProcessAndGetExitCode(const aExePath: string; const aArgs: string): Cardinal;
+var
+  lCommandLine: string;
+  lExitCode: Cardinal;
+  lProcessInfo: TProcessInformation;
+  lStartupInfo: TStartupInfo;
+begin
+  FillChar(lStartupInfo, SizeOf(lStartupInfo), 0);
+  lStartupInfo.cb := SizeOf(lStartupInfo);
+  FillChar(lProcessInfo, SizeOf(lProcessInfo), 0);
+  lCommandLine := '"' + aExePath + '"';
+  if aArgs <> '' then
+    lCommandLine := lCommandLine + ' ' + aArgs;
+  UniqueString(lCommandLine);
+  if not CreateProcess(nil, PChar(lCommandLine), nil, nil, False, 0, nil, PChar(ExtractFilePath(aExePath)),
+    lStartupInfo, lProcessInfo) then
+    raise EOSError.CreateFmt('CreateProcess failed (%d) for %s', [GetLastError, lCommandLine]);
+  try
+    if WaitForSingleObject(lProcessInfo.hProcess, 15000) <> WAIT_OBJECT_0 then
+      raise Exception.CreateFmt('Timed out waiting for process %s', [lCommandLine]);
+    if not GetExitCodeProcess(lProcessInfo.hProcess, lExitCode) then
+      raise EOSError.CreateFmt('GetExitCodeProcess failed (%d) for %s', [GetLastError, lCommandLine]);
+    Result := lExitCode;
+  finally
+    CloseHandle(lProcessInfo.hThread);
+    CloseHandle(lProcessInfo.hProcess);
+  end;
 end;
 
 procedure TABATarget.OnInt(const aValue: integer);
@@ -7336,6 +7368,15 @@ begin
   finally
     lAsyncCalled.Free;
   end;
+end;
+
+procedure TTestSchedulers.DefaultAsyncProbeReturnsSingleInstanceAcrossThreads;
+var
+  lExitCode: Cardinal;
+begin
+  lExitCode := RunProcessAndGetExitCode(ParamStr(0), '--default-async-race-probe');
+  CheckEquals(0, Integer(lExitCode),
+    Format('DefaultAsync race probe reported exit code %d', [lExitCode]));
 end;
 {$ENDIF}
 
