@@ -541,7 +541,7 @@ type
           function SubscribeGuidOfObjInternal<t: IInterface>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery;
             aTrackWeakTarget: boolean): ImaxSubscription;
           class function DelayMsToUs(aDelayMs: Cardinal): integer; static;
-          function ScheduleDelayedPost(const aPostProc: TmaxProc; aDelayMs: Cardinal): ImaxDelayedPost;
+          function ScheduleDelayedPost(const aTopic: TmaxString; const aPostProc: TmaxProc; aDelayMs: Cardinal): ImaxDelayedPost;
 			    procedure SetAsyncScheduler(const aAsync: IEventNexusScheduler);
     procedure ScheduleTypedCoalesce<t>(const aTopicName: TmaxString;
       aTopic: TTypedTopic<t>; const aSubs: TArray<TTypedSubscriber<t>>);
@@ -4301,17 +4301,32 @@ begin
   Result := integer(aDelayMs) * 1000;
 end;
 
-function TmaxBus.ScheduleDelayedPost(const aPostProc: TmaxProc; aDelayMs: Cardinal): ImaxDelayedPost;
+function TmaxBus.ScheduleDelayedPost(const aTopic: TmaxString; const aPostProc: TmaxProc; aDelayMs: Cardinal): ImaxDelayedPost;
 var
   lDelayMsCopy: Cardinal;
   lDelayUs: integer;
   lEpoch: Int64;
   lFallbackThread: TThread;
   lHandle: ImaxDelayedPost;
+  lInvokePost: TmaxProc;
 begin
   lDelayUs := DelayMsToUs(aDelayMs);
   lEpoch := TInterlocked.CompareExchange(fDelayedPostEpoch, 0, 0);
   lHandle := TmaxDelayedPostHandle.Create(Self, lEpoch);
+  lInvokePost :=
+    procedure
+    begin
+      try
+        if Assigned(aPostProc) then
+          aPostProc();
+      except
+        on e: Exception do
+        begin
+          if Assigned(gAsyncError) then
+            gAsyncError(aTopic, e);
+        end;
+      end;
+    end;
   try
     fAsync.RunDelayed(
       procedure
@@ -4323,8 +4338,7 @@ begin
         end;
         if not lHandle.Cancel then
           Exit;
-        if Assigned(aPostProc) then
-          aPostProc();
+        lInvokePost();
       end,
       lDelayUs);
   except
@@ -4342,8 +4356,7 @@ begin
         end;
         if not lHandle.Cancel then
           Exit;
-        if Assigned(aPostProc) then
-          aPostProc();
+        lInvokePost();
       end);
     lFallbackThread.FreeOnTerminate := True;
     lFallbackThread.Start;
@@ -5227,6 +5240,7 @@ var
 begin
   lEvent := aEvent;
   Result := ScheduleDelayedPost(
+    TypeMetricName(TypeInfo(t)),
     procedure
     begin
       Post<t>(lEvent);
@@ -5858,6 +5872,7 @@ var
 begin
   lName := aName;
   Result := ScheduleDelayedPost(
+    NamedMetricName(lName),
     procedure
     begin
       PostNamed(lName);
@@ -6545,6 +6560,7 @@ begin
   lName := aName;
   lEvent := aEvent;
   Result := ScheduleDelayedPost(
+    NamedTypeMetricName(lName, TypeInfo(t)),
     procedure
     begin
       PostNamedOf<t>(lName, lEvent);
@@ -7166,6 +7182,7 @@ var
 begin
   lEvent := aEvent;
   Result := ScheduleDelayedPost(
+    GuidMetricName(GuidForType(TypeInfo(t))),
     procedure
     begin
       PostGuidOf<t>(lEvent);
