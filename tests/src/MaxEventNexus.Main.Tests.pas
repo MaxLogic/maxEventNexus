@@ -403,6 +403,11 @@ type
     procedure ZeroDelayDispatchesAndUpdatesMetrics;
     procedure LargeDelayRemainsPendingUntilCanceled;
     procedure TypedLargeDelayRemainsPendingUntilCanceled;
+    procedure TypedDelayedFailureForwardsAsyncHook;
+    procedure NamedDelayedFailureForwardsAsyncHook;
+    procedure NamedOfDelayedFailureForwardsAsyncHook;
+    procedure GuidDelayedFailureForwardsAsyncHook;
+    procedure SchedulerFailureDelayedNamedForwardsAsyncHook;
     procedure SchedulerFailureStillWaitsBeforeNamedDelivery;
     procedure SchedulerFailureCancelAndClearPreventDelayedDelivery;
   end;
@@ -766,6 +771,15 @@ type
     function IsMainThread: Boolean;
   end;
 
+  TAsyncErrorCapture = class
+  public
+    DetailMessage: string;
+    ErrorMessage: string;
+    InnerCount: integer;
+    Topic: string;
+    WasDispatchError: Boolean;
+  end;
+
 function BuildQueuePolicy(aMaxDepth: integer; aOverflow: TmaxOverflow; aDeadlineUs: Int64): TmaxQueuePolicy;
 begin
   Result.MaxDepth := aMaxDepth;
@@ -851,6 +865,48 @@ procedure RestoreAsyncSchedulerState(const aPrevScheduler: IEventNexusScheduler)
 begin
   maxSetAsyncErrorHandler(nil);
   maxSetAsyncScheduler(aPrevScheduler);
+end;
+
+procedure InstallAsyncErrorCapture(const aCapture: TAsyncErrorCapture; const aSignal: TEvent);
+begin
+  if aCapture = nil then
+    Exit;
+  aCapture.DetailMessage := '';
+  aCapture.ErrorMessage := '';
+  aCapture.InnerCount := 0;
+  aCapture.Topic := '';
+  aCapture.WasDispatchError := False;
+  maxSetAsyncErrorHandler(
+    procedure(const aTopic: string; const aE: Exception)
+    begin
+      aCapture.Topic := aTopic;
+      aCapture.WasDispatchError := aE is EmaxDispatchError;
+      if aCapture.WasDispatchError then
+      begin
+        aCapture.InnerCount := EmaxDispatchError(aE).Inner.Count;
+        if Length(EmaxDispatchError(aE).Details) > 0 then
+          aCapture.DetailMessage := EmaxDispatchError(aE).Details[0].ExceptionMessage;
+      end;
+      aCapture.ErrorMessage := aE.Message;
+      if aSignal <> nil then
+        aSignal.SetEvent;
+    end);
+end;
+
+procedure AssertDelayedHookCapture(const aCapture: TAsyncErrorCapture; const aExpectedTopic: string;
+  const aExpectedDetail: string);
+begin
+  if (aCapture = nil) or (not aCapture.WasDispatchError) then
+    raise Exception.Create('Delayed-post hook should receive EmaxDispatchError');
+  if aCapture.InnerCount <> 1 then
+    raise Exception.CreateFmt('Expected one delayed-post inner error but got %d', [aCapture.InnerCount]);
+  if aCapture.Topic <> aExpectedTopic then
+    raise Exception.CreateFmt('Expected delayed-post topic [%s] but got [%s]', [aExpectedTopic, aCapture.Topic]);
+  if aCapture.ErrorMessage <> '1 exception(s) occurred' then
+    raise Exception.CreateFmt('Expected delayed-post error message [%s] but got [%s]',
+      ['1 exception(s) occurred', aCapture.ErrorMessage]);
+  if aCapture.DetailMessage <> aExpectedDetail then
+    raise Exception.CreateFmt('Expected delayed-post detail [%s] but got [%s]', [aExpectedDetail, aCapture.DetailMessage]);
 end;
 
 procedure TABATarget.OnInt(const aValue: integer);
@@ -6873,6 +6929,201 @@ begin
   finally
     maxSetAsyncScheduler(lPrevScheduler);
     lDone.Free;
+  end;
+end;
+
+procedure TTestDelayedPosting.TypedDelayedFailureForwardsAsyncHook;
+const
+  cDelayMs = 25;
+var
+  lCapture: TAsyncErrorCapture;
+  lBus: ImaxBus;
+  lErrorEvent: TEvent;
+  lPrevScheduler: IEventNexusScheduler;
+  lSub: ImaxSubscription;
+  lTypeName: string;
+begin
+  lBus := maxBus;
+  lCapture := TAsyncErrorCapture.Create;
+  lPrevScheduler := maxGetAsyncScheduler;
+  lErrorEvent := TEvent.Create(nil, True, False, '');
+  lTypeName := GetTypeName(TypeInfo(integer));
+  try
+    lBus.Clear;
+    maxSetAsyncScheduler(TmaxRawThreadScheduler.Create);
+    InstallAsyncErrorCapture(lCapture, lErrorEvent);
+
+    lSub := maxBusObj(lBus).Subscribe<integer>(
+      procedure(const aValue: integer)
+      begin
+        raise Exception.Create('typed delayed boom');
+      end,
+      TmaxDelivery.Posting);
+
+    Check(maxBusObj(lBus).PostDelayed<integer>(17, cDelayMs) <> nil);
+    Check(lErrorEvent.WaitFor(2000) = wrSignaled, 'Typed delayed failure did not reach the async error hook');
+    AssertDelayedHookCapture(lCapture, lTypeName, 'typed delayed boom');
+  finally
+    RestoreAsyncSchedulerState(lPrevScheduler);
+    lSub := nil;
+    lBus.Clear;
+    lCapture.Free;
+    lErrorEvent.Free;
+  end;
+end;
+
+procedure TTestDelayedPosting.NamedDelayedFailureForwardsAsyncHook;
+const
+  cDelayMs = 25;
+var
+  lCapture: TAsyncErrorCapture;
+  lBus: ImaxBus;
+  lErrorEvent: TEvent;
+  lPrevScheduler: IEventNexusScheduler;
+  lSub: ImaxSubscription;
+begin
+  lBus := maxBus;
+  lCapture := TAsyncErrorCapture.Create;
+  lPrevScheduler := maxGetAsyncScheduler;
+  lErrorEvent := TEvent.Create(nil, True, False, '');
+  try
+    lBus.Clear;
+    maxSetAsyncScheduler(TmaxRawThreadScheduler.Create);
+    InstallAsyncErrorCapture(lCapture, lErrorEvent);
+
+    lSub := lBus.SubscribeNamed('delayed.error.named',
+      procedure
+      begin
+        raise Exception.Create('named delayed boom');
+      end,
+      TmaxDelivery.Posting);
+
+    Check(lBus.PostDelayedNamed('delayed.error.named', cDelayMs) <> nil);
+    Check(lErrorEvent.WaitFor(2000) = wrSignaled, 'Named delayed failure did not reach the async error hook');
+    AssertDelayedHookCapture(lCapture, UpperCase('delayed.error.named'), 'named delayed boom');
+  finally
+    RestoreAsyncSchedulerState(lPrevScheduler);
+    lSub := nil;
+    lBus.Clear;
+    lCapture.Free;
+    lErrorEvent.Free;
+  end;
+end;
+
+procedure TTestDelayedPosting.NamedOfDelayedFailureForwardsAsyncHook;
+const
+  cDelayMs = 25;
+var
+  lCapture: TAsyncErrorCapture;
+  lBus: ImaxBus;
+  lErrorEvent: TEvent;
+  lPrevScheduler: IEventNexusScheduler;
+  lSub: ImaxSubscription;
+begin
+  lBus := maxBus;
+  lCapture := TAsyncErrorCapture.Create;
+  lPrevScheduler := maxGetAsyncScheduler;
+  lErrorEvent := TEvent.Create(nil, True, False, '');
+  try
+    lBus.Clear;
+    maxSetAsyncScheduler(TmaxRawThreadScheduler.Create);
+    InstallAsyncErrorCapture(lCapture, lErrorEvent);
+
+    lSub := maxBusObj(lBus).SubscribeNamedOf<integer>('delayed.error.namedof',
+      procedure(const aValue: integer)
+      begin
+        raise Exception.Create('namedof delayed boom');
+      end,
+      TmaxDelivery.Posting);
+
+    Check(maxBusObj(lBus).PostDelayedNamedOf<integer>('delayed.error.namedof', 29, cDelayMs) <> nil);
+    Check(lErrorEvent.WaitFor(2000) = wrSignaled, 'Named-of delayed failure did not reach the async error hook');
+    AssertDelayedHookCapture(lCapture, UpperCase('delayed.error.namedof') + ':' + GetTypeName(TypeInfo(integer)),
+      'namedof delayed boom');
+  finally
+    RestoreAsyncSchedulerState(lPrevScheduler);
+    lSub := nil;
+    lBus.Clear;
+    lCapture.Free;
+    lErrorEvent.Free;
+  end;
+end;
+
+procedure TTestDelayedPosting.GuidDelayedFailureForwardsAsyncHook;
+const
+  cDelayMs = 25;
+var
+  lCapture: TAsyncErrorCapture;
+  lBus: ImaxBus;
+  lErrorEvent: TEvent;
+  lExpectedTopic: string;
+  lPrevScheduler: IEventNexusScheduler;
+  lSub: ImaxSubscription;
+begin
+  lBus := maxBus;
+  lCapture := TAsyncErrorCapture.Create;
+  lPrevScheduler := maxGetAsyncScheduler;
+  lErrorEvent := TEvent.Create(nil, True, False, '');
+  lExpectedTopic := GuidToString(GetTypeData(TypeInfo(IIntEvent))^.Guid);
+  try
+    lBus.Clear;
+    maxSetAsyncScheduler(TmaxRawThreadScheduler.Create);
+    InstallAsyncErrorCapture(lCapture, lErrorEvent);
+
+    lSub := maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
+      procedure(const aValue: IIntEvent)
+      begin
+        raise Exception.Create('guid delayed boom');
+      end,
+      TmaxDelivery.Posting);
+
+    Check(maxBusObj(lBus).PostDelayedGuidOf<IIntEvent>(TIntEvent.Create(41), cDelayMs) <> nil);
+    Check(lErrorEvent.WaitFor(2000) = wrSignaled, 'Guid delayed failure did not reach the async error hook');
+    AssertDelayedHookCapture(lCapture, lExpectedTopic, 'guid delayed boom');
+  finally
+    RestoreAsyncSchedulerState(lPrevScheduler);
+    lSub := nil;
+    lBus.Clear;
+    lCapture.Free;
+    lErrorEvent.Free;
+  end;
+end;
+
+procedure TTestDelayedPosting.SchedulerFailureDelayedNamedForwardsAsyncHook;
+const
+  cDelayMs = 40;
+var
+  lCapture: TAsyncErrorCapture;
+  lBus: ImaxBus;
+  lErrorEvent: TEvent;
+  lPrevScheduler: IEventNexusScheduler;
+  lSub: ImaxSubscription;
+begin
+  lBus := maxBus;
+  lCapture := TAsyncErrorCapture.Create;
+  lPrevScheduler := maxGetAsyncScheduler;
+  lErrorEvent := TEvent.Create(nil, True, False, '');
+  try
+    lBus.Clear;
+    maxSetAsyncScheduler(TRaiseDelayedScheduler.Create);
+    InstallAsyncErrorCapture(lCapture, lErrorEvent);
+
+    lSub := lBus.SubscribeNamed('delayed.error.fallback',
+      procedure
+      begin
+        raise Exception.Create('fallback delayed boom');
+      end,
+      TmaxDelivery.Posting);
+
+    Check(lBus.PostDelayedNamed('delayed.error.fallback', cDelayMs) <> nil);
+    Check(lErrorEvent.WaitFor(2000) = wrSignaled, 'Fallback delayed failure did not reach the async error hook');
+    AssertDelayedHookCapture(lCapture, UpperCase('delayed.error.fallback'), 'fallback delayed boom');
+  finally
+    RestoreAsyncSchedulerState(lPrevScheduler);
+    lSub := nil;
+    lBus.Clear;
+    lCapture.Free;
+    lErrorEvent.Free;
   end;
 end;
 

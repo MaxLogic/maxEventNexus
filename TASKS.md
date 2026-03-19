@@ -2,26 +2,12 @@
 Next task ID: T-1100
 
 ## Summary
-Open tasks: 5 (In Progress: 0, Next Today: 2, Next This Week: 3, Next Later: 0, Blocked: 0)
-Done tasks: 117
+Open tasks: 4 (In Progress: 0, Next Today: 1, Next This Week: 3, Next Later: 0, Blocked: 0)
+Done tasks: 118
 
 ## In Progress
 
 ## Next – Today
-
-### T-1096 [CORE] Route delayed-post failures through the async error hook
-Outcome:
-- Delayed `Post*` execution wraps the deferred `Post<T>` / `PostNamed` / `PostNamedOf<T>` / `PostGuidOf<T>` call so handler failures raised after the delay boundary are not lost.
-- When delayed delivery executes asynchronously, `EmaxDispatchError` and other handler exceptions are forwarded through `maxSetAsyncErrorHandler` instead of disappearing on scheduler/fallback worker threads.
-- Existing delayed-post handle semantics (`Cancel`, `IsPending`, `Clear`) remain unchanged while new regression tests cover delayed typed/named/GUID failure paths.
-Proof:
-- Run: `./build-and-run-tests.sh`
-  Expect: build, DUnitX suite, analysis thresholds, and API coverage all pass after delayed-post failure-path changes.
-- Run: `rg -n "ScheduleDelayedPost|maxSetAsyncErrorHandler|Delayed.*Raises|Delayed.*Forwards|PostDelayed" maxLogic.EventNexus.Core.pas tests/src/MaxEventNexus.Main.Tests.pas`
-  Expect: the delayed-post wrapper and regression coverage for async-hook forwarding are present.
-Touches: maxLogic.EventNexus.Core.pas, tests/src/MaxEventNexus.Main.Tests.pas
-Verify: unit-test, build-only
-Notes: Implements the proposed fix from spec-review gap `G-001`; keep `Cancel` / `IsPending` / `Clear` behavior intact while making delayed failures observable.
 
 ### T-1085 [CORE] Prove or fix DefaultAsync fallback race
 Outcome: Determine whether `DefaultAsync` can create competing fallback scheduler instances under concurrent first access, then either add a deterministic regression test plus minimal synchronization fix or document the finding as disproven.
@@ -90,6 +76,16 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1096 [CORE] Route delayed-post failures through the async error hook
+Summary: Delayed `Post*` execution now preserves the async error surface instead of losing handler failures on delayed worker threads.
+
+Details:
+- Updated `TmaxBus.ScheduleDelayedPost` to wrap the deferred `Post<T>` / `PostNamed` / `PostNamedOf<T>` / `PostGuidOf<T>` call in a bus-owned exception handler that forwards `EmaxDispatchError` and other delayed-post exceptions through `maxSetAsyncErrorHandler`.
+- Applied the same guarded wrapper to the delayed-submission fallback thread so scheduler `RunDelayed` failures and normal delayed execution share the same observable error behavior.
+- Added regression coverage for typed, named, named-of, GUID, and fallback-delayed failure forwarding while keeping the existing `Cancel` / `IsPending` / `Clear` delayed-handle coverage green.
+- Proof: `./build-and-run-tests.sh` (exit `0`).
+- Proof: `rg -n "ScheduleDelayedPost|TypedDelayedFailureForwardsAsyncHook|NamedDelayedFailureForwardsAsyncHook|NamedOfDelayedFailureForwardsAsyncHook|GuidDelayedFailureForwardsAsyncHook|SchedulerFailureDelayedNamedForwardsAsyncHook" maxLogic.EventNexus.Core.pas tests/src/MaxEventNexus.Main.Tests.pas` (delayed-post wrapper + regression coverage present).
 
 ### T-1097 [CORE] Normalize positive sub-millisecond RunDelayed semantics across schedulers
 Summary: Unified the shipped scheduler adapters on one positive-delay rule and added runtime parity coverage so sub-millisecond delays no longer drift by backend.
