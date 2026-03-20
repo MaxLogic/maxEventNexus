@@ -214,6 +214,16 @@ type
     procedure Execute; override;
   end;
 
+  TPresetNamedPostThread = class(TThread)
+  public
+    fBus: ImaxBus;
+    fName: TmaxString;
+    fValue: integer;
+    constructor Create(const aBus: ImaxBus; const aName: TmaxString; aValue: integer);
+  protected
+    procedure Execute; override;
+  end;
+
   TGuidPostThread = class(TThread)
   public
     fBus: ImaxBus;
@@ -474,6 +484,7 @@ type
   TTestQueuePolicyPresets = class(TmaxTestCase)
   private
     procedure AssertNamedOfDropNewestPolicy(const aBus: ImaxBus; const aName: TmaxString);
+    procedure AssertNamedOfUnboundedPresetEventPolicy(const aBus: ImaxBus; const aName: TmaxString);
     procedure AssertNamedOfStatePolicy(const aBus: ImaxBus; const aName: TmaxString);
   published
     procedure TypedPresetAffectsGetPolicy;
@@ -482,6 +493,7 @@ type
     procedure NamedOfNamePresetOverridesTypePreset;
     procedure NamedOfExplicitPolicyOverridesPresets;
     procedure NamedOfRemovingNamePresetFallsBackToTypePreset;
+    procedure NamedOfRemovingNamePresetFallsBackPerType;
     procedure NamedOfTypePresetUpdateReappliesToExistingImplicitTopic;
     procedure ClearPreservesNamedOfTypePresetFallback;
     procedure NamedPresetsReturnDefaultPolicy;
@@ -876,6 +888,11 @@ begin
   Result.MaxDepth := aMaxDepth;
   Result.Overflow := aOverflow;
   Result.DeadlineUs := aDeadlineUs;
+end;
+
+function MakePresetEvent(aValue: integer): TPresetEvent;
+begin
+  Result.Value := aValue;
 end;
 
 function CreateIsolatedBus: ImaxBus;
@@ -4243,6 +4260,26 @@ begin
   {$ENDIF}
 end;
 
+{ TPresetNamedPostThread }
+
+constructor TPresetNamedPostThread.Create(const aBus: ImaxBus; const aName: TmaxString; aValue: integer);
+begin
+  inherited Create(True);
+  FreeOnTerminate := False;
+  fBus := aBus;
+  fName := aName;
+  fValue := aValue;
+end;
+
+procedure TPresetNamedPostThread.Execute;
+begin
+  {$IFDEF max_FPC}
+  fBus.TryPostNamedOf<TPresetEvent>(fName, MakePresetEvent(fValue));
+  {$ELSE}
+  maxBusObj(fBus).TryPostNamedOf<TPresetEvent>(fName, MakePresetEvent(fValue));
+  {$ENDIF}
+end;
+
 { TGuidPostThread }
 
 constructor TGuidPostThread.Create(const aBus: ImaxBus; aValue: integer);
@@ -4948,6 +4985,54 @@ begin
   end;
 end;
 
+procedure TTestQueuePolicyPresets.AssertNamedOfUnboundedPresetEventPolicy(const aBus: ImaxBus; const aName: TmaxString);
+var
+  lStarted: TEvent;
+  lRelease: TEvent;
+  lSub: ImaxSubscription;
+  lThread: TPresetNamedPostThread;
+  lCount: integer;
+  i: integer;
+begin
+  lSub := nil;
+  lCount := 0;
+  lStarted := TEvent.Create(nil, True, False, '');
+  lRelease := TEvent.Create(nil, True, False, '');
+  try
+    lSub := maxBusObj(aBus).SubscribeNamedOf<TPresetEvent>(aName,
+      procedure(const aValue: TPresetEvent)
+      begin
+        Inc(lCount);
+        if aValue.Value = 1 then
+        begin
+          lStarted.SetEvent;
+          lRelease.WaitFor(5000);
+        end;
+      end,
+      TmaxDelivery.Posting);
+
+    lThread := TPresetNamedPostThread.Create(aBus, aName, 1);
+    try
+      lThread.Start;
+      Check(lStarted.WaitFor(2000) = wrSignaled);
+
+      for i := 2 to 300 do
+        Check(maxBusObj(aBus).TryPostNamedOf<TPresetEvent>(aName, MakePresetEvent(i)));
+
+      lRelease.SetEvent;
+      lThread.WaitFor;
+    finally
+      lThread.Free;
+    end;
+
+    CheckEquals(300, lCount);
+  finally
+    lSub := nil;
+    lRelease.Free;
+    lStarted.Free;
+  end;
+end;
+
 procedure TTestQueuePolicyPresets.TypedPresetAffectsGetPolicy;
 var
   lBus: ImaxBus;
@@ -5125,6 +5210,34 @@ begin
     TmaxDelivery.Posting);
   maxBusObj(lBus).SetQueuePresetNamed(cName, TmaxQueuePreset.Unspecified);
   AssertNamedOfStatePolicy(lBus, cName);
+end;
+
+procedure TTestQueuePolicyPresets.NamedOfRemovingNamePresetFallsBackPerType;
+const
+  cName = 'statepreset.namedof.sharedname';
+var
+  lBus: ImaxBus;
+begin
+  lBus := CreateIsolatedBus;
+  maxBusObj(lBus).SetQueuePresetForType(TypeInfo(integer), TmaxQueuePreset.State);
+  maxBusObj(lBus).SetQueuePresetNamed(cName, TmaxQueuePreset.State);
+  maxBusObj(lBus).SubscribeNamedOf<integer>(cName,
+    procedure(const aValue: integer)
+    begin
+      if aValue = 0 then
+        Exit;
+    end,
+    TmaxDelivery.Posting);
+  maxBusObj(lBus).SubscribeNamedOf<TPresetEvent>(cName,
+    procedure(const aValue: TPresetEvent)
+    begin
+      if aValue.Value = 0 then
+        Exit;
+    end,
+    TmaxDelivery.Posting);
+  maxBusObj(lBus).SetQueuePresetNamed(cName, TmaxQueuePreset.Unspecified);
+  AssertNamedOfStatePolicy(lBus, cName);
+  AssertNamedOfUnboundedPresetEventPolicy(lBus, cName);
 end;
 
 procedure TTestQueuePolicyPresets.NamedOfTypePresetUpdateReappliesToExistingImplicitTopic;

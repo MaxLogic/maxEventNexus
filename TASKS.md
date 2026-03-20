@@ -1,9 +1,9 @@
 # Tasks
-Next task ID: T-1109
+Next task ID: T-1110
 
 ## Summary
 Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
-Done tasks: 131
+Done tasks: 132
 
 ## In Progress
 
@@ -25,6 +25,15 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1109 [TEST] Add multi-type named-of preset fallback regression
+Summary: Added a shared-name regression proving that removing a name preset from existing implicit named-of topics falls back per type rather than leaving a shared stale policy behind.
+
+Details:
+- Added a second named-of preset helper for unbounded `TPresetEvent` behavior and a shared-name regression that keeps `integer` on `State` fallback while `TPresetEvent` falls back to `Unspecified` after removing the shared name preset.
+- Replaced the initial anonymous-thread probe with an explicit `TPresetNamedPostThread` to keep the new regression deterministic and Delphi-safe.
+- Proof: `./build-and-run-tests.sh` (exit `0`, including the new shared-name named-of fallback regression and the standard analyzer/benchmark gates).
+- Proof: `rg -n "NamedOfRemovingNamePresetFallsBackPerType|statepreset\\.namedof\\.sharedname" tests/src/MaxEventNexus.Main.Tests.pas` (exit `0`, new regression and shared-name coverage present).
 
 ### T-1108 [SPEC] Clarify named-of queue-preset fallback semantics
 Summary: Named-of topics now resolve implicit queue policy as explicit named policy, then name preset, then type preset, then `Unspecified`, with the same precedence applied at topic creation, preset reapply, and `Clear`.
