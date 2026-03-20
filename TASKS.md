@@ -2,40 +2,12 @@
 Next task ID: T-1117
 
 ## Summary
-Open tasks: 3 (In Progress: 0, Next Today: 2, Next This Week: 1, Next Later: 0, Blocked: 0)
-Done tasks: 136
+Open tasks: 1 (In Progress: 0, Next Today: 0, Next This Week: 1, Next Later: 0, Blocked: 0)
+Done tasks: 138
 
 ## In Progress
 
 ## Next – Today
-
-### T-1115 [TEST] Add bulk named and GUID failure aggregation regressions
-Outcome:
-- `PostManyNamedOf<T>` raises one merged `EmaxDispatchError` when multiple batch elements fail
-- `PostManyGuidOf<T>` raises one merged `EmaxDispatchError` when multiple batch elements fail
-- regression coverage proves detail aggregation stays aligned with the typed `PostMany<T>` contract
-Proof:
-- Run: `rg -n "PostManyNamedOf.*EmaxDispatchError|PostManyGuidOf.*EmaxDispatchError|bulk.*named.*error|bulk.*guid.*error" tests/src/MaxEventNexus.Main.Tests.pas`
-  Expect: exit=0, new named/guid bulk failure regressions are present
-- Run: `./build-and-run-tests.sh`
-  Expect: exit=0, including the new named/guid bulk failure regressions
-Touches: tests/src/MaxEventNexus.Main.Tests.pas
-Verify: unit-test, cli-proof
-Notes: Spec section 4.4. Added from `.agents/spec-gaps-review/2026-03-20_18-01-57.md`.
-
-### T-1113 [TEST] Add mixed-case named routing regressions
-Outcome:
-- mixed-case `SubscribeNamed` / `PostNamed` routing is covered by tests
-- mixed-case `SubscribeNamedOf<T>` / `PostNamedOf<T>` routing is covered by tests
-- mixed-case named sticky/policy/preset lookup behavior is covered by tests
-Proof:
-- Run: `rg -n "MixedCase|CaseInsensitive|NamedRouting" tests/src/MaxEventNexus.Main.Tests.pas`
-  Expect: exit=0, new mixed-case named-routing regressions are present
-- Run: `./build-and-run-tests.sh`
-  Expect: exit=0, including the new mixed-case named-routing regressions
-Touches: tests/src/MaxEventNexus.Main.Tests.pas
-Verify: unit-test, cli-proof
-Notes: Spec section 5. Added from `.agents/spec-gaps-review/2026-03-20_18-01-57.md`.
 
 ## Next – This Week
 
@@ -67,6 +39,24 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1115 [TEST] Add bulk named and GUID failure aggregation regressions
+Summary: Added named-of and guid-of bulk dispatch regressions so merged `EmaxDispatchError` behavior is covered beyond the existing typed `PostMany<T>` fixture.
+
+Details:
+- Added `BulkNamedErrorAggregationMatchesTypedContract` to prove `PostManyNamedOf<T>` merges per-item failures into one aggregate dispatch error.
+- Added `BulkGuidErrorAggregationMatchesTypedContract` to prove `PostManyGuidOf<T>` follows the same merged-failure contract.
+- Proof: `rg -n "PostManyNamedOf.*EmaxDispatchError|PostManyGuidOf.*EmaxDispatchError|bulk.*named.*error|bulk.*guid.*error" tests/src/MaxEventNexus.Main.Tests.pas` (exit `0`, named/guid bulk error regressions present).
+- Proof: `./build-and-run-tests.sh` (exit `0`, including named/guid bulk error regressions plus the normal analyzer/benchmark/API gates).
+
+### T-1113 [TEST] Add mixed-case named routing regressions
+Summary: Added named-topic regressions proving case-insensitive routing and config lookup behavior for named, named-of, sticky, explicit policy, and named preset flows.
+
+Details:
+- Added `MixedCaseNamedRoutingForNamedTopic` and `MixedCaseNamedRoutingForNamedOfTopic` to pin mixed-case routing for named and named-of posts.
+- Added `CaseInsensitiveNamedStickyPolicyAndPresetLookups` to cover sticky late delivery, explicit policy lookup, and named preset lookup across mixed-case name variants.
+- Proof: `rg -n "MixedCase|CaseInsensitive|NamedRouting" tests/src/MaxEventNexus.Main.Tests.pas` (exit `0`, mixed-case named routing regressions present).
+- Proof: `./build-and-run-tests.sh` (exit `0`, including mixed-case named routing regressions plus the normal analyzer/benchmark/API gates).
 
 ### T-1114 [TEST] Add wildcard parser and precedence edge regressions
 Summary: Added wildcard regression coverage for invalid patterns, longer-prefix precedence, and wildcard failure metadata so the named-wildcard contract is pinned beyond the existing happy paths.
