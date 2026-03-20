@@ -1,13 +1,39 @@
 # Tasks
-Next task ID: T-1100
+Next task ID: T-1107
 
 ## Summary
-Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
-Done tasks: 122
+Open tasks: 2 (In Progress: 0, Next Today: 2, Next This Week: 0, Next Later: 0, Blocked: 0)
+Done tasks: 127
 
 ## In Progress
 
 ## Next – Today
+
+### T-1105 [TEST] Restore policy cleanup for post-Clear regression tests
+Outcome:
+- The new explicit-policy-after-`Clear` regression tests no longer leak typed, named, or GUID policy configuration into later tests on the shared singleton bus.
+- Named-topic cleanup resets the actual effective policy state rather than only clearing preset metadata.
+Proof:
+- Run: `./build-and-run-tests.sh`
+  Expect: exit `0`, with the regression suite still green after isolating post-`Clear` policy tests.
+- Run: `rg -n "ClearPreserves.*Policy|ResetNamedPolicy|SetPolicyFor<integer>|SetPolicyGuidOf<IIntEvent>" tests/src/MaxEventNexus.Main.Tests.pas`
+  Expect: exit `0`, and cleanup paths are explicit for the affected test surfaces.
+Touches: tests/src/MaxEventNexus.Main.Tests.pas
+Verify: unit-test, cli-proof
+Notes: Follow-up from review of T-1100/T-1101/T-1102/T-1104. `Clear` now preserves config by design, so test teardown must not rely on `Clear` as a config reset.
+
+### T-1106 [API] Fix PostResult status for deferred AutoSubscribe-only delivery
+Outcome:
+- `PostResult<T>`, `PostResultNamedOf<T>`, and `PostResultGuidOf<T>` stop reporting `DispatchedInline` when the only effective receivers are `AutoSubscribe` handlers using non-`Posting` delivery modes.
+- Regression tests cover `AutoSubscribe` handlers with deferred delivery so the returned status matches spec section 4.3.
+Proof:
+- Run: `./build-and-run-tests.sh`
+  Expect: exit `0`, including new `PostResult*` + deferred `AutoSubscribe` regression coverage.
+- Run: `rg -n "PostResult.*AutoSubscribe|AutoSubscribe.*Async|AutoSubscribe.*Background|AutoSubscribe.*Main" tests/src/MaxEventNexus.Main.Tests.pas maxLogic.EventNexus.Core.pas`
+  Expect: exit `0`, runtime and tests both cover deferred auto-subscribed receiver status.
+Touches: maxLogic.EventNexus.Core.pas, tests/src/MaxEventNexus.Main.Tests.pas
+Verify: unit-test, cli-proof
+Notes: Spec section 4.3. `DispatchAutoBridge` can schedule non-`Posting` handlers, so `DispatchedInline` is not a correct result for those receiver-only paths.
 
 ## Next – This Week
 
@@ -25,6 +51,51 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1103 [OBS] Clarify TraceEnqueue delivery semantics
+Summary: Chose and documented the topic-queue interpretation for `TraceEnqueue`, then pinned the same contract in tracing regressions and supporting docs.
+
+Details:
+- Updated `spec.md`, `DESIGN.md`, and `README.md` so `TraceEnqueue` is explicitly defined as a topic-level queue/direct-dispatch signal, while `TraceInvoke*` remains the per-subscriber delivery trace surface.
+- Extended tracing coverage to assert that an async subscriber still yields `TraceEnqueue.Delivery = Posting` while `TraceInvokeStart.Delivery = Async`, locking the clarified contract into tests.
+- Proof: `./build-and-run-tests.sh` (exit `0`, including tracing regressions aligned with the clarified contract).
+- Proof: `rg -n "TraceEnqueue|TraceEnqueue.*Delivery|topic-queue|per-invocation" spec.md DESIGN.md README.md maxLogic.EventNexus.Core.pas tests/src/MaxEventNexus.Main.Tests.pas` (exit `0`, docs, runtime, and tests now describe the same semantics).
+
+### T-1104 [BENCH] Modernize BenchHarness to the Delphi bridge contract
+Summary: Modernized `bench/BenchHarness` to the supported Delphi bridge pattern and added a maintained Delphi project entry so the bench harness now compiles as part of the repo’s verified surface.
+
+Details:
+- Reworked `bench/BenchHarness.pas` to create the bus through `ImaxBus`, bridge to `TmaxBus` with `maxBusObj(...)`, and exercise generic APIs without unsupported generic-interface calls.
+- Added `bench/BenchHarness.dproj` and wired it into `maxEventNexusGroup.groupproj` so the harness has an explicit build path instead of remaining legacy source-only.
+- Proof: `./build-delphi.sh bench/BenchHarness.dproj -config Release -enforce-diagnostics-policy -diagnostics-policy build/diagnostics-policy.regex` (exit `0`).
+- Proof: `rg -n "maxBusObj|TmaxBus" bench/BenchHarness.pas` (exit `0`, maintained bridge contract present).
+
+### T-1102 [API] Align PostResult* with AutoSubscribe receivers
+Summary: `PostResult<T>`, `PostResultNamedOf<T>`, and `PostResultGuidOf<T>` now treat live attributed auto-subscribed handlers as real receivers instead of misreporting `NoTopic`.
+
+Details:
+- Updated the `PostResult*` no-topic fast path to consult the matching auto-bridge subscription snapshots before returning `NoTopic`.
+- Added typed, named-of, and GUID regression tests proving `AutoSubscribe` handlers run and `PostResult*` returns `DispatchedInline` instead of `NoTopic`.
+- Proof: `./build-and-run-tests.sh` (exit `0`, including new `PostResult*` + `AutoSubscribe` regression coverage).
+- Proof: `rg -n "PostResult.*AutoSubscribe|AutoSubscribe.*PostResult" tests/src/MaxEventNexus.Main.Tests.pas` (exit `0`, receiver regressions present).
+
+### T-1101 [CORE] Preserve explicit queue policies across Clear
+Summary: `Clear` now preserves explicit typed, named, and GUID queue policies while still resetting runtime queue state and counters.
+
+Details:
+- Refactored topic reset paths so durable policy configuration survives `Clear` instead of being wiped and partially reconstructed.
+- Added typed, named, and GUID regression coverage proving explicit policy settings remain in effect after `Clear`.
+- Proof: `./build-and-run-tests.sh` (exit `0`, including explicit-policy-after-`Clear` regressions).
+- Proof: `rg -n "Clear.*Policy|Policy.*AfterClear|Explicit.*Clear" tests/src/MaxEventNexus.Main.Tests.pas` (exit `0`, policy persistence coverage present).
+
+### T-1100 [CORE] Preserve coalescing configuration across Clear
+Summary: `Clear` now behaves as a runtime reset for coalescing configuration: selectors/windows survive, while queued and pending coalesced work is still dropped at the clear boundary.
+
+Details:
+- Refactored typed-topic reset logic to preserve configured coalescing selectors/windows and added a coalescing epoch so stale delayed flushes cannot drain post-`Clear` state.
+- Added typed, named-of, and GUID regression tests proving coalescing still applies after `Clear` without requiring reconfiguration.
+- Proof: `./build-and-run-tests.sh` (exit `0`, including new `Clear`/coalescing regressions).
+- Proof: `rg -n "Clear.*Coalesce|Coalesce.*AfterClear|Preserves.*Coalesce" tests/src/MaxEventNexus.Main.Tests.pas` (exit `0`, post-`Clear` coalescing coverage present).
 
 ### T-1087 [TEST] Add a discoverable root stress command
 Summary: Added a root-level stress runner and a dedicated `--stress-suite` path so remediation and release workflows can run a concrete async/delayed/coalesce stress command after the normal suite.

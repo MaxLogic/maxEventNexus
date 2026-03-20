@@ -5,6 +5,7 @@ This folder contains Delphi benchmark programs for EventNexus.
 ## Build
 
 - `./build-delphi.sh bench/SchedulerCompare.dproj -config Release`
+- `./build-delphi.sh bench/BenchHarness.dproj -config Release -enforce-diagnostics-policy -diagnostics-policy build/diagnostics-policy.regex`
 
 ## EventNexus workload (`BenchHarness.pas`)
 
@@ -16,9 +17,14 @@ Purpose:
 Example runs:
 
 ```bash
+./build-delphi.sh bench/BenchHarness.dproj -config Release -enforce-diagnostics-policy -diagnostics-policy build/diagnostics-policy.regex
 ./bench/BenchHarness --producers=4 --consumers=4 --events=100000 --payload=256 --sticky --coalesce
 ./bench/BenchHarness --producers=4 --consumers=1000 --events=20000 --payload=64
 ```
+
+Implementation note:
+
+- `BenchHarness` now uses the supported Delphi generic bridge contract (`TmaxBus` via `maxBusObj(...)`) rather than unsupported generic-interface calls.
 
 The second scenario is the high-subscriber stress profile used to validate copy-on-write snapshot scaling.
 

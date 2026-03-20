@@ -69,6 +69,9 @@ type
   published
     procedure DropsIntermediateDeliversLatest;
     procedure ZeroWindowBatchesPosts;
+    procedure ClearPreservesCoalesceForTypedTopic;
+    procedure ClearPreservesCoalesceForNamedOfTopic;
+    procedure ClearPreservesCoalesceForGuidTopic;
   end;
 
   TTestFuzz = class(TmaxTestCase)
@@ -294,6 +297,16 @@ type
     function GetValue: integer;
   end;
 
+  IQueueMetricsGuidEvent = interface
+    ['{87E79E11-04A4-49AE-A630-4898A2BC728D}']
+    function GetValue: integer;
+  end;
+
+  IQueuePresetGuidEvent = interface
+    ['{F85E099C-4F60-4062-975C-3D2AB9C65215}']
+    function GetValue: integer;
+  end;
+
   TIntEvent = class(TInterfacedObject, IIntEvent)
   private
     fVal: integer;
@@ -303,6 +316,22 @@ type
   end;
 
   TPostResultGuidEvent = class(TInterfacedObject, IPostResultGuidEvent)
+  private
+    fVal: integer;
+  public
+    constructor Create(aValue: integer);
+    function GetValue: integer;
+  end;
+
+  TQueueMetricsGuidEvent = class(TInterfacedObject, IQueueMetricsGuidEvent)
+  private
+    fVal: integer;
+  public
+    constructor Create(aValue: integer);
+    function GetValue: integer;
+  end;
+
+  TQueuePresetGuidEvent = class(TInterfacedObject, IQueuePresetGuidEvent)
   private
     fVal: integer;
   public
@@ -357,6 +386,12 @@ type
     procedure AcceptedReturnsInlineOrQueued;
     procedure GuidOfQueuePressureReturnsQueuedThenDropped;
     procedure GuidOfAcceptedReturnsInline;
+    procedure ClearPreservesTypedExplicitPolicy;
+    procedure ClearPreservesNamedExplicitPolicy;
+    procedure ClearPreservesGuidExplicitPolicy;
+    procedure PostResultTypedAutoSubscribeIsNotNoTopic;
+    procedure PostResultNamedOfAutoSubscribeIsNotNoTopic;
+    procedure PostResultGuidOfAutoSubscribeIsNotNoTopic;
   end;
 
   TTestDispatchErrorDetails = class(TmaxTestCase)
@@ -791,6 +826,11 @@ begin
   Result.DeadlineUs := aDeadlineUs;
 end;
 
+procedure ResetNamedPolicy(const aBus: ImaxBus; const aName: string);
+begin
+  maxBusObj(aBus).SetQueuePresetNamed(aName, TmaxQueuePreset.Unspecified);
+end;
+
 procedure PostIntegerValue(const aBus: ImaxBus; aValue: integer);
 begin
   {$IFDEF max_FPC}
@@ -851,6 +891,56 @@ begin
   finally
     aLock.Leave;
   end;
+end;
+
+procedure AddLockedIntegerValue(const aLock: TCriticalSection; const aValues: TList<integer>; aValue: integer);
+begin
+  aLock.Enter;
+  try
+    aValues.Add(aValue);
+  finally
+    aLock.Leave;
+  end;
+end;
+
+procedure AddLockedIntEventValue(const aLock: TCriticalSection; const aValues: TList<integer>; const aEvent: IIntEvent);
+begin
+  if aEvent = nil then
+    AddLockedIntegerValue(aLock, aValues, 0)
+  else
+    AddLockedIntegerValue(aLock, aValues, aEvent.GetValue);
+end;
+
+procedure WaitForLockedIntegerCount(const aLock: TCriticalSection; const aValues: TList<integer>; aExpected: integer;
+  aTimeoutMs: Cardinal);
+var
+  lCount: integer;
+  lStart: UInt64;
+begin
+  lStart := GetTickCount64;
+  repeat
+    aLock.Enter;
+    try
+      lCount := aValues.Count;
+    finally
+      aLock.Leave;
+    end;
+    if lCount >= aExpected then
+      Exit;
+    CheckSynchronize(0);
+    Sleep(1);
+  until GetTickCount64 - lStart >= aTimeoutMs;
+end;
+
+function SubscribeGuidValueCapture(const aBus: ImaxBus; const aLock: TCriticalSection;
+  const aValues: TList<integer>): ImaxSubscription;
+begin
+  Result := maxBusObj(aBus).SubscribeGuidOf<IIntEvent>(
+    procedure(const aValue: IIntEvent)
+    begin
+      AddLockedIntEventValue(aLock, aValues, aValue);
+    end,
+    TmaxDelivery.Posting);
 end;
 
 procedure ReleaseAndJoinThread(const aRelease: TEvent; var aThread: TThread);
@@ -1600,6 +1690,165 @@ begin
     {$ELSE}
     maxBusObj(lBus).EnableCoalesceOf<TKeyed>(nil);
     {$ENDIF}
+    lLock.Free;
+  end;
+end;
+
+procedure TTestCoalesce.ClearPreservesCoalesceForTypedTopic;
+const
+  cWindowUs = 50000;
+  cWaitMs = 250;
+var
+  lBus: ImaxBus;
+  lLock: TCriticalSection;
+  lValue: integer;
+  lValues: TList<TKeyed>;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lLock := TCriticalSection.Create;
+  lValues := TList<TKeyed>.Create;
+  try
+    maxBusObj(lBus).EnableCoalesceOf<TKeyed>(
+      function(const aEvent: TKeyed): TmaxString
+      begin
+        Result := aEvent.Key;
+      end,
+      cWindowUs);
+
+    maxBusObj(lBus).Subscribe<TKeyed>(
+      procedure(const aEvent: TKeyed)
+      begin
+        AddKeyedValue(lLock, lValues, aEvent);
+      end);
+    maxBusObj(lBus).Post<TKeyed>(MakeKeyed('typed', 1));
+    maxBusObj(lBus).Post<TKeyed>(MakeKeyed('typed', 2));
+
+    lBus.Clear;
+
+    maxBusObj(lBus).Subscribe<TKeyed>(
+      procedure(const aEvent: TKeyed)
+      begin
+        AddKeyedValue(lLock, lValues, aEvent);
+      end);
+    maxBusObj(lBus).Post<TKeyed>(MakeKeyed('typed', 3));
+    maxBusObj(lBus).Post<TKeyed>(MakeKeyed('typed', 4));
+
+    WaitForKeyedCount(lLock, lValues, 1, 2000);
+    Sleep(cWaitMs);
+    AssertLockedKeyedCount(lLock, lValues, 1);
+    lValue := FindKeyedValue(lLock, lValues, 'typed');
+    CheckEquals(4, lValue);
+  finally
+    maxBusObj(lBus).EnableCoalesceOf<TKeyed>(nil);
+    lBus.Clear;
+    lValues.Free;
+    lLock.Free;
+  end;
+end;
+
+procedure TTestCoalesce.ClearPreservesCoalesceForNamedOfTopic;
+const
+  cName = 'clear.coalesce.named';
+  cWindowUs = 50000;
+  cWaitMs = 250;
+var
+  lBus: ImaxBus;
+  lLock: TCriticalSection;
+  lValue: integer;
+  lValues: TList<TKeyed>;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lLock := TCriticalSection.Create;
+  lValues := TList<TKeyed>.Create;
+  try
+    maxBusObj(lBus).EnableCoalesceNamedOf<TKeyed>(cName,
+      function(const aEvent: TKeyed): TmaxString
+      begin
+        Result := aEvent.Key;
+      end,
+      cWindowUs);
+
+    maxBusObj(lBus).SubscribeNamedOf<TKeyed>(cName,
+      procedure(const aEvent: TKeyed)
+      begin
+        AddKeyedValue(lLock, lValues, aEvent);
+      end,
+      TmaxDelivery.Posting);
+    maxBusObj(lBus).PostNamedOf<TKeyed>(cName, MakeKeyed('named', 1));
+    maxBusObj(lBus).PostNamedOf<TKeyed>(cName, MakeKeyed('named', 2));
+
+    lBus.Clear;
+
+    maxBusObj(lBus).SubscribeNamedOf<TKeyed>(cName,
+      procedure(const aEvent: TKeyed)
+      begin
+        AddKeyedValue(lLock, lValues, aEvent);
+      end,
+      TmaxDelivery.Posting);
+    maxBusObj(lBus).PostNamedOf<TKeyed>(cName, MakeKeyed('named', 3));
+    maxBusObj(lBus).PostNamedOf<TKeyed>(cName, MakeKeyed('named', 4));
+
+    WaitForKeyedCount(lLock, lValues, 1, 2000);
+    Sleep(cWaitMs);
+    AssertLockedKeyedCount(lLock, lValues, 1);
+    lValue := FindKeyedValue(lLock, lValues, 'named');
+    CheckEquals(4, lValue);
+  finally
+    maxBusObj(lBus).EnableCoalesceNamedOf<TKeyed>(cName, nil);
+    lBus.Clear;
+    lValues.Free;
+    lLock.Free;
+  end;
+end;
+
+procedure TTestCoalesce.ClearPreservesCoalesceForGuidTopic;
+const
+  cWindowUs = 50000;
+  cWaitMs = 250;
+var
+  lBus: ImaxBus;
+  lLock: TCriticalSection;
+  lSub: ImaxSubscription;
+  lValues: TList<integer>;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lLock := TCriticalSection.Create;
+  lValues := TList<integer>.Create;
+  lSub := nil;
+  try
+    maxBusObj(lBus).EnableCoalesceGuidOf<IIntEvent>(
+      function(const aValue: IIntEvent): TmaxString
+      begin
+        Result := 'guid';
+      end,
+      cWindowUs);
+    lSub := SubscribeGuidValueCapture(lBus, lLock, lValues);
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(1));
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(2));
+
+    lBus.Clear;
+
+    lSub := SubscribeGuidValueCapture(lBus, lLock, lValues);
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(3));
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(4));
+
+    WaitForLockedIntegerCount(lLock, lValues, 1, 2000);
+    Sleep(cWaitMs);
+    lLock.Enter;
+    try
+      CheckEquals(1, lValues.Count);
+      CheckEquals(4, lValues[0]);
+    finally
+      lLock.Leave;
+    end;
+  finally
+    lSub := nil;
+    maxBusObj(lBus).EnableCoalesceGuidOf<IIntEvent>(nil);
+    lBus.Clear;
+    lValues.Free;
     lLock.Free;
   end;
 end;
@@ -2368,6 +2617,32 @@ begin
   Result := fVal;
 end;
 
+{ TQueueMetricsGuidEvent }
+
+constructor TQueueMetricsGuidEvent.Create(aValue: integer);
+begin
+  inherited Create;
+  fVal := aValue;
+end;
+
+function TQueueMetricsGuidEvent.GetValue: integer;
+begin
+  Result := fVal;
+end;
+
+{ TQueuePresetGuidEvent }
+
+constructor TQueuePresetGuidEvent.Create(aValue: integer);
+begin
+  inherited Create;
+  fVal := aValue;
+end;
+
+function TQueuePresetGuidEvent.GetValue: integer;
+begin
+  Result := fVal;
+end;
+
 procedure TTestGuidTopics.GuidPublishDelivers;
 var
   lBus: ImaxBus;
@@ -2485,7 +2760,7 @@ begin
       begin
         Result := 'k';
       end,
-      0);
+      10000);
     maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
       procedure(const aEvt: IIntEvent)
       begin
@@ -2499,7 +2774,7 @@ begin
       end);
     {$ENDIF}
     PostGuidValues(lBus, [1, 2]);
-    Sleep(10);
+    Sleep(25);
     AssertLockedIntegerState(lLock, lValues, 1, 2);
   finally
     {$IFDEF max_FPC}
@@ -2518,18 +2793,10 @@ var
   lQueues: ImaxBusQueues;
   lMetrics: ImaxBusMetrics;
   lPolicy: TmaxQueuePolicy;
-  t: TGuidPostThread;
+  t: TThread;
   ok: boolean;
   lCount: integer;
   lStats: TmaxTopicStats;
-
-  {$IFDEF max_FPC}
-  procedure Handler(const aEvt: IIntEvent);
-  begin
-    Sleep(100);
-    Inc(lCount);
-  end;
-  {$ENDIF}
 begin
   lBus := maxBus;
   lBus.Clear;
@@ -2537,49 +2804,37 @@ begin
   lPolicy.MaxDepth := 1;
   lPolicy.Overflow := DropNewest;
   lPolicy.DeadlineUs := 0;
-  {$IFDEF max_FPC}
-  lQueues.SetPolicyGuidOf<IIntEvent>(lPolicy);
-  {$ELSE}
-  maxBusObj(lQueues).SetPolicyGuidOf<IIntEvent>(lPolicy);
-  {$ENDIF}
+  maxBusObj(lQueues).SetPolicyGuidOf<IQueueMetricsGuidEvent>(lPolicy);
   lCount := 0;
-  {$IFDEF max_FPC}
-  lBus.SubscribeGuidOf<IIntEvent>(@Handler);
-  {$ELSE}
-  maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
-    procedure(const aEvt: IIntEvent)
+  maxBusObj(lBus).SubscribeGuidOf<IQueueMetricsGuidEvent>(
+    procedure(const aEvt: IQueueMetricsGuidEvent)
     begin
       Sleep(100);
       Inc(lCount);
     end);
-  {$ENDIF}
-  t := TGuidPostThread.Create(lBus, 1);
-  t.start;
-  Sleep(10);
-  {$IFDEF max_FPC}
-  ok := lBus.TryPostGuidOf<IIntEvent>(TIntEvent.Create(2));
-  {$ELSE}
-  ok := maxBusObj(lBus).TryPostGuidOf<IIntEvent>(TIntEvent.Create(2));
-  {$ENDIF}
-  Check(ok);
-  {$IFDEF max_FPC}
-  ok := lBus.TryPostGuidOf<IIntEvent>(TIntEvent.Create(3));
-  {$ELSE}
-  ok := maxBusObj(lBus).TryPostGuidOf<IIntEvent>(TIntEvent.Create(3));
-  {$ENDIF}
-  Check(not ok);
-  t.WaitFor;
-  t.Free;
-  CheckEquals(2, lCount);
-  lMetrics := lBus as ImaxBusMetrics;
-  {$IFDEF max_FPC}
-  lStats := lMetrics.GetStatsGuidOf<IIntEvent>;
-  {$ELSE}
-  lStats := maxBusObj(lMetrics).GetStatsGuidOf<IIntEvent>;
-  {$ENDIF}
-  CheckEquals(3, lStats.PostsTotal);
-  CheckEquals(2, lStats.DeliveredTotal);
-  CheckEquals(1, lStats.DroppedTotal);
+  t := TThread.CreateAnonymousThread(
+    procedure
+    begin
+      maxBusObj(lBus).PostGuidOf<IQueueMetricsGuidEvent>(TQueueMetricsGuidEvent.Create(1));
+    end);
+  t.FreeOnTerminate := False;
+  try
+    t.start;
+    Sleep(10);
+    ok := maxBusObj(lBus).TryPostGuidOf<IQueueMetricsGuidEvent>(TQueueMetricsGuidEvent.Create(2));
+    Check(ok);
+    ok := maxBusObj(lBus).TryPostGuidOf<IQueueMetricsGuidEvent>(TQueueMetricsGuidEvent.Create(3));
+    Check(not ok);
+    t.WaitFor;
+    CheckEquals(2, lCount);
+    lMetrics := lBus as ImaxBusMetrics;
+    lStats := maxBusObj(lMetrics).GetStatsGuidOf<IQueueMetricsGuidEvent>;
+    CheckEquals(3, lStats.PostsTotal);
+    CheckEquals(2, lStats.DeliveredTotal);
+    CheckEquals(1, lStats.DroppedTotal);
+  finally
+    t.Free;
+  end;
 end;
 
 procedure TTestMainThreadPolicy.StrictRaisesOffMain;
@@ -3919,76 +4174,43 @@ end;
 procedure TTestNamedTopics.StickyAndCoalesceNamed;
 var
   lBus: ImaxBus;
+  lCount: integer;
   lName: TmaxString;
   lValues: array of integer;
-  lCount: integer;
-
-  {$IFDEF max_FPC}
-  procedure Handler(const aValue: integer);
-  begin
-    SetLength(lValues, lCount + 1);
-    lValues[lCount] := aValue;
-    Inc(lCount);
-  end;
-
-  function KeyOf(const aValue: integer): TmaxString;
-  begin
-    if aValue mod 2 = 0 then
-      Result := 'even'
-    else
-      Result := 'odd';
-  end;
-  {$ELSE}
-  // Delphi uses anonymous function for key selection
-  {$ENDIF}
 begin
   lBus := maxBus;
   lBus.Clear;
   lName := 'named';
-  (lBus as ImaxBusAdvanced).EnableStickyNamed(lName, True);
-  {$IFDEF max_FPC}
-  lBus.EnableCoalesceNamedOf<integer>(lName, @KeyOf);
-  {$ELSE}
-  maxBusObj(lBus).EnableCoalesceNamedOf<integer>(lName,
-    function(const aValue: integer): TmaxString
-    begin
-      if aValue mod 2 = 0 then
-        Result := 'even'
-      else
-        Result := 'odd';
-    end);
-  {$ENDIF}
-  {$IFDEF max_DELPHI} LogLine('TTestQueuePolicy.DropOldestRemoves', 'Policy MaxDepth=1, Overflow=DropOldest'); {$ENDIF}
-  {$IFDEF max_FPC}
-  lBus.PostNamedOf<integer>(lName, 10);
-  {$ELSE}
-  maxBusObj(lBus).PostNamedOf<integer>(lName, 10);
-  {$ENDIF}
-  lCount := 0;
-  {$IFDEF max_FPC}
-  lBus.SubscribeNamedOf<integer>(lName, @Handler);
-  {$ELSE}
-  maxBusObj(lBus).SubscribeNamedOf<integer>(lName,
-    procedure(const aValue: integer)
-    begin
-      SetLength(lValues, lCount + 1);
-      lValues[lCount] := aValue;
-      Inc(lCount);
-    end);
-  {$ENDIF}
-  {$IFDEF max_DELPHI} LogLine('TTestQueuePolicy.DeadlineDrops', 'Policy MaxDepth=1, Overflow=Deadline, DeadlineUs=50000'); {$ENDIF}
-  {$IFDEF max_FPC}
-  lBus.PostNamedOf<integer>(lName, 1);
-  lBus.PostNamedOf<integer>(lName, 3);
-  {$ELSE}
-  maxBusObj(lBus).PostNamedOf<integer>(lName, 1);
-  maxBusObj(lBus).PostNamedOf<integer>(lName, 3);
-  {$ENDIF}
-  Sleep(50);
-  CheckEquals(2, lCount);
-  CheckEquals(10, lValues[0]);
-  CheckEquals(3, lValues[1]);
-  (lBus as ImaxBusAdvanced).EnableStickyNamed(lName, False);
+  try
+    (lBus as ImaxBusAdvanced).EnableStickyNamed(lName, True);
+    maxBusObj(lBus).EnableCoalesceNamedOf<integer>(lName,
+      function(const aValue: integer): TmaxString
+      begin
+        if aValue mod 2 = 0 then
+          Result := 'even'
+        else
+          Result := 'odd';
+      end);
+    maxBusObj(lBus).PostNamedOf<integer>(lName, 10);
+    lCount := 0;
+    maxBusObj(lBus).SubscribeNamedOf<integer>(lName,
+      procedure(const aValue: integer)
+      begin
+        SetLength(lValues, lCount + 1);
+        lValues[lCount] := aValue;
+        Inc(lCount);
+      end);
+    maxBusObj(lBus).PostNamedOf<integer>(lName, 1);
+    maxBusObj(lBus).PostNamedOf<integer>(lName, 3);
+    Sleep(50);
+    CheckEquals(2, lCount);
+    CheckEquals(10, lValues[0]);
+    CheckEquals(3, lValues[1]);
+  finally
+    maxBusObj(lBus).EnableCoalesceNamedOf<integer>(lName, nil);
+    (lBus as ImaxBusAdvanced).EnableStickyNamed(lName, False);
+    ResetNamedPolicy(lBus, lName);
+  end;
 end;
 
 procedure TTestNamedTopics.QueuePolicyAndMetricsNamed;
@@ -4031,30 +4253,34 @@ begin
     end);
   {$ENDIF}
   t := TNamedPostThread.Create(lBus, lName, 1);
-  t.start;
-  Sleep(10);
-  {$IFDEF max_FPC}
-  ok := lBus.TryPostNamedOf<integer>(lName, 2);
-  {$ELSE}
-  ok := maxBusObj(lBus).TryPostNamedOf<integer>(lName, 2);
-  {$ENDIF}
-  {$IFDEF max_DELPHI} LogLine('TTestQueuePolicy.DeadlineDrops', 'TryPost(2)=' + BoolToStr(ok, True)); {$ENDIF}
-  Check(ok);
-  {$IFDEF max_FPC}
-  ok := lBus.TryPostNamedOf<integer>(lName, 3);
-  {$ELSE}
-  ok := maxBusObj(lBus).TryPostNamedOf<integer>(lName, 3);
-  {$ENDIF}
-  {$IFDEF max_DELPHI} LogLine('TTestQueuePolicy.DeadlineDrops', 'TryPost(3)=' + BoolToStr(ok, True)); {$ENDIF}
-  Check(not ok);
-  t.WaitFor;
-  t.Free;
-  CheckEquals(2, lCount);
-  lMetrics := lBus as ImaxBusMetrics;
-  lStats := lMetrics.GetStatsNamed(lName);
-  CheckEquals(3, lStats.PostsTotal);
-  CheckEquals(2, lStats.DeliveredTotal);
-  CheckEquals(1, lStats.DroppedTotal);
+  try
+    t.start;
+    Sleep(10);
+    {$IFDEF max_FPC}
+    ok := lBus.TryPostNamedOf<integer>(lName, 2);
+    {$ELSE}
+    ok := maxBusObj(lBus).TryPostNamedOf<integer>(lName, 2);
+    {$ENDIF}
+    {$IFDEF max_DELPHI} LogLine('TTestQueuePolicy.DeadlineDrops', 'TryPost(2)=' + BoolToStr(ok, True)); {$ENDIF}
+    Check(ok);
+    {$IFDEF max_FPC}
+    ok := lBus.TryPostNamedOf<integer>(lName, 3);
+    {$ELSE}
+    ok := maxBusObj(lBus).TryPostNamedOf<integer>(lName, 3);
+    {$ENDIF}
+    {$IFDEF max_DELPHI} LogLine('TTestQueuePolicy.DeadlineDrops', 'TryPost(3)=' + BoolToStr(ok, True)); {$ENDIF}
+    Check(not ok);
+    t.WaitFor;
+    CheckEquals(2, lCount);
+    lMetrics := lBus as ImaxBusMetrics;
+    lStats := lMetrics.GetStatsNamed(lName);
+    CheckEquals(3, lStats.PostsTotal);
+    CheckEquals(2, lStats.DeliveredTotal);
+    CheckEquals(1, lStats.DroppedTotal);
+  finally
+    t.Free;
+    ResetNamedPolicy(lBus, lName);
+  end;
 end;
 
 procedure TTestNamedTopics.TryPostNamedNoTopicReturnsTrueWithoutCounters;
@@ -4681,14 +4907,14 @@ begin
   lBus := maxBus;
   lBus.Clear;
   lQueues := lBus as ImaxBusQueues;
-  lGuid := GetTypeData(TypeInfo(IIntEvent))^.Guid;
+  lGuid := GetTypeData(TypeInfo(IQueuePresetGuidEvent))^.Guid;
 
   maxSetQueuePresetGuid(lGuid, TmaxQueuePreset.ControlPlane);
   try
     {$IFDEF max_FPC}
-    lPolicy := lQueues.GetPolicyGuidOf<IIntEvent>;
+    lPolicy := lQueues.GetPolicyGuidOf<IQueuePresetGuidEvent>;
     {$ELSE}
-    lPolicy := maxBusObj(lQueues).GetPolicyGuidOf<IIntEvent>;
+    lPolicy := maxBusObj(lQueues).GetPolicyGuidOf<IQueuePresetGuidEvent>;
     {$ENDIF}
     CheckEquals(1, lPolicy.MaxDepth);
     Check(Ord(lPolicy.Overflow) = Ord(TmaxOverflow.Block));
@@ -4709,7 +4935,7 @@ begin
   lBus := maxBus;
   lBus.Clear;
   lQueues := lBus as ImaxBusQueues;
-  lGuid := GetTypeData(TypeInfo(IIntEvent))^.Guid;
+  lGuid := GetTypeData(TypeInfo(IQueuePresetGuidEvent))^.Guid;
   lExplicit.MaxDepth := 7;
   lExplicit.Overflow := TmaxOverflow.DropNewest;
   lExplicit.DeadlineUs := 1234;
@@ -4717,11 +4943,11 @@ begin
   maxSetQueuePresetGuid(lGuid, TmaxQueuePreset.ControlPlane);
   try
     {$IFDEF max_FPC}
-    lQueues.SetPolicyGuidOf<IIntEvent>(lExplicit);
-    lPolicy := lQueues.GetPolicyGuidOf<IIntEvent>;
+    lQueues.SetPolicyGuidOf<IQueuePresetGuidEvent>(lExplicit);
+    lPolicy := lQueues.GetPolicyGuidOf<IQueuePresetGuidEvent>;
     {$ELSE}
-    maxBusObj(lQueues).SetPolicyGuidOf<IIntEvent>(lExplicit);
-    lPolicy := maxBusObj(lQueues).GetPolicyGuidOf<IIntEvent>;
+    maxBusObj(lQueues).SetPolicyGuidOf<IQueuePresetGuidEvent>(lExplicit);
+    lPolicy := maxBusObj(lQueues).GetPolicyGuidOf<IQueuePresetGuidEvent>;
     {$ENDIF}
     CheckEquals(lExplicit.MaxDepth, lPolicy.MaxDepth);
     Check(Ord(lPolicy.Overflow) = Ord(lExplicit.Overflow));
@@ -4729,9 +4955,9 @@ begin
 
     maxSetQueuePresetGuid(lGuid, TmaxQueuePreset.State);
     {$IFDEF max_FPC}
-    lPolicy := lQueues.GetPolicyGuidOf<IIntEvent>;
+    lPolicy := lQueues.GetPolicyGuidOf<IQueuePresetGuidEvent>;
     {$ELSE}
-    lPolicy := maxBusObj(lQueues).GetPolicyGuidOf<IIntEvent>;
+    lPolicy := maxBusObj(lQueues).GetPolicyGuidOf<IQueuePresetGuidEvent>;
     {$ENDIF}
     CheckEquals(lExplicit.MaxDepth, lPolicy.MaxDepth);
     Check(Ord(lPolicy.Overflow) = Ord(lExplicit.Overflow));
@@ -5842,6 +6068,227 @@ begin
   CheckEquals(1, lHits);
 end;
 
+procedure TTestPostResult.ClearPreservesTypedExplicitPolicy;
+var
+  lBus: ImaxBus;
+  lDroppedResult: TmaxPostResult;
+  lPolicy: TmaxQueuePolicy;
+  lQueuedResult: TmaxPostResult;
+  lRelease: TEvent;
+  lStarted: TEvent;
+  lThread: TThread;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lStarted := TEvent.Create(nil, True, False, '');
+  lRelease := TEvent.Create(nil, True, False, '');
+  lThread := nil;
+  try
+    lPolicy := BuildQueuePolicy(1, TmaxOverflow.DropNewest, 0);
+    maxBusObj(lBus).SetPolicyFor<integer>(lPolicy);
+
+    lBus.Clear;
+
+    maxBusObj(lBus).Subscribe<integer>(
+      procedure(const aValue: integer)
+      begin
+        if aValue = 1 then
+        begin
+          lStarted.SetEvent;
+          lRelease.WaitFor(5000);
+        end;
+      end,
+      TmaxDelivery.Posting);
+
+    lThread := TThread.CreateAnonymousThread(
+      procedure
+      begin
+        maxBusObj(lBus).PostResult<integer>(1);
+      end);
+    lThread.FreeOnTerminate := False;
+    lThread.Start;
+
+    Check(lStarted.WaitFor(2000) = wrSignaled, 'Typed clear-preserved dispatch did not start');
+    lQueuedResult := maxBusObj(lBus).PostResult<integer>(2);
+    lDroppedResult := maxBusObj(lBus).PostResult<integer>(3);
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(lQueuedResult));
+    CheckEquals(Integer(TmaxPostResult.Dropped), Integer(lDroppedResult));
+  finally
+    ReleaseAndJoinThread(lRelease, lThread);
+    lRelease.Free;
+    lStarted.Free;
+  end;
+end;
+
+procedure TTestPostResult.ClearPreservesNamedExplicitPolicy;
+const
+  cName = 'clear.policy.named';
+var
+  lBus: ImaxBus;
+  lDroppedResult: TmaxPostResult;
+  lPolicy: TmaxQueuePolicy;
+  lQueuedResult: TmaxPostResult;
+  lRelease: TEvent;
+  lStarted: TEvent;
+  lThread: TThread;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lStarted := TEvent.Create(nil, True, False, '');
+  lRelease := TEvent.Create(nil, True, False, '');
+  lThread := nil;
+  try
+    lPolicy := BuildQueuePolicy(1, TmaxOverflow.DropNewest, 0);
+    maxBusObj(lBus).SetPolicyNamed(cName, lPolicy);
+
+    lBus.Clear;
+
+    lBus.SubscribeNamed(cName,
+      procedure
+      begin
+        lStarted.SetEvent;
+        lRelease.WaitFor(5000);
+      end,
+      TmaxDelivery.Posting);
+
+    lThread := TThread.CreateAnonymousThread(
+      procedure
+      begin
+        maxBusObj(lBus).PostResultNamed(cName);
+      end);
+    lThread.FreeOnTerminate := False;
+    lThread.Start;
+
+    Check(lStarted.WaitFor(2000) = wrSignaled, 'Named clear-preserved dispatch did not start');
+    lQueuedResult := maxBusObj(lBus).PostResultNamed(cName);
+    lDroppedResult := maxBusObj(lBus).PostResultNamed(cName);
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(lQueuedResult));
+    CheckEquals(Integer(TmaxPostResult.Dropped), Integer(lDroppedResult));
+  finally
+    ReleaseAndJoinThread(lRelease, lThread);
+    lRelease.Free;
+    lStarted.Free;
+  end;
+end;
+
+procedure TTestPostResult.ClearPreservesGuidExplicitPolicy;
+var
+  lBus: ImaxBus;
+  lDroppedResult: TmaxPostResult;
+  lPolicy: TmaxQueuePolicy;
+  lQueuedResult: TmaxPostResult;
+  lRelease: TEvent;
+  lStarted: TEvent;
+  lThread: TThread;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lStarted := TEvent.Create(nil, True, False, '');
+  lRelease := TEvent.Create(nil, True, False, '');
+  lThread := nil;
+  try
+    lPolicy := BuildQueuePolicy(1, TmaxOverflow.DropNewest, 0);
+    maxBusObj(lBus).SetPolicyGuidOf<IIntEvent>(lPolicy);
+
+    lBus.Clear;
+
+    maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
+      procedure(const aValue: IIntEvent)
+      begin
+        if (aValue <> nil) and (aValue.GetValue = 1) then
+        begin
+          lStarted.SetEvent;
+          lRelease.WaitFor(5000);
+        end;
+      end,
+      TmaxDelivery.Posting);
+
+    lThread := TThread.CreateAnonymousThread(
+      procedure
+      begin
+        maxBusObj(lBus).PostResultGuidOf<IIntEvent>(TIntEvent.Create(1));
+      end);
+    lThread.FreeOnTerminate := False;
+    lThread.Start;
+
+    Check(lStarted.WaitFor(2000) = wrSignaled, 'Guid clear-preserved dispatch did not start');
+    lQueuedResult := maxBusObj(lBus).PostResultGuidOf<IIntEvent>(TIntEvent.Create(2));
+    lDroppedResult := maxBusObj(lBus).PostResultGuidOf<IIntEvent>(TIntEvent.Create(3));
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(lQueuedResult));
+    CheckEquals(Integer(TmaxPostResult.Dropped), Integer(lDroppedResult));
+  finally
+    ReleaseAndJoinThread(lRelease, lThread);
+    lRelease.Free;
+    lStarted.Free;
+  end;
+end;
+
+procedure TTestPostResult.PostResultTypedAutoSubscribeIsNotNoTopic;
+var
+  lBus: ImaxBus;
+  lPostResult: TmaxPostResult;
+  lTarget: TAutoSubDerived;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lTarget := TAutoSubDerived.Create;
+  try
+    AutoSubscribe(lTarget);
+    lPostResult := maxBusObj(lBus).PostResult<integer>(7);
+    CheckEquals(Integer(TmaxPostResult.DispatchedInline), Integer(lPostResult));
+    CheckEquals(1, lTarget.IntHits);
+    CheckEquals(7, lTarget.LastInt);
+  finally
+    AutoUnsubscribe(lTarget);
+    lTarget.Free;
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestPostResult.PostResultNamedOfAutoSubscribeIsNotNoTopic;
+var
+  lBus: ImaxBus;
+  lPostResult: TmaxPostResult;
+  lTarget: TAutoSubDerived;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lTarget := TAutoSubDerived.Create;
+  try
+    AutoSubscribe(lTarget);
+    lPostResult := maxBusObj(lBus).PostResultNamedOf<integer>('data', 88);
+    CheckEquals(Integer(TmaxPostResult.DispatchedInline), Integer(lPostResult));
+    CheckEquals(1, lTarget.DataHits);
+    CheckEquals(88, lTarget.LastData);
+  finally
+    AutoUnsubscribe(lTarget);
+    lTarget.Free;
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestPostResult.PostResultGuidOfAutoSubscribeIsNotNoTopic;
+var
+  lBus: ImaxBus;
+  lPostResult: TmaxPostResult;
+  lTarget: TAutoSubGuid;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lTarget := TAutoSubGuid.Create;
+  try
+    AutoSubscribe(lTarget);
+    lPostResult := maxBusObj(lBus).PostResultGuidOf<IIntEvent>(TIntEvent.Create(42));
+    CheckEquals(Integer(TmaxPostResult.DispatchedInline), Integer(lPostResult));
+    CheckEquals(1, lTarget.GuidHits);
+    CheckEquals(42, lTarget.LastGuidValue);
+  finally
+    AutoUnsubscribe(lTarget);
+    lTarget.Free;
+    lBus.Clear;
+  end;
+end;
+
 { TTestDispatchErrorDetails }
 
 procedure TTestDispatchErrorDetails.AssertSingleCoalescedDetail(const aTopicName: string;
@@ -6002,7 +6449,6 @@ begin
       end,
       TmaxDelivery.Async);
     maxBusObj(lBus).Post<integer>(5);
-
     lEnqueueIdx := -1;
     lStartIdx := -1;
     lEndIdx := -1;
@@ -6015,12 +6461,13 @@ begin
       if (lEndIdx = -1) and (lEvents[lIdx].Kind = TmaxTraceKind.TraceInvokeEnd) then
         lEndIdx := lIdx;
     end;
-
     Check(lEnqueueIdx >= 0, 'Missing TraceEnqueue event');
     Check(lStartIdx >= 0, 'Missing TraceInvokeStart event');
     Check(lEndIdx >= 0, 'Missing TraceInvokeEnd event');
     Check(lStartIdx > lEnqueueIdx, 'InvokeStart should happen after enqueue');
     Check(lEndIdx > lStartIdx, 'InvokeEnd should happen after InvokeStart');
+    CheckEquals(GetTypeName(TypeInfo(integer)), lEvents[lEnqueueIdx].Topic);
+    CheckEquals(Integer(TmaxDelivery.Posting), Integer(lEvents[lEnqueueIdx].Delivery));
     CheckEquals(GetTypeName(TypeInfo(integer)), lEvents[lStartIdx].Topic);
     CheckEquals(Integer(TmaxDelivery.Async), Integer(lEvents[lStartIdx].Delivery));
     Check(lEvents[lEndIdx].DurationUs >= 0);

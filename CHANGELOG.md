@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Changed
+- Clarified dispatch tracing semantics: `TraceEnqueue` is a topic-queue event, while `TraceInvoke*` carries per-subscriber delivery mode. (T-1103)
+- `bench/BenchHarness` now follows the supported Delphi bridge contract (`TmaxBus` / `maxBusObj(...)`) and ships with a maintained `bench/BenchHarness.dproj` build path. (T-1104)
 - Added root stress entrypoints `run-stress.sh` / `run-stress.bat` and a dedicated `--stress-suite` mode in the test binary for on-demand async/delayed/coalesce stress runs. (T-1087)
 - Default verification now builds `bench/SchedulerCompare`, runs a lightweight smoke profile, and validates the benchmark CSV contract automatically before completing the normal green gate. (T-1099)
 - Shipped scheduler adapters (`MaxAsync`, `TTask`, `RawThread`) now share one positive-delay conversion rule: negative clamps to `0`, `0` stays immediate-eligible, and `1..999us` rounds up instead of collapsing inline on some backends. (T-1097)
@@ -18,6 +20,8 @@
 - Scheduler benchmark project search paths now include `reference/` so iPub/EventHorizon comparison units build in CLI workflows. (T-1082)
 
 ### Fixed
+- `Clear` now preserves durable per-topic coalescing configuration and explicit queue policies while still dropping queued/runtime state at the clear boundary. (T-1100, T-1101)
+- `PostResult<T>`, `PostResultNamedOf<T>`, and `PostResultGuidOf<T>` no longer return `NoTopic` when live `AutoSubscribe` handlers are the effective receivers. (T-1102)
 - `DefaultAsync` fallback initialization is now synchronized, and the test suite includes a fresh-process race probe to prove concurrent first access still yields a single fallback scheduler instance. (T-1085)
 - Delayed `Post*` execution now forwards post-time `EmaxDispatchError` / handler exceptions through the async error hook in both the normal delayed path and the delayed-submission fallback thread. (T-1096)
 - `maxAsync` now preserves async/delayed semantics when enqueue or delayed submission fails by falling back to dedicated-thread execution before any final inline safety net, with deterministic scheduler fault-injection coverage. (T-1086)
