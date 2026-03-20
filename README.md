@@ -165,6 +165,8 @@ Timing note:
 - `PostDelayed*` delay values are configured in milliseconds.
 - Scheduler/coalescing internals use microsecond request units, but on current Delphi/Windows backends those requests are best-effort and may round up to the nearest supported timer resolution.
 - `0` remains immediate-eligible; any positive delay remains delayed.
+- Delayed-post failures stay on the async path: install `maxSetAsyncErrorHandler(...)` if we need to observe them.
+- Without an async error hook, a delayed handler failure is swallowed after the delayed execution path and is not synchronously re-raised to the original `PostDelayed*` caller.
 
 ## Queue policies
 
@@ -219,6 +221,11 @@ That means a type preset now acts as the fallback default for named-of topics wh
 
 - Sticky: `EnableSticky<T>(True)` / `EnableStickyNamed(...)` caches latest event.
 - Coalescing: `EnableCoalesceOf<T>(...)`, `EnableCoalesceNamedOf<T>(...)`, `EnableCoalesceGuidOf<T>(...)` keeps latest value per key per window.
+
+`Clear` stays a runtime reset, not a durable-config wipe:
+
+- `Clear` drops subscriptions, queued work, sticky cached values, pending coalesce batches, and delayed posts scheduled before the clear boundary.
+- `Clear` preserves sticky enablement, explicit per-topic queue policies, queue presets, coalescing selectors/windows, scheduler identity, and bus main-thread identity.
 
 ## Scheduling adapters
 

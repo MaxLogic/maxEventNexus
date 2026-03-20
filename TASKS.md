@@ -1,15 +1,85 @@
 # Tasks
-Next task ID: T-1110
+Next task ID: T-1117
 
 ## Summary
-Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
-Done tasks: 132
+Open tasks: 5 (In Progress: 0, Next Today: 4, Next This Week: 1, Next Later: 0, Blocked: 0)
+Done tasks: 134
 
 ## In Progress
 
 ## Next – Today
 
+### T-1115 [TEST] Add bulk named and GUID failure aggregation regressions
+Outcome:
+- `PostManyNamedOf<T>` raises one merged `EmaxDispatchError` when multiple batch elements fail
+- `PostManyGuidOf<T>` raises one merged `EmaxDispatchError` when multiple batch elements fail
+- regression coverage proves detail aggregation stays aligned with the typed `PostMany<T>` contract
+Proof:
+- Run: `rg -n "PostManyNamedOf.*EmaxDispatchError|PostManyGuidOf.*EmaxDispatchError|bulk.*named.*error|bulk.*guid.*error" tests/src/MaxEventNexus.Main.Tests.pas`
+  Expect: exit=0, new named/guid bulk failure regressions are present
+- Run: `./build-and-run-tests.sh`
+  Expect: exit=0, including the new named/guid bulk failure regressions
+Touches: tests/src/MaxEventNexus.Main.Tests.pas
+Verify: unit-test, cli-proof
+Notes: Spec section 4.4. Added from `.agents/spec-gaps-review/2026-03-20_18-01-57.md`.
+
+### T-1114 [TEST] Add wildcard parser and precedence edge regressions
+Outcome:
+- invalid wildcard patterns are rejected by tests according to the published grammar
+- longer-prefix wildcard precedence is covered by tests in addition to same-prefix subscription order
+- wildcard error-path coverage is extended beyond the current happy-path-only fixture set
+Proof:
+- Run: `rg -n "InvalidWildcard|LongerPrefix|Wildcard.*Precedence|Wildcard.*Reject" tests/src/MaxEventNexus.Main.Tests.pas`
+  Expect: exit=0, new wildcard edge regressions are present
+- Run: `./build-and-run-tests.sh`
+  Expect: exit=0, including the new wildcard parser/precedence regressions
+Touches: tests/src/MaxEventNexus.Main.Tests.pas
+Verify: unit-test, cli-proof
+Notes: Spec section 5. Added from `.agents/spec-gaps-review/2026-03-20_18-01-57.md`.
+
+### T-1113 [TEST] Add mixed-case named routing regressions
+Outcome:
+- mixed-case `SubscribeNamed` / `PostNamed` routing is covered by tests
+- mixed-case `SubscribeNamedOf<T>` / `PostNamedOf<T>` routing is covered by tests
+- mixed-case named sticky/policy/preset lookup behavior is covered by tests
+Proof:
+- Run: `rg -n "MixedCase|CaseInsensitive|NamedRouting" tests/src/MaxEventNexus.Main.Tests.pas`
+  Expect: exit=0, new mixed-case named-routing regressions are present
+- Run: `./build-and-run-tests.sh`
+  Expect: exit=0, including the new mixed-case named-routing regressions
+Touches: tests/src/MaxEventNexus.Main.Tests.pas
+Verify: unit-test, cli-proof
+Notes: Spec section 5. Added from `.agents/spec-gaps-review/2026-03-20_18-01-57.md`.
+
+### T-1112 [API] Replace wildcard error index sentinel with explicit metadata
+Outcome:
+- wildcard subscriber failures no longer rely on undocumented negative `SubscriberIndex` values
+- `TmaxDispatchErrorDetail` exposes explicit metadata that distinguishes exact vs wildcard subscriber failures
+- wildcard failure behavior is pinned by regression tests
+Proof:
+- Run: `rg -n "TmaxDispatchErrorDetail|SubscriberKind|IsWildcard|Wildcard.*Subscriber" maxLogic.EventNexus.Core.pas tests/src/MaxEventNexus.Main.Tests.pas spec.md`
+  Expect: exit=0, explicit wildcard failure metadata is present in runtime/tests/docs
+- Run: `./build-and-run-tests.sh`
+  Expect: exit=0, including wildcard error-detail regressions
+Touches: maxLogic.EventNexus.Core.pas, tests/src/MaxEventNexus.Main.Tests.pas, spec.md
+Verify: unit-test, cli-proof
+Notes: Spec section 10. Added from `.agents/spec-gaps-review/2026-03-20_18-01-57.md`.
+
 ## Next – This Week
+
+### T-1116 [CORE] Replace RawThread TTask usage with dedicated TThread execution
+Outcome:
+- `maxLogic.EventNexus.Threading.RawThread` no longer uses `TTask.Run` for async or delayed execution
+- the RawThread adapter uses dedicated `TThread` execution so it does not consume the Delphi thread pool
+- docs and scheduler tests reflect the dedicated-thread RawThread contract
+Proof:
+- Run: `rg -n "TTask\\.Run" maxLogic.EventNexus.Threading.RawThread.pas`
+  Expect: exit=1, no TTask usage remains in the RawThread adapter
+- Run: `./build-and-run-tests.sh`
+  Expect: exit=0, including scheduler contract coverage for the RawThread adapter
+Touches: maxLogic.EventNexus.Threading.RawThread.pas, tests/src/MaxEventNexus.Scheduler.Tests.pas, README.md, DESIGN.md
+Verify: unit-test, cli-proof
+Notes: RawThread must avoid the Delphi thread pool so async/delayed fallback work cannot exhaust or contend with the RTL pool. Follow-up to `.agents/spec-gaps-review/2026-03-20_18-01-57.md`.
 
 ## Next – Later
 
@@ -25,6 +95,24 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1111 [SPEC] Clarify delayed-post hook-only failure semantics
+Summary: Clarified delayed-post failures as async-path hook-only behavior in the public docs and added a regression proving delayed failures remain non-raising when no async hook is installed.
+
+Details:
+- Updated `spec.md` and `README.md` so delayed posts now explicitly document that later execution failures are surfaced only through `maxSetAsyncErrorHandler(...)` and are not synchronously re-raised to the original `PostDelayed*` caller.
+- Added `TypedDelayedFailureWithoutAsyncHookStaysSilent` to `tests/src/MaxEventNexus.Main.Tests.pas` to pin the no-hook delayed failure path alongside the existing hook-present regressions.
+- Proof: `rg -n "delayed.*async error|Delayed post contract|hook-only|maxSetAsyncErrorHandler" spec.md README.md` (exit `0`, hook-only delayed-post wording present in spec and README).
+- Proof: `./build-and-run-tests.sh` (exit `0`, including delayed hook-present and hook-absent regressions plus the normal analyzer/benchmark/API gates).
+
+### T-1110 [SPEC] Document preserved configuration across Clear
+Summary: Synced the public docs so `Clear` is documented as a runtime reset that preserves durable queue/coalescing configuration instead of acting like a full configuration wipe.
+
+Details:
+- Expanded `spec.md`, `README.md`, and `DESIGN.md` so the documented `Clear` contract now includes explicit per-topic queue policy, queue presets, coalescing selector/window state, scheduler identity, and bus main-thread identity.
+- Kept the docs aligned with the already-passing `ClearPreserves*` regressions instead of changing runtime behavior.
+- Proof: `rg -n "Clear contract|explicit.*policy|coalesc|runtime state reset" spec.md README.md DESIGN.md` (exit `0`, docs consistently describe the preserved configuration contract).
+- Proof: `rg -n "ClearPreservesCoalesceForTypedTopic|ClearPreservesCoalesceForNamedOfTopic|ClearPreservesCoalesceForGuidTopic|ClearPreservesTypedExplicitPolicy|ClearPreservesNamedExplicitPolicy|ClearPreservesGuidExplicitPolicy" tests/src/MaxEventNexus.Main.Tests.pas` (exit `0`, the supporting post-`Clear` regressions remain present).
 
 ### T-1109 [TEST] Add multi-type named-of preset fallback regression
 Summary: Added a shared-name regression proving that removing a name preset from existing implicit named-of topics falls back per type rather than leaving a shared stale policy behind.
