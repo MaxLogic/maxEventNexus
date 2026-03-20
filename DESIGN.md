@@ -92,6 +92,14 @@ Coalescing:
 - Flush is scheduled by scheduler (`RunDelayed`) to avoid blocking waits.
 - Scheduler delay requests are best-effort; positive sub-millisecond values may round up to backend timer resolution, but they must not collapse into immediate execution.
 
+## Clear reset model
+
+`Clear` is treated as a runtime-state reset.
+
+- It removes live subscriptions plus queued or pending runtime work.
+- It drops sticky cached values, pending coalesce buckets, and delayed posts created before the clear boundary.
+- It preserves durable configuration: sticky enablement, explicit queue policy, queue presets, coalescing selectors/windows, and scheduler/main-thread identity.
+
 ## Queue policy and presets
 
 Every topic has `TmaxQueuePolicy`:

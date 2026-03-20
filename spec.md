@@ -93,7 +93,11 @@ end;
 
 - Removes all current subscriptions (including tracked auto-subscriptions).
 - Resets topic runtime state: queued work, sticky cache values, coalesce pending state, counters, and high-water warning state.
-- Preserves configured sticky and queue-preset intent and reapplies it to topic objects after reset.
+- Preserves durable topic configuration and reapplies it after reset:
+  - sticky enablement,
+  - explicit per-topic queue policy,
+  - queue-preset intent,
+  - configured coalescing selector/window state.
 - Preserves scheduler and bus main-thread identity.
 - Pre-clear subscription handles must become inert and must never affect post-clear subscriptions.
 
@@ -186,7 +190,9 @@ Delayed APIs (`PostDelayed*`) schedule a normal `Post*` operation after a delay 
 - Return type: `ImaxDelayedPost` (`Cancel`, `IsPending`).
 - `Cancel` is idempotent and only succeeds while the post is still pending.
 - Delayed posts are dropped by `Clear` if they were scheduled before the clear boundary.
-- Delivery semantics after delay are the same as immediate `Post*` (including aggregate exception behavior).
+- After the delay expires, routing and subscriber delivery-mode selection follow the same rules as immediate `Post*`.
+- Delayed-post failures are async-path failures: they are surfaced only through `maxSetAsyncErrorHandler` when an async error handler is installed.
+- `PostDelayed*` does not synchronously re-raise a later delayed execution failure back to the original caller.
 
 ## 5. Topic families and routing
 
@@ -329,7 +335,10 @@ Trace event semantics:
   - delivery mode,
   - subscriber token and subscriber index.
 - Coalesced delivery exceptions are treated as async-path failures and are forwarded to the async error hook when configured.
-- Async/main/background delivery paths forward errors to global async hook when set:
+- Async/main/background/delayed delivery paths forward errors to global async hook when set.
+- When no async error hook is installed, delayed-path failures are swallowed after the delayed execution path; they do not travel back to the original `PostDelayed*` caller.
+
+Hook installation:
 
 ```pascal
 maxSetAsyncErrorHandler(

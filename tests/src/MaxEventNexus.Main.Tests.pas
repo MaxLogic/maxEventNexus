@@ -458,6 +458,7 @@ type
     procedure ZeroDelayDispatchesAndUpdatesMetrics;
     procedure LargeDelayRemainsPendingUntilCanceled;
     procedure TypedLargeDelayRemainsPendingUntilCanceled;
+    procedure TypedDelayedFailureWithoutAsyncHookStaysSilent;
     procedure TypedDelayedFailureForwardsAsyncHook;
     procedure NamedDelayedFailureForwardsAsyncHook;
     procedure NamedOfDelayedFailureForwardsAsyncHook;
@@ -8045,6 +8046,54 @@ begin
     lSub := nil;
   finally
     maxSetAsyncScheduler(lPrevScheduler);
+    lDone.Free;
+  end;
+end;
+
+procedure TTestDelayedPosting.TypedDelayedFailureWithoutAsyncHookStaysSilent;
+const
+  cDelayMs = 25;
+var
+  lBus: ImaxBus;
+  lDone: TEvent;
+  lHandle: ImaxDelayedPost;
+  lHits: integer;
+  lPrevScheduler: IEventNexusScheduler;
+  lSub: ImaxSubscription;
+begin
+  lBus := maxBus;
+  lDone := TEvent.Create(nil, True, False, '');
+  lPrevScheduler := maxGetAsyncScheduler;
+  lHits := 0;
+  try
+    lBus.Clear;
+    maxSetAsyncScheduler(TmaxRawThreadScheduler.Create);
+    maxSetAsyncErrorHandler(nil);
+
+    lSub := maxBusObj(lBus).Subscribe<integer>(
+      procedure(const aValue: integer)
+      begin
+        Inc(lHits);
+        lDone.SetEvent;
+        raise Exception.Create('typed delayed silent boom');
+      end,
+      TmaxDelivery.Posting);
+
+    try
+      lHandle := maxBusObj(lBus).PostDelayed<integer>(17, cDelayMs);
+    except
+      on e: Exception do
+        raise Exception.Create('PostDelayed should not synchronously re-raise delayed failures without a hook: ' + e.Message);
+    end;
+
+    Check(lHandle <> nil);
+    Check(lDone.WaitFor(2000) = wrSignaled, 'Typed delayed failure without hook should still execute the delayed post');
+    CheckEquals(1, lHits);
+    Check(not lHandle.IsPending, 'Delayed handle should not remain pending after the failing delayed post runs');
+  finally
+    RestoreAsyncSchedulerState(lPrevScheduler);
+    lSub := nil;
+    lBus.Clear;
     lDone.Free;
   end;
 end;
