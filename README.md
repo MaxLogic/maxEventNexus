@@ -5,6 +5,7 @@
 - `Clear` now stays a runtime reset: explicit queue policies and coalescing configuration survive, while queued/pending runtime state is still dropped.
 - `PostResult<T>`, `PostResultNamedOf<T>`, and `PostResultGuidOf<T>` now report live `AutoSubscribe` handlers as real receivers instead of returning `NoTopic`.
 - Deferred-only `AutoSubscribe` handlers now make `PostResult<T>`, `PostResultNamedOf<T>`, and `PostResultGuidOf<T>` return `Queued` instead of misreporting `DispatchedInline`, with `Main`/`Background` decided from the actual runtime context.
+- Named-of topics now resolve queue presets as explicit `SetPolicyNamed(name, ...)` policy, then name preset, then type preset, then `Unspecified`; type-preset changes also reapply to existing implicit named-of topics.
 - `bench/BenchHarness` now uses the supported `TmaxBus` / `maxBusObj(...)` bridge contract and has a maintained `bench/BenchHarness.dproj` build path.
 - Runtime/public units are now fully Delphi-only; remaining FPC conditionals were removed from adapter/facade scheduler paths.
 - Tests run through DUnitX (`tests/MaxEventNexusTests.dpr`) with compatibility support for published-method legacy suites.
@@ -204,6 +205,15 @@ maxSetQueuePresetNamed('orders.state', TmaxQueuePreset.State);
 maxSetQueuePresetForType(TypeInfo(TOrderPlaced), TmaxQueuePreset.Action);
 maxSetQueuePresetGuid(StringToGUID('{00000000-0000-0000-0000-000000000000}'), TmaxQueuePreset.ControlPlane);
 ```
+
+For named-of topics (`SubscribeNamedOf<T>` / `PostNamedOf<T>`), implicit queue policy precedence is:
+
+- explicit `SetPolicyNamed(aName, ...)`
+- `maxSetQueuePresetNamed(aName, ...)`
+- `maxSetQueuePresetForType(TypeInfo(T), ...)`
+- `Unspecified`
+
+That means a type preset now acts as the fallback default for named-of topics when no name-specific preset exists, and preset updates reapply to already-created named-of topics while they still use implicit policy.
 
 ## Sticky and coalescing
 

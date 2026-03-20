@@ -21,6 +21,7 @@
 
 ### Fixed
 - `Clear` now preserves durable per-topic coalescing configuration and explicit queue policies while still dropping queued/runtime state at the clear boundary. (T-1100, T-1101)
+- Named-of queue presets now resolve as explicit named policy, then name preset, then type preset, then `Unspecified`, and preset changes reapply that fallback to existing implicit named-of topics. (T-1108)
 - `PostResult<T>`, `PostResultNamedOf<T>`, and `PostResultGuidOf<T>` no longer return `NoTopic` when live `AutoSubscribe` handlers are the effective receivers. (T-1102)
 - `PostResult<T>`, `PostResultNamedOf<T>`, and `PostResultGuidOf<T>` now return `Queued` instead of `DispatchedInline` when deferred-only `AutoSubscribe` handlers are the effective receivers, using runtime-context-aware `Main`/`Background` classification. (T-1106)
 - `DefaultAsync` fallback initialization is now synchronized, and the test suite includes a fresh-process race probe to prove concurrent first access still yields a single fallback scheduler instance. (T-1085)

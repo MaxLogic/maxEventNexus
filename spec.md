@@ -269,8 +269,9 @@ Configuration hooks:
 Override rules:
 
 - Explicit per-topic `SetPolicy*` always wins.
+- `PostNamedOf<T>` topics resolve implicit queue policy in this order: explicit `SetPolicyNamed(aName, ...)` policy, then `maxSetQueuePresetNamed(aName, ...)`, then `maxSetQueuePresetForType(TypeInfo(T), ...)`, then `Unspecified`.
 - Preset applies only when topic policy is not explicit.
-- Preset updates re-apply to already-created topics only if those topics still use implicit policy.
+- Preset updates re-apply to already-created topics only if those topics still use implicit policy, including existing `PostNamedOf<T>` topics still inheriting name/type presets.
 
 ### 8.2 High-water warning integration
 
