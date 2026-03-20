@@ -133,12 +133,15 @@ type
   EmaxInvalidSubscription = class(Exception);
   EmaxMainThreadRequired = class(Exception);
 
+  TmaxDispatchSubscriberKind = (Unknown, Exact, Wildcard);
+
   TmaxDispatchErrorDetail = record
     ExceptionClassName: string;
     ExceptionMessage: string;
     Topic: string;
     Delivery: TmaxDelivery;
     SubscriberToken: UInt64;
+    SubscriberKind: TmaxDispatchSubscriberKind;
     SubscriberIndex: integer;
   end;
 
@@ -507,7 +510,8 @@ type
         fTypeGuidHotGuid: TGuid;
 			    fMainThreadId: TThreadID;
 			    class procedure AddDispatchError(const aTopic: TmaxString; aMode: TmaxDelivery; aToken: TmaxSubscriptionToken;
-			      aSubscriberIndex: integer; const aException: Exception; var aErrors: TmaxExceptionList;
+			      aSubscriberKind: TmaxDispatchSubscriberKind; aSubscriberIndex: integer; const aException: Exception;
+            var aErrors: TmaxExceptionList;
 			      var aDetails: TArray<TmaxDispatchErrorDetail>); static;
 			    class procedure EmitInvokeTrace(const aTopic: TmaxString; aDelivery: TmaxDelivery; aKind: TmaxTraceKind;
 			      aDurationUs: Int64; const aException: Exception); static;
@@ -1062,7 +1066,8 @@ begin
 end;
 
 class procedure TmaxBus.AddDispatchError(const aTopic: TmaxString; aMode: TmaxDelivery; aToken: TmaxSubscriptionToken;
-  aSubscriberIndex: integer; const aException: Exception; var aErrors: TmaxExceptionList;
+  aSubscriberKind: TmaxDispatchSubscriberKind; aSubscriberIndex: integer; const aException: Exception;
+  var aErrors: TmaxExceptionList;
   var aDetails: TArray<TmaxDispatchErrorDetail>);
 var
   lCount: integer;
@@ -1077,6 +1082,7 @@ begin
   lDetail.Topic := aTopic;
   lDetail.Delivery := aMode;
   lDetail.SubscriberToken := aToken;
+  lDetail.SubscriberKind := aSubscriberKind;
   lDetail.SubscriberIndex := aSubscriberIndex;
 
   lCount := Length(aDetails);
@@ -3414,7 +3420,8 @@ end;
 procedure TDeferredBatchRunner<T>.AddError(aMode: TmaxDelivery; aToken: TmaxSubscriptionToken;
   aSubscriberIndex: integer; const aError: Exception);
 begin
-  TmaxBus.AddDispatchError(fTopicName, aMode, aToken, aSubscriberIndex, aError, fErrors, fErrorDetails);
+  TmaxBus.AddDispatchError(fTopicName, aMode, aToken, TmaxDispatchSubscriberKind.Exact, aSubscriberIndex, aError,
+    fErrors, fErrorDetails);
 end;
 
 procedure TDeferredBatchRunner<T>.AbortWithMainThreadRequired(const aError: EmaxMainThreadRequired);
@@ -3873,7 +3880,7 @@ begin
         raise;
       on e: Exception do
       begin
-        AddDispatchError(aTopic, lMode, lToken, lIdx, e, lErrors, lDetails);
+        AddDispatchError(aTopic, lMode, lToken, TmaxDispatchSubscriberKind.Exact, lIdx, e, lErrors, lDetails);
       end;
     end;
   end;
@@ -4135,11 +4142,11 @@ begin
         begin
           if aRaiseMainThreadRequired then
             raise;
-          AddDispatchError(aTopicName, Posting, lToken, i, e, lErrs, lErrDetails);
+          AddDispatchError(aTopicName, Posting, lToken, TmaxDispatchSubscriberKind.Exact, i, e, lErrs, lErrDetails);
         end;
         on e: Exception do
         begin
-          AddDispatchError(aTopicName, Posting, lToken, i, e, lErrs, lErrDetails);
+          AddDispatchError(aTopicName, Posting, lToken, TmaxDispatchSubscriberKind.Exact, i, e, lErrs, lErrDetails);
         end;
       end;
     end;
@@ -4188,11 +4195,11 @@ begin
         begin
           if aRaiseMainThreadRequired then
             raise;
-          AddDispatchError(aTopicName, Posting, lToken, i, e, lErrs, lErrDetails);
+          AddDispatchError(aTopicName, Posting, lToken, TmaxDispatchSubscriberKind.Exact, i, e, lErrs, lErrDetails);
         end;
         on e: Exception do
         begin
-          AddDispatchError(aTopicName, Posting, lToken, i, e, lErrs, lErrDetails);
+          AddDispatchError(aTopicName, Posting, lToken, TmaxDispatchSubscriberKind.Exact, i, e, lErrs, lErrDetails);
         end;
       end;
     end;
@@ -4257,7 +4264,7 @@ begin
           begin
             if aRaiseMainThreadRequired then
               raise;
-            AddDispatchError(aTopicName, Posting, 0, -1, e, lErrs, lErrDetails);
+            AddDispatchError(aTopicName, Posting, 0, TmaxDispatchSubscriberKind.Unknown, -1, e, lErrs, lErrDetails);
           end;
           on e: EmaxDispatchError do
           begin
@@ -4265,7 +4272,7 @@ begin
           end;
           on e: Exception do
           begin
-            AddDispatchError(aTopicName, Posting, 0, -1, e, lErrs, lErrDetails);
+            AddDispatchError(aTopicName, Posting, 0, TmaxDispatchSubscriberKind.Unknown, -1, e, lErrs, lErrDetails);
           end;
         end;
       end;
@@ -5719,7 +5726,7 @@ begin
             raise;
           on e: Exception do
           begin
-            AddDispatchError(lMetric, lMode, lToken, i, e, lErrs, lErrDetails);
+            AddDispatchError(lMetric, lMode, lToken, TmaxDispatchSubscriberKind.Exact, i, e, lErrs, lErrDetails);
           end;
         end;
       end;
@@ -5772,7 +5779,7 @@ begin
             raise;
           on e: Exception do
           begin
-            AddDispatchError(lMetric, lMode, lToken, -(lWildIdx + 1), e, lErrs, lErrDetails);
+            AddDispatchError(lMetric, lMode, lToken, TmaxDispatchSubscriberKind.Wildcard, lWildIdx, e, lErrs, lErrDetails);
           end;
         end;
       end;
@@ -5944,7 +5951,7 @@ begin
             raise;
           on e: Exception do
           begin
-            AddDispatchError(lMetric, lMode, lToken, i, e, lErrs, lErrDetails);
+            AddDispatchError(lMetric, lMode, lToken, TmaxDispatchSubscriberKind.Exact, i, e, lErrs, lErrDetails);
           end;
         end;
       end;
@@ -5997,7 +6004,7 @@ begin
             raise;
           on e: Exception do
           begin
-            AddDispatchError(lMetric, lMode, lToken, -(lWildIdx + 1), e, lErrs, lErrDetails);
+            AddDispatchError(lMetric, lMode, lToken, TmaxDispatchSubscriberKind.Wildcard, lWildIdx, e, lErrs, lErrDetails);
           end;
         end;
       end;
