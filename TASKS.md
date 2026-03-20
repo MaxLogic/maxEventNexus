@@ -1,9 +1,9 @@
 # Tasks
-Next task ID: T-1107
+Next task ID: T-1109
 
 ## Summary
 Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
-Done tasks: 129
+Done tasks: 131
 
 ## In Progress
 
@@ -25,6 +25,26 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1108 [SPEC] Clarify named-of queue-preset fallback semantics
+Summary: Named-of topics now resolve implicit queue policy as explicit named policy, then name preset, then type preset, then `Unspecified`, with the same precedence applied at topic creation, preset reapply, and `Clear`.
+
+Details:
+- Added named-of queue-preset regressions covering type-preset fallback, name-over-type precedence, explicit named policy override, name-preset removal fallback, type-preset reapply onto already-created implicit named-of topics, and post-`Clear` replay of the same type-only fallback.
+- Centralized named-of preset resolution in the runtime and wired it into `SetQueuePresetForType`, `SetQueuePresetNamed`, named-of topic creation paths, and `Clear` replay so one precedence rule governs the entire lifecycle.
+- Updated `spec.md`, `docs/decisions/ADR-0001-queue-policy-presets.md`, `README.md`, and `CHANGELOG.md` so the documented contract matches the implementation.
+- Proof: `./build-and-run-tests.sh` (exit `0`, including static-analysis thresholds, benchmark smoke, and the new named-of preset regressions).
+- Proof: `rg -n "Queue preset categories|Override rules|PostNamedOf<T>|SetPolicyNamed\\(aName|type preset.*fallback|named-of topics" spec.md docs/decisions/ADR-0001-queue-policy-presets.md README.md` (exit `0`, explicit named-of precedence documented across spec, ADR, and README).
+- Proof: `rg -n "NamedOfTypePresetFallbackUsesState|NamedOfNamePresetOverridesTypePreset|NamedOfExplicitPolicyOverridesPresets|NamedOfRemovingNamePresetFallsBackToTypePreset|NamedOfTypePresetUpdateReappliesToExistingImplicitTopic|ClearPreservesNamedOfTypePresetFallback|ResolveNamedOfPreset|SetQueuePresetForType|SetQueuePresetNamed" tests/src/MaxEventNexus.Main.Tests.pas maxLogic.EventNexus.Core.pas` (exit `0`, runtime and regression coverage present).
+
+### T-1107 [TEST] Pin current PostResult semantics for deferred direct subscribers
+Summary: Added regression coverage that documents the current `PostResult*` contract for deferred direct subscribers without changing runtime behavior.
+
+Details:
+- Added typed `Async`, named `Background`-from-main, and GUID `Main`-off-main regressions proving those direct deferred subscribers still report `DispatchedInline` on the accepted first-dispatch path.
+- Each regression also verifies that delivery itself is still deferred: the scheduler records queued work and handlers do not run until the drain step.
+- Proof: `./build-and-run-tests.sh` (exit `0`, including the new direct deferred-subscriber regressions and the normal analyzer/smoke gates).
+- Proof: `rg -n "PostResult.*Subscriber.*Inline|BackgroundSubscriber|MainSubscriber|AsyncSubscriber" tests/src/MaxEventNexus.Main.Tests.pas` (exit `0`, direct deferred-subscriber regression names present).
 
 ### T-1106 [API] Fix PostResult status for deferred AutoSubscribe-only delivery
 Summary: `PostResult<T>`, `PostResultNamedOf<T>`, and `PostResultGuidOf<T>` now return `Queued` for deferred-only auto-subscribed receivers instead of misreporting `DispatchedInline`.

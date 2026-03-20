@@ -395,6 +395,9 @@ type
     procedure PostResultTypedAutoSubscribeAsyncReturnsQueued;
     procedure PostResultNamedOfAutoSubscribeBackgroundReturnsQueued;
     procedure PostResultGuidOfAutoSubscribeMainReturnsQueued;
+    procedure PostResultTypedAsyncSubscriberReportsInline;
+    procedure PostResultNamedOfBackgroundSubscriberReportsInline;
+    procedure PostResultGuidOfMainSubscriberReportsInline;
   end;
 
   TTestDispatchErrorDetails = class(TmaxTestCase)
@@ -469,9 +472,18 @@ type
   end;
 
   TTestQueuePolicyPresets = class(TmaxTestCase)
+  private
+    procedure AssertNamedOfDropNewestPolicy(const aBus: ImaxBus; const aName: TmaxString);
+    procedure AssertNamedOfStatePolicy(const aBus: ImaxBus; const aName: TmaxString);
   published
     procedure TypedPresetAffectsGetPolicy;
     procedure NamedStatePresetUsesDropOldest;
+    procedure NamedOfTypePresetFallbackUsesState;
+    procedure NamedOfNamePresetOverridesTypePreset;
+    procedure NamedOfExplicitPolicyOverridesPresets;
+    procedure NamedOfRemovingNamePresetFallsBackToTypePreset;
+    procedure NamedOfTypePresetUpdateReappliesToExistingImplicitTopic;
+    procedure ClearPreservesNamedOfTypePresetFallback;
     procedure NamedPresetsReturnDefaultPolicy;
     procedure GuidPresetAffectsGetPolicy;
     procedure GuidExplicitPolicyBeatsPreset;
@@ -4828,6 +4840,114 @@ end;
 
 { TTestQueuePolicyPresets }
 
+procedure TTestQueuePolicyPresets.AssertNamedOfDropNewestPolicy(const aBus: ImaxBus; const aName: TmaxString);
+var
+  lStarted: TEvent;
+  lRelease: TEvent;
+  lSub: ImaxSubscription;
+  lThread: TNamedPostThread;
+  lDelivered: array of integer;
+  lCount: integer;
+begin
+  lSub := nil;
+  lCount := 0;
+  SetLength(lDelivered, 0);
+  lStarted := TEvent.Create(nil, True, False, '');
+  lRelease := TEvent.Create(nil, True, False, '');
+  try
+    lSub := maxBusObj(aBus).SubscribeNamedOf<integer>(aName,
+      procedure(const aValue: integer)
+      begin
+        SetLength(lDelivered, lCount + 1);
+        lDelivered[lCount] := aValue;
+        Inc(lCount);
+        if aValue = 1 then
+        begin
+          lStarted.SetEvent;
+          lRelease.WaitFor(5000);
+        end;
+      end,
+      TmaxDelivery.Posting);
+
+    lThread := TNamedPostThread.Create(aBus, aName, 1);
+    try
+      lThread.Start;
+      Check(lStarted.WaitFor(2000) = wrSignaled);
+      Check(maxBusObj(aBus).TryPostNamedOf<integer>(aName, 2));
+      Check(maxBusObj(aBus).TryPostNamedOf<integer>(aName, 3));
+      Check(not maxBusObj(aBus).TryPostNamedOf<integer>(aName, 4));
+      lRelease.SetEvent;
+      lThread.WaitFor;
+    finally
+      lThread.Free;
+    end;
+
+    CheckEquals(3, lCount);
+    CheckEquals(1, lDelivered[0]);
+    CheckEquals(2, lDelivered[1]);
+    CheckEquals(3, lDelivered[2]);
+  finally
+    lSub := nil;
+    lRelease.Free;
+    lStarted.Free;
+  end;
+end;
+
+procedure TTestQueuePolicyPresets.AssertNamedOfStatePolicy(const aBus: ImaxBus; const aName: TmaxString);
+var
+  lStarted: TEvent;
+  lRelease: TEvent;
+  lSub: ImaxSubscription;
+  lThread: TNamedPostThread;
+  lDelivered: array of integer;
+  lCount: integer;
+  i: integer;
+begin
+  lSub := nil;
+  lCount := 0;
+  SetLength(lDelivered, 0);
+  lStarted := TEvent.Create(nil, True, False, '');
+  lRelease := TEvent.Create(nil, True, False, '');
+  try
+    lSub := maxBusObj(aBus).SubscribeNamedOf<integer>(aName,
+      procedure(const aValue: integer)
+      begin
+        SetLength(lDelivered, lCount + 1);
+        lDelivered[lCount] := aValue;
+        Inc(lCount);
+        if aValue = 1 then
+        begin
+          lStarted.SetEvent;
+          lRelease.WaitFor(5000);
+        end;
+      end,
+      TmaxDelivery.Posting);
+
+    lThread := TNamedPostThread.Create(aBus, aName, 1);
+    try
+      lThread.Start;
+      Check(lStarted.WaitFor(2000) = wrSignaled);
+
+      for i := 2 to 300 do
+        Check(maxBusObj(aBus).TryPostNamedOf<integer>(aName, i));
+
+      lRelease.SetEvent;
+      lThread.WaitFor;
+    finally
+      lThread.Free;
+    end;
+
+    CheckEquals(257, lCount);
+    CheckEquals(1, lDelivered[0]);
+    CheckEquals(45, lDelivered[1]);
+    CheckEquals(300, lDelivered[256]);
+  finally
+    lSub := nil;
+    lRelease.Free;
+    lStarted.Free;
+  end;
+end;
+
 procedure TTestQueuePolicyPresets.TypedPresetAffectsGetPolicy;
 var
   lBus: ImaxBus;
@@ -4947,6 +5067,101 @@ begin
     lRelease.Free;
     lStarted.Free;
   end;
+end;
+
+procedure TTestQueuePolicyPresets.NamedOfTypePresetFallbackUsesState;
+const
+  cName = 'statepreset.namedof.typefallback';
+var
+  lBus: ImaxBus;
+begin
+  lBus := CreateIsolatedBus;
+  maxBusObj(lBus).SetQueuePresetForType(TypeInfo(integer), TmaxQueuePreset.State);
+  AssertNamedOfStatePolicy(lBus, cName);
+end;
+
+procedure TTestQueuePolicyPresets.NamedOfNamePresetOverridesTypePreset;
+const
+  cName = 'statepreset.namedof.nameoverride';
+var
+  lBus: ImaxBus;
+begin
+  lBus := CreateIsolatedBus;
+  maxBusObj(lBus).SetQueuePresetForType(TypeInfo(integer), TmaxQueuePreset.ControlPlane);
+  maxBusObj(lBus).SetQueuePresetNamed(cName, TmaxQueuePreset.State);
+  AssertNamedOfStatePolicy(lBus, cName);
+end;
+
+procedure TTestQueuePolicyPresets.NamedOfExplicitPolicyOverridesPresets;
+const
+  cName = 'statepreset.namedof.explicit';
+var
+  lBus: ImaxBus;
+  lExplicit: TmaxQueuePolicy;
+begin
+  lBus := CreateIsolatedBus;
+  lExplicit := BuildQueuePolicy(2, TmaxOverflow.DropNewest, 0);
+  maxBusObj(lBus).SetQueuePresetForType(TypeInfo(integer), TmaxQueuePreset.ControlPlane);
+  maxBusObj(lBus).SetQueuePresetNamed(cName, TmaxQueuePreset.State);
+  maxBusObj(lBus).SetPolicyNamed(cName, lExplicit);
+  AssertNamedOfDropNewestPolicy(lBus, cName);
+end;
+
+procedure TTestQueuePolicyPresets.NamedOfRemovingNamePresetFallsBackToTypePreset;
+const
+  cName = 'statepreset.namedof.removenamepreset';
+var
+  lBus: ImaxBus;
+begin
+  lBus := CreateIsolatedBus;
+  maxBusObj(lBus).SetQueuePresetForType(TypeInfo(integer), TmaxQueuePreset.State);
+  maxBusObj(lBus).SetQueuePresetNamed(cName, TmaxQueuePreset.ControlPlane);
+  maxBusObj(lBus).SubscribeNamedOf<integer>(cName,
+    procedure(const aValue: integer)
+    begin
+      if aValue = 0 then
+        Exit;
+    end,
+    TmaxDelivery.Posting);
+  maxBusObj(lBus).SetQueuePresetNamed(cName, TmaxQueuePreset.Unspecified);
+  AssertNamedOfStatePolicy(lBus, cName);
+end;
+
+procedure TTestQueuePolicyPresets.NamedOfTypePresetUpdateReappliesToExistingImplicitTopic;
+const
+  cName = 'statepreset.namedof.reapply';
+var
+  lBus: ImaxBus;
+begin
+  lBus := CreateIsolatedBus;
+  maxBusObj(lBus).SubscribeNamedOf<integer>(cName,
+    procedure(const aValue: integer)
+    begin
+      if aValue = 0 then
+        Exit;
+    end,
+    TmaxDelivery.Posting);
+  maxBusObj(lBus).SetQueuePresetForType(TypeInfo(integer), TmaxQueuePreset.State);
+  AssertNamedOfStatePolicy(lBus, cName);
+end;
+
+procedure TTestQueuePolicyPresets.ClearPreservesNamedOfTypePresetFallback;
+const
+  cName = 'statepreset.namedof.clearfallback';
+var
+  lBus: ImaxBus;
+begin
+  lBus := CreateIsolatedBus;
+  maxBusObj(lBus).SetQueuePresetForType(TypeInfo(integer), TmaxQueuePreset.State);
+  maxBusObj(lBus).SubscribeNamedOf<integer>(cName,
+    procedure(const aValue: integer)
+    begin
+      if aValue = 0 then
+        Exit;
+    end,
+    TmaxDelivery.Posting);
+  lBus.Clear;
+  AssertNamedOfStatePolicy(lBus, cName);
 end;
 
 procedure TTestQueuePolicyPresets.NamedPresetsReturnDefaultPolicy;
@@ -6477,6 +6692,115 @@ begin
     maxSetMainThreadPolicy(TmaxMainThreadPolicy.DegradeToPosting);
     maxSetAsyncScheduler(lPrevScheduler);
     maxBus.Clear;
+  end;
+end;
+
+procedure TTestPostResult.PostResultTypedAsyncSubscriberReportsInline;
+var
+  lBus: ImaxBus;
+  lHits: integer;
+  lPostResult: TmaxPostResult;
+  lScheduler: TReverseScheduler;
+begin
+  lScheduler := TReverseScheduler.Create;
+  lBus := TmaxBus.Create(lScheduler);
+  lHits := 0;
+  try
+    maxBusObj(lBus).Subscribe<integer>(
+      procedure(const aValue: integer)
+      begin
+        if aValue <> 0 then
+          Inc(lHits);
+      end,
+      TmaxDelivery.Async);
+
+    lPostResult := maxBusObj(lBus).PostResult<integer>(21);
+
+    CheckEquals(Integer(TmaxPostResult.DispatchedInline), Integer(lPostResult));
+    CheckEquals(1, lScheduler.AsyncCount);
+    CheckEquals(0, lHits);
+
+    lScheduler.DrainAsyncReverse;
+
+    CheckEquals(1, lHits);
+  finally
+    lScheduler.DrainAsyncReverse;
+    lScheduler.DrainMainReverse;
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestPostResult.PostResultNamedOfBackgroundSubscriberReportsInline;
+const
+  cName = 'postresult.named.background.inline';
+var
+  lBus: ImaxBus;
+  lHits: integer;
+  lPostResult: TmaxPostResult;
+  lScheduler: TReverseScheduler;
+begin
+  lScheduler := TReverseScheduler.Create;
+  lBus := TmaxBus.Create(lScheduler);
+  lHits := 0;
+  try
+    maxBusObj(lBus).SubscribeNamedOf<integer>(cName,
+      procedure(const aValue: integer)
+      begin
+        if aValue <> 0 then
+          Inc(lHits);
+      end,
+      TmaxDelivery.Background);
+
+    lPostResult := maxBusObj(lBus).PostResultNamedOf<integer>(cName, 22);
+
+    CheckEquals(Integer(TmaxPostResult.DispatchedInline), Integer(lPostResult));
+    CheckEquals(1, lScheduler.AsyncCount);
+    CheckEquals(0, lHits);
+
+    lScheduler.DrainAsyncReverse;
+
+    CheckEquals(1, lHits);
+  finally
+    lScheduler.DrainAsyncReverse;
+    lScheduler.DrainMainReverse;
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestPostResult.PostResultGuidOfMainSubscriberReportsInline;
+var
+  lBus: ImaxBus;
+  lHits: integer;
+  lPostResult: TmaxPostResult;
+  lScheduler: TReverseScheduler;
+begin
+  lScheduler := TReverseScheduler.Create;
+  lBus := TmaxBus.Create(lScheduler);
+  lHits := 0;
+  try
+    maxSetMainThreadPolicy(TmaxMainThreadPolicy.DegradeToAsync);
+    maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
+      procedure(const aValue: IIntEvent)
+      begin
+        if aValue <> nil then
+          Inc(lHits);
+      end,
+      TmaxDelivery.Main);
+
+    lPostResult := PostGuidResultOffMain(lBus, TIntEvent.Create(23));
+
+    CheckEquals(Integer(TmaxPostResult.DispatchedInline), Integer(lPostResult));
+    CheckEquals(1, lScheduler.AsyncCount);
+    CheckEquals(0, lHits);
+
+    lScheduler.DrainAsyncReverse;
+
+    CheckEquals(1, lHits);
+  finally
+    lScheduler.DrainAsyncReverse;
+    lScheduler.DrainMainReverse;
+    maxSetMainThreadPolicy(TmaxMainThreadPolicy.DegradeToPosting);
+    lBus.Clear;
   end;
 end;
 

@@ -514,12 +514,15 @@ type
 			    class procedure InvokeWithTrace(const aTopic: TmaxString; aDelivery: TmaxDelivery; const aHandler: TmaxProc); static;
 			    class function WildcardPrefixMatches(const aPrefix: TmaxString; const aName: TmaxString): boolean; static;
 			    class function TryParseWildcardPattern(const aPattern: TmaxString; out aPrefix: TmaxString): boolean; static;
-          class procedure MergeDispatchError(const aSource: EmaxDispatchError; var aErrors: TmaxExceptionList;
+			    class procedure MergeDispatchError(const aSource: EmaxDispatchError; var aErrors: TmaxExceptionList;
 			      var aDetails: TArray<TmaxDispatchErrorDetail>); static;
           function TryGetTypedHotTopic(const aKey: PTypeInfo; out aTopic: TmaxTopicBase): boolean;
           procedure UpdateTypedHotTopic(const aKey: PTypeInfo; const aTopic: TmaxTopicBase);
           function TryGetGuidHotTopic(const aKey: TGuid; out aTopic: TmaxTopicBase): boolean;
           procedure UpdateGuidHotTopic(const aKey: TGuid; const aTopic: TmaxTopicBase);
+          class function ResolveNamedOfPreset(const aPresetNames: TmaxPresetDictOfString;
+            const aPresetTypes: TmaxPresetDictOfTypeInfo; const aNameKey: TmaxString;
+            const aTypeKey: PTypeInfo): TmaxQueuePreset; static;
           function GuidForType(const aTypeKey: PTypeInfo): TGuid;
 			    function AddNamedWildcard(const aPattern: TmaxString; const aPrefix: TmaxString; const aHandler: TmaxProc;
 			      aMode: TmaxDelivery; out aState: ImaxSubscriptionState): TmaxSubscriptionToken;
@@ -4557,13 +4560,21 @@ procedure TmaxBus.SetQueuePresetForType(const aKey: PTypeInfo; aPreset: TmaxQueu
 var
   lObj: TmaxTopicBase;
   lPolicy: TmaxQueuePolicy;
+  lNamePresets: TmaxPresetDictOfString;
+  lKvPresetName: TPair<TmaxString, TmaxQueuePreset>;
+  lKvName: TPair<TmaxString, TmaxTypeTopicDict>;
+  lEffectivePreset: TmaxQueuePreset;
 begin
+  lNamePresets := TmaxPresetDictOfString.Create(TIStringComparer.Ordinal);
+  try
   fConfigLock.BeginWrite;
   try
     if aPreset = TmaxQueuePreset.Unspecified then
       fPresetTypes.Remove(aKey)
     else
       fPresetTypes.AddOrSetValue(aKey, aPreset);
+    for lKvPresetName in fPresetNames do
+      lNamePresets.AddOrSetValue(lKvPresetName.Key, lKvPresetName.Value);
   finally
     fConfigLock.EndWrite;
   end;
@@ -4576,6 +4587,34 @@ begin
   finally
     TMonitor.Exit(fTypedLock);
   end;
+
+  TMonitor.Enter(fNamedTypedLock);
+  try
+    for lKvName in fNamedTyped do
+      if lKvName.Value.TryGetValue(aKey, lObj) and (not lObj.HasExplicitPolicy) then
+      begin
+        lEffectivePreset := ResolveNamedOfPreset(lNamePresets, nil, lKvName.Key, aKey);
+        if lEffectivePreset = TmaxQueuePreset.Unspecified then
+          lEffectivePreset := aPreset;
+        lObj.SetPolicyImplicit(PolicyForPreset(lEffectivePreset));
+      end;
+  finally
+    TMonitor.Exit(fNamedTypedLock);
+  end;
+  finally
+    lNamePresets.Free;
+  end;
+end;
+
+class function TmaxBus.ResolveNamedOfPreset(const aPresetNames: TmaxPresetDictOfString;
+  const aPresetTypes: TmaxPresetDictOfTypeInfo; const aNameKey: TmaxString;
+  const aTypeKey: PTypeInfo): TmaxQueuePreset;
+begin
+  Result := TmaxQueuePreset.Unspecified;
+  if (aPresetNames <> nil) and aPresetNames.TryGetValue(aNameKey, Result) then
+    Exit;
+  if (aPresetTypes <> nil) and aPresetTypes.TryGetValue(aTypeKey, Result) then
+    Exit;
 end;
 
 procedure TmaxBus.SetQueuePresetNamed(const aNameKey: TmaxString; aPreset: TmaxQueuePreset);
@@ -4584,13 +4623,20 @@ var
   lTypeDict: TmaxTypeTopicDict;
   lPolicy: TmaxQueuePolicy;
   lInner: TPair<PTypeInfo, TmaxTopicBase>;
+  lTypePresets: TmaxPresetDictOfTypeInfo;
+  lKvPresetType: TPair<PTypeInfo, TmaxQueuePreset>;
+  lEffectivePreset: TmaxQueuePreset;
 begin
+  lTypePresets := TmaxPresetDictOfTypeInfo.Create;
+  try
   fConfigLock.BeginWrite;
   try
     if aPreset = TmaxQueuePreset.Unspecified then
       fPresetNames.Remove(aNameKey)
     else
       fPresetNames.AddOrSetValue(aNameKey, aPreset);
+    for lKvPresetType in fPresetTypes do
+      lTypePresets.AddOrSetValue(lKvPresetType.Key, lKvPresetType.Value);
   finally
     fConfigLock.EndWrite;
   end;
@@ -4609,9 +4655,17 @@ begin
     if fNamedTyped.TryGetValue(aNameKey, lTypeDict) then
       for lInner in lTypeDict do
         if not lInner.Value.HasExplicitPolicy then
-          lInner.Value.SetPolicyImplicit(lPolicy);
+        begin
+          lEffectivePreset := ResolveNamedOfPreset(nil, lTypePresets, aNameKey, lInner.Key);
+          if aPreset <> TmaxQueuePreset.Unspecified then
+            lEffectivePreset := aPreset;
+          lInner.Value.SetPolicyImplicit(PolicyForPreset(lEffectivePreset));
+        end;
   finally
     TMonitor.Exit(fNamedTypedLock);
+  end;
+  finally
+    lTypePresets.Free;
   end;
 end;
 
@@ -6042,8 +6096,7 @@ var
 	  fConfigLock.BeginWrite;
 	  try
 	    lSticky := fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey);
-	    lPreset := TmaxQueuePreset.Unspecified;
-	    fPresetNames.TryGetValue(lNameKey, lPreset);
+	    lPreset := ResolveNamedOfPreset(fPresetNames, fPresetTypes, lNameKey, lKey);
 	  finally
 	    fConfigLock.EndWrite;
 	  end;
@@ -6181,8 +6234,7 @@ var
 	  fConfigLock.BeginWrite;
 	  try
 	    lSticky := fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey);
-	    lPreset := TmaxQueuePreset.Unspecified;
-	    fPresetNames.TryGetValue(lNameKey, lPreset);
+	    lPreset := ResolveNamedOfPreset(fPresetNames, fPresetTypes, lNameKey, lKey);
 	  finally
 	    fConfigLock.EndWrite;
 	  end;
@@ -6322,8 +6374,7 @@ begin
   fConfigLock.BeginWrite;
   try
     lSticky := fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey);
-    lPreset := TmaxQueuePreset.Unspecified;
-    fPresetNames.TryGetValue(lNameKey, lPreset);
+    lPreset := ResolveNamedOfPreset(fPresetNames, fPresetTypes, lNameKey, lKey);
   finally
     fConfigLock.EndWrite;
   end;
@@ -6487,8 +6538,7 @@ begin
   fConfigLock.BeginWrite;
   try
     lSticky := fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey);
-    lPreset := TmaxQueuePreset.Unspecified;
-    fPresetNames.TryGetValue(lNameKey, lPreset);
+    lPreset := ResolveNamedOfPreset(fPresetNames, fPresetTypes, lNameKey, lKey);
   finally
     fConfigLock.EndWrite;
   end;
@@ -7531,8 +7581,7 @@ begin
   fConfigLock.BeginWrite;
   try
     lSticky := fStickyNames.ContainsKey(lNameKey) or fStickyTypes.ContainsKey(lKey);
-    lPreset := TmaxQueuePreset.Unspecified;
-    fPresetNames.TryGetValue(lNameKey, lPreset);
+    lPreset := ResolveNamedOfPreset(fPresetNames, fPresetTypes, lNameKey, lKey);
   finally
     fConfigLock.EndWrite;
   end;
@@ -7815,12 +7864,11 @@ begin
     try
       for lKvName in fNamedTyped do
       begin
-        lPreset := TmaxQueuePreset.Unspecified;
-        lPresetNames.TryGetValue(lKvName.Key, lPreset);
         for lKvInner in lKvName.Value do
         begin
           lKvInner.Value.ResetTopic;
           lKvInner.Value.SetMetricName(NamedTypeMetricName(lKvName.Key, lKvInner.Key));
+          lPreset := ResolveNamedOfPreset(lPresetNames, lPresetTypes, lKvName.Key, lKvInner.Key);
           if (lPreset <> TmaxQueuePreset.Unspecified) then
             lKvInner.Value.SetPolicyImplicit(PolicyForPreset(lPreset));
           if lStickyNames.ContainsKey(lKvName.Key) or lStickyTypes.ContainsKey(lKvInner.Key) then

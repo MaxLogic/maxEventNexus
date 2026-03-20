@@ -29,8 +29,9 @@ Preset assignment hooks:
 ## Override order
 
 1. Explicit per-topic policy (`SetPolicy*`) wins.
-2. Preset applies only when topic policy is not explicit.
-3. Preset changes update existing topics only when those topics still use implicit policy.
+2. `PostNamedOf<T>` topics resolve implicit queue policy as `SetPolicyNamed(aName, ...)` explicit policy, then `maxSetQueuePresetNamed(aName, ...)`, then `maxSetQueuePresetForType(TypeInfo(T), ...)`, then `Unspecified`.
+3. Preset applies only when topic policy is not explicit.
+4. Preset changes update existing topics only when those topics still use implicit policy, including already-created `PostNamedOf<T>` topics that still inherit presets.
 
 ## Metrics/high-water integration
 
@@ -44,5 +45,6 @@ Transition points trigger metrics sampling, so monitoring can observe both warni
 ## Consequences
 
 - We get predictable default queue behavior by topic category.
+- `maxSetQueuePresetForType(TypeInfo(T), ...)` becomes the fallback default for `PostNamedOf<T>` topics when there is no name-specific preset.
 - Teams can still override on topic-by-topic basis without losing global defaults.
 - Monitoring pipelines can correlate preset choices with depth/warning behavior.
