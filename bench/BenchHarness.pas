@@ -3,8 +3,8 @@ program BenchHarness;
 {$APPTYPE CONSOLE}
 
 uses
-  SysUtils, Classes,
-  maxLogic.EventNexus;
+  System.Classes, System.Diagnostics, System.SysUtils,
+  maxLogic.EventNexus.Core, maxLogic.EventNexus.Threading.MaxAsync;
 
 type
   TBenchmarkConfig = record
@@ -22,20 +22,20 @@ type
 
   TProducer = class(TThread)
   private
+    fBus: TmaxBus;
     fEvents: Integer;
     fPayload: TPayload;
   protected
     procedure Execute; override;
   public
-    constructor Create(aEvents: Integer; const aPayload: TPayload);
+    constructor Create(const aBus: TmaxBus; aEvents: Integer; const aPayload: TPayload);
   end;
 
-{ TProducer }
-
-constructor TProducer.Create(aEvents: Integer; const aPayload: TPayload);
+constructor TProducer.Create(const aBus: TmaxBus; aEvents: Integer; const aPayload: TPayload);
 begin
   inherited Create(False);
   FreeOnTerminate := False;
+  fBus := aBus;
   fEvents := aEvents;
   fPayload := aPayload;
 end;
@@ -45,18 +45,18 @@ var
   i: Integer;
 begin
   for i := 1 to fEvents do
-    maxBus.Post<TPayload>(fPayload);
+    fBus.Post<TPayload>(fPayload);
 end;
 
 procedure ParseArgs(var aCfg: TBenchmarkConfig);
+const
+  cPrefixConsumers = '--consumers=';
+  cPrefixEvents = '--events=';
+  cPrefixPayload = '--payload=';
+  cPrefixProducers = '--producers=';
 var
   i: Integer;
-  s: string;
-const
-  PREFIX_PROD = '--producers=';
-  PREFIX_CONS = '--consumers=';
-  PREFIX_EVT  = '--events=';
-  PREFIX_PAY  = '--payload=';
+  lArg: string;
 begin
   aCfg.Producers := 1;
   aCfg.Consumers := 1;
@@ -64,81 +64,72 @@ begin
   aCfg.PayloadSize := 16;
   aCfg.Sticky := False;
   aCfg.Coalesce := False;
+
   for i := 1 to ParamCount do
   begin
-    s := ParamStr(i);
-    if Pos(PREFIX_PROD, s) = 1 then
-      aCfg.Producers := StrToIntDef(Copy(s, Length(PREFIX_PROD) + 1), aCfg.Producers)
-    else if Pos(PREFIX_CONS, s) = 1 then
-      aCfg.Consumers := StrToIntDef(Copy(s, Length(PREFIX_CONS) + 1), aCfg.Consumers)
-    else if Pos(PREFIX_EVT, s) = 1 then
-      aCfg.Events := StrToIntDef(Copy(s, Length(PREFIX_EVT) + 1), aCfg.Events)
-    else if Pos(PREFIX_PAY, s) = 1 then
-      aCfg.PayloadSize := StrToIntDef(Copy(s, Length(PREFIX_PAY) + 1), aCfg.PayloadSize)
-    else if s = '--sticky' then
+    lArg := ParamStr(i);
+    if Pos(cPrefixProducers, lArg) = 1 then
+      aCfg.Producers := StrToIntDef(Copy(lArg, Length(cPrefixProducers) + 1), aCfg.Producers)
+    else if Pos(cPrefixConsumers, lArg) = 1 then
+      aCfg.Consumers := StrToIntDef(Copy(lArg, Length(cPrefixConsumers) + 1), aCfg.Consumers)
+    else if Pos(cPrefixEvents, lArg) = 1 then
+      aCfg.Events := StrToIntDef(Copy(lArg, Length(cPrefixEvents) + 1), aCfg.Events)
+    else if Pos(cPrefixPayload, lArg) = 1 then
+      aCfg.PayloadSize := StrToIntDef(Copy(lArg, Length(cPrefixPayload) + 1), aCfg.PayloadSize)
+    else if lArg = '--sticky' then
       aCfg.Sticky := True
-    else if s = '--coalesce' then
+    else if lArg = '--coalesce' then
       aCfg.Coalesce := True;
   end;
 end;
 
 procedure RunBenchmark(const aCfg: TBenchmarkConfig);
 var
-  payload: TPayload;
-  producers: array of TProducer;
-  subs: array of ImaxSubscription;
   i: Integer;
-  startTick, stopTick: QWord;
-  metrics: ImaxBusMetrics;
-  stats: TmaxTopicStats;
-{$IFDEF FPC}
-  procedure Consume(const aValue: TPayload);
-  begin
-    // no-op
-  end;
-{$ENDIF}
+  lBus: TmaxBus;
+  lBusIntf: ImaxBus;
+  lElapsedMs: Int64;
+  lPayload: TPayload;
+  lProducers: TArray<TProducer>;
+  lStats: TmaxTopicStats;
+  lStopwatch: TStopwatch;
+  lSubs: TArray<ImaxSubscription>;
 begin
-  SetLength(payload.Data, aCfg.PayloadSize);
-  for i := 0 to High(payload.Data) do
-    payload.Data[i] := Byte(i);
+  lBusIntf := TmaxBus.Create(CreateMaxAsyncScheduler);
+  lBus := maxBusObj(lBusIntf);
+
+  SetLength(lPayload.Data, aCfg.PayloadSize);
+  for i := 0 to High(lPayload.Data) do
+    lPayload.Data[i] := Byte(i);
 
   if aCfg.Sticky then
-    maxBus.EnableSticky<TPayload>(True);
+    lBus.EnableSticky<TPayload>(True);
   if aCfg.Coalesce then
-    (maxBus as ImaxBusAdvanced).EnableCoalesceOf<TPayload>(
+    lBus.EnableCoalesceOf<TPayload>(
       function(const aValue: TPayload): TmaxString
       begin
         Result := 'k';
       end);
 
-  SetLength(subs, aCfg.Consumers);
-{$IFDEF FPC}
-  for i := 0 to High(subs) do
-    subs[i] := maxBus.Subscribe<TPayload>(@Consume);
-{$ELSE}
-  var lHandler: TmaxProcOf<TPayload>;
-  lHandler :=
-    procedure(const aValue: TPayload)
-    begin
-      // no-op
-    end;
-  for i := 0 to High(subs) do
-    subs[i] := maxBus.Subscribe<TPayload>(lHandler);
-{$ENDIF}
+  SetLength(lSubs, aCfg.Consumers);
+  for i := 0 to High(lSubs) do
+    lSubs[i] := lBus.Subscribe<TPayload>(
+      procedure(const aValue: TPayload)
+      begin
+      end);
 
-  startTick := GetTickCount64;
-  SetLength(producers, aCfg.Producers);
-  for i := 0 to High(producers) do
-    producers[i] := TProducer.Create(aCfg.Events, payload);
-  for i := 0 to High(producers) do
+  lStopwatch := TStopwatch.StartNew;
+  SetLength(lProducers, aCfg.Producers);
+  for i := 0 to High(lProducers) do
+    lProducers[i] := TProducer.Create(lBus, aCfg.Events, lPayload);
+  for i := 0 to High(lProducers) do
   begin
-    producers[i].WaitFor;
-    producers[i].Free;
+    lProducers[i].WaitFor;
+    lProducers[i].Free;
   end;
-  stopTick := GetTickCount64;
+  lElapsedMs := lStopwatch.ElapsedMilliseconds;
 
-  metrics := maxBus as ImaxBusMetrics;
-  stats := metrics.GetStatsFor<TPayload>;
+  lStats := lBus.GetStatsFor<TPayload>;
 
   Writeln('Producers: ', aCfg.Producers);
   Writeln('Consumers: ', aCfg.Consumers);
@@ -146,16 +137,16 @@ begin
   Writeln('Payload bytes: ', aCfg.PayloadSize);
   Writeln('Sticky: ', aCfg.Sticky);
   Writeln('Coalesce: ', aCfg.Coalesce);
-  Writeln('Time ms: ', stopTick - startTick);
-  Writeln('Posted: ', stats.PostsTotal, ' Delivered: ', stats.DeliveredTotal);
-  if stopTick > startTick then
-    Writeln('Throughput evt/s: ', (stats.DeliveredTotal * 1000) div (stopTick - startTick));
+  Writeln('Time ms: ', lElapsedMs);
+  Writeln('Posted: ', lStats.PostsTotal, ' Delivered: ', lStats.DeliveredTotal);
+  if lElapsedMs > 0 then
+    Writeln('Throughput evt/s: ', (lStats.DeliveredTotal * 1000) div UInt64(lElapsedMs));
 end;
 
 var
-  cfg: TBenchmarkConfig;
-begin
-  ParseArgs(cfg);
-  RunBenchmark(cfg);
-end.
+  lCfg: TBenchmarkConfig;
 
+begin
+  ParseArgs(lCfg);
+  RunBenchmark(lCfg);
+end.

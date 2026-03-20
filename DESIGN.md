@@ -56,6 +56,18 @@ This avoids AV-probing as a liveness strategy.
 - Per-topic queueing/processing is synchronized inside `TmaxTopicBase`.
 - Metrics index updates are copy-on-write and protected by a dedicated metrics lock.
 
+## Dispatch tracing
+
+`maxSetDispatchTrace` exposes two different trace granularities:
+
+- `TraceEnqueue` is topic-level. It signals that a post entered or activated the topic's internal queue/direct-dispatch gate.
+- `TraceInvokeStart`, `TraceInvokeEnd`, and `TraceInvokeError` are subscriber-invocation-level traces.
+
+That means `TmaxDispatchTrace.Delivery` is intentionally interpreted differently by trace kind:
+
+- for `TraceEnqueue`, it reflects topic-queue semantics and is currently emitted as `Posting`,
+- for `TraceInvoke*`, it reflects the subscriber delivery mode that `Dispatch` used (`Posting`, `Main`, `Async`, `Background`).
+
 ## Main-thread policy in console contexts
 
 When `Main` delivery is requested but no UI main-thread marshaling is available (`IsConsole`):

@@ -313,6 +313,12 @@ Dispatch trace emits opt-in events:
 
 Trace payload includes topic, delivery mode, duration (`InvokeEnd`/`InvokeError`), and error class/message for error events.
 
+Trace event semantics:
+
+- `TraceEnqueue` is a topic-queue event. It means a post entered or activated the topic's internal processing/queue path.
+- `TraceEnqueue.Delivery` is topic-level queue semantics and is not a per-subscriber delivery-mode report. Current runtime uses `Posting` for this topic-gate signal.
+- `TraceInvokeStart`, `TraceInvokeEnd`, and `TraceInvokeError` are per-invocation events. Their `Delivery` field is the subscriber delivery mode actually used for that invocation.
+
 ## 10. Error behavior
 
 - Synchronous posting paths aggregate handler exceptions and raise `EmaxDispatchError`.

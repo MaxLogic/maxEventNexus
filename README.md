@@ -2,6 +2,9 @@
 
 ## What's New (2026-02-26)
 
+- `Clear` now stays a runtime reset: explicit queue policies and coalescing configuration survive, while queued/pending runtime state is still dropped.
+- `PostResult<T>`, `PostResultNamedOf<T>`, and `PostResultGuidOf<T>` now report live `AutoSubscribe` handlers as real receivers instead of returning `NoTopic`.
+- `bench/BenchHarness` now uses the supported `TmaxBus` / `maxBusObj(...)` bridge contract and has a maintained `bench/BenchHarness.dproj` build path.
 - Runtime/public units are now fully Delphi-only; remaining FPC conditionals were removed from adapter/facade scheduler paths.
 - Tests run through DUnitX (`tests/MaxEventNexusTests.dpr`) with compatibility support for published-method legacy suites.
 - Delphi AutoSubscribe one-parameter attributed handlers now bind correctly for typed, named, and GUID topics.
@@ -264,6 +267,12 @@ maxSetMetricCallback(
     // lightweight snapshot
   end);
 ```
+
+## Dispatch tracing
+
+- `maxSetDispatchTrace` emits `TraceEnqueue`, `TraceInvokeStart`, `TraceInvokeEnd`, and `TraceInvokeError`.
+- `TraceEnqueue` is a topic-queue signal, not a per-subscriber delivery report. Its `Delivery` value reflects topic-level queue semantics and is currently emitted as `Posting`.
+- `TraceInvoke*` events are per-invocation and carry the subscriber delivery mode actually used for that handler.
 
 ## Tests (DUnitX)
 

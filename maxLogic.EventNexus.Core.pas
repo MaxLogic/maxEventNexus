@@ -375,6 +375,7 @@ type
     fHasDeferredFast: integer;
     fCoalesce: boolean;
     fCoalesceFast: integer;
+    fCoalesceEpoch: Int64;
     fKeyFunc: TmaxKeyFunc<t>;
     fWindowUs: integer;
     fPending: TDictionary<TmaxString, t>;
@@ -404,8 +405,10 @@ type
     function AddOrUpdatePending(const aKey: TmaxString; const aEvent: t): boolean;
     function PopPending(const aKey: TmaxString; out aEvent: t): boolean;
     function PopAllPending(out aEvents: TArray<t>): boolean;
+    function PopAllPendingForEpoch(aEpoch: Int64; out aEvents: TArray<t>): boolean;
     procedure ClearPending;
     function CoalesceWindow: integer;
+    function CoalesceEpoch: Int64;
     destructor Destroy; override;
   end;
 
@@ -1665,12 +1668,6 @@ begin
 	try
 		fQueue.Clear;
 		fProcessing := False;
-		fSticky := False;
-		fPolicy.MaxDepth := 0;
-		fPolicy.Overflow := DropNewest;
-		fPolicy.DeadlineUs := 0;
-		fPolicyExplicit := False;
-		fMetricName := '';
 		fLastMetricSample := 0;
 		fWarnedHighWater := False;
 		fPostsTotal.Value := 0;
@@ -2511,7 +2508,7 @@ begin
     SetLength(fSnapshotCache, 0);
     fSnapshotVersion := 0;
     fHasLast := False;
-    TInterlocked.Exchange(fStickyFast, 0);
+    TInterlocked.Exchange(fStickyFast, Ord(fSticky));
     TInterlocked.Exchange(fHasDeferredFast, 0);
     fDeferredActive := False;
     fDeferredBatches.Clear;
@@ -2521,15 +2518,18 @@ begin
 
   TMonitor.Enter(fPendingLock);
   try
-    fCoalesce := False;
-    fKeyFunc := nil;
-    fWindowUs := 0;
+    Inc(fCoalesceEpoch);
     fFlushScheduled := False;
-    TInterlocked.Exchange(fCoalesceFast, 0);
+    TInterlocked.Exchange(fCoalesceFast, Ord(fCoalesce));
     if fPending <> nil then
     begin
-      fPending.Free;
-      fPending := nil;
+      if fCoalesce then
+        fPending.Clear
+      else
+      begin
+        fPending.Free;
+        fPending := nil;
+      end;
     end;
   finally
     TMonitor.Exit(fPendingLock);
@@ -2575,6 +2575,7 @@ procedure TTypedTopic<t>.SetCoalesce(const aKeyOf: TmaxKeyFunc<t>; aWindowUs: in
 begin
   TMonitor.Enter(fPendingLock);
   try
+    Inc(fCoalesceEpoch);
     fCoalesce := assigned(aKeyOf);
     TInterlocked.Exchange(fCoalesceFast, Ord(fCoalesce));
     fKeyFunc := aKeyOf;
@@ -2687,6 +2688,36 @@ begin
   end;
 end;
 
+function TTypedTopic<t>.PopAllPendingForEpoch(aEpoch: Int64; out aEvents: TArray<t>): boolean;
+var
+  lPair: TPair<TmaxString, t>;
+var
+  lIdx: Integer;
+begin
+  SetLength(aEvents, 0);
+  TMonitor.Enter(fPendingLock);
+  try
+    if fCoalesceEpoch <> aEpoch then
+      Exit(False);
+    fFlushScheduled := False;
+    if (fPending = nil) or (fPending.Count = 0) then
+      Exit(False);
+    SetLength(aEvents, fPending.Count);
+    lIdx := 0;
+    for lPair in fPending do
+    begin
+      aEvents[lIdx] := lPair.Value;
+      Inc(lIdx);
+    end;
+    fPending.Clear;
+    if lIdx <> Length(aEvents) then
+      SetLength(aEvents, lIdx);
+    Result := lIdx > 0;
+  finally
+    TMonitor.exit(fPendingLock);
+  end;
+end;
+
 procedure TTypedTopic<t>.ClearPending;
 begin
   TMonitor.Enter(fPendingLock);
@@ -2704,6 +2735,16 @@ begin
   TMonitor.Enter(fPendingLock);
   try
     Result := fWindowUs;
+  finally
+    TMonitor.Exit(fPendingLock);
+  end;
+end;
+
+function TTypedTopic<t>.CoalesceEpoch: Int64;
+begin
+  TMonitor.Enter(fPendingLock);
+  try
+    Result := fCoalesceEpoch;
   finally
     TMonitor.Exit(fPendingLock);
   end;
@@ -4167,16 +4208,18 @@ end;
 procedure TmaxBus.ScheduleTypedCoalesce<t>(const aTopicName: TmaxString;
 		  aTopic: TTypedTopic<t>; const aSubs: TArray<TTypedSubscriber<t>>);
 var
+  lEpoch: Int64;
   lSubsCopy: TArray<TTypedSubscriber<t>>;
   lScheduled: TmaxProc;
 begin
+  lEpoch := aTopic.CoalesceEpoch;
   lSubsCopy := Copy(aSubs);
   lScheduled :=
     procedure
     var
       lEvents: TArray<t>;
     begin
-      if not aTopic.PopAllPending(lEvents) then
+      if not aTopic.PopAllPendingForEpoch(lEpoch, lEvents) then
         exit;
       
       aTopic.Enqueue(
@@ -5224,7 +5267,7 @@ begin
     finally
       fConfigLock.EndWrite;
     end;
-    if not lSticky then
+    if (not lSticky) and (Length(SnapshotAutoBridgeTyped(lKey)) = 0) then
       Exit(TmaxPostResult.NoTopic);
   end
   else
@@ -6542,7 +6585,7 @@ begin
     finally
       fConfigLock.EndWrite;
     end;
-    if not lSticky then
+    if (not lSticky) and (Length(SnapshotAutoBridgeNamedTyped(lNameKey, lKey)) = 0) then
       Exit(TmaxPostResult.NoTopic);
   end
   else
@@ -7166,7 +7209,7 @@ begin
     finally
       fConfigLock.EndWrite;
     end;
-    if not lSticky then
+    if (not lSticky) and (Length(SnapshotAutoBridgeGuid(lKey)) = 0) then
       Exit(TmaxPostResult.NoTopic);
   end
   else
