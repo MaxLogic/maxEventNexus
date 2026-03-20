@@ -333,7 +333,11 @@ Trace event semantics:
   - exception class/message,
   - topic metric key,
   - delivery mode,
-  - subscriber token and subscriber index.
+  - subscriber token,
+  - subscriber kind (`Unknown`, `Exact`, `Wildcard`),
+  - subscriber index.
+- `SubscriberIndex` is zero-based within the reported `SubscriberKind` when a specific subscriber is known.
+- Wildcard subscriber failures must report `SubscriberKind = Wildcard`; they must not rely on negative `SubscriberIndex` sentinel values.
 - Coalesced delivery exceptions are treated as async-path failures and are forwarded to the async error hook when configured.
 - Async/main/background/delayed delivery paths forward errors to global async hook when set.
 - When no async error hook is installed, delayed-path failures are swallowed after the delayed execution path; they do not travel back to the original `PostDelayed*` caller.

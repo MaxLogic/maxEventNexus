@@ -416,6 +416,7 @@ type
   published
     procedure IncludesSubscriberMetadataForPost;
     procedure IncludesMetadataForCoalescedAsyncHook;
+    procedure WildcardSubscriberFailuresExposeWildcardMetadata;
   end;
 
   TTestTracingHooks = class(TmaxTestCase)
@@ -440,8 +441,12 @@ type
   end;
 
   TTestWildcardNamed = class(TmaxTestCase)
+  private
+    procedure AssertInvalidWildcardPattern(const aPattern: string; const aMessage: string);
   published
     procedure PrefixAndGlobalWildcardMatch;
+    procedure InvalidWildcardPatternsAreRejected;
+    procedure LongerPrefixWildcardPrecedenceWins;
     procedure UnsubscribeStopsWildcardDelivery;
     procedure WildcardDispatchesWithoutPrecreatedNamedTopic;
     procedure SamePrefixLengthUsesSubscriptionOrder;
@@ -6929,6 +6934,7 @@ begin
   CheckEquals(aTopicName, aDetails[0].Topic);
   CheckEquals(Integer(TmaxDelivery.Posting), Integer(aDetails[0].Delivery));
   Check(aDetails[0].SubscriberToken > 0);
+  CheckEquals(Integer(TmaxDispatchSubscriberKind.Exact), Integer(aDetails[0].SubscriberKind));
   CheckEquals(0, aDetails[0].SubscriberIndex);
 end;
 
@@ -6968,6 +6974,7 @@ begin
       CheckEquals(lTypeName, lEx.Details[0].Topic);
       CheckEquals(Integer(TmaxDelivery.Posting), Integer(lEx.Details[0].Delivery));
       Check(lEx.Details[0].SubscriberToken > 0);
+      CheckEquals(Integer(TmaxDispatchSubscriberKind.Exact), Integer(lEx.Details[0].SubscriberKind));
       CheckEquals(0, lEx.Details[0].SubscriberIndex);
 
       CheckEquals('Exception', lEx.Details[1].ExceptionClassName);
@@ -6975,6 +6982,7 @@ begin
       CheckEquals(lTypeName, lEx.Details[1].Topic);
       CheckEquals(Integer(TmaxDelivery.Posting), Integer(lEx.Details[1].Delivery));
       Check(lEx.Details[1].SubscriberToken > 0);
+      CheckEquals(Integer(TmaxDispatchSubscriberKind.Exact), Integer(lEx.Details[1].SubscriberKind));
       CheckEquals(1, lEx.Details[1].SubscriberIndex);
     end;
   end;
@@ -7040,6 +7048,39 @@ begin
     maxBusObj(lBus).EnableCoalesceOf<TKeyed>(nil);
     RestoreAsyncSchedulerState(lPrevScheduler);
     lSignal.Free;
+  end;
+end;
+
+procedure TTestDispatchErrorDetails.WildcardSubscriberFailuresExposeWildcardMetadata;
+var
+  lBus: ImaxBus;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+
+  maxBusObj(lBus).SubscribeNamedWildcard('detail.*',
+    procedure
+    begin
+      raise Exception.Create('wildcard-detail');
+    end,
+    TmaxDelivery.Posting);
+
+  try
+    lBus.PostNamed('detail.alpha');
+    Check(False, 'Expected EmaxDispatchError');
+  except
+    on lEx: EmaxDispatchError do
+    begin
+      CheckEquals(1, lEx.Inner.Count);
+      CheckEquals(1, Length(lEx.Details));
+      CheckEquals('Exception', lEx.Details[0].ExceptionClassName);
+      CheckEquals('wildcard-detail', lEx.Details[0].ExceptionMessage);
+      CheckEquals(UpperCase('detail.alpha'), lEx.Details[0].Topic);
+      CheckEquals(Integer(TmaxDelivery.Posting), Integer(lEx.Details[0].Delivery));
+      Check(lEx.Details[0].SubscriberToken > 0);
+      CheckEquals(Integer(TmaxDispatchSubscriberKind.Wildcard), Integer(lEx.Details[0].SubscriberKind));
+      CheckEquals(0, lEx.Details[0].SubscriberIndex);
+    end;
   end;
 end;
 
@@ -7560,6 +7601,29 @@ end;
 
 { TTestWildcardNamed }
 
+procedure TTestWildcardNamed.AssertInvalidWildcardPattern(const aPattern: string; const aMessage: string);
+var
+  lBus: ImaxBus;
+  lRaised: boolean;
+  lSub: ImaxSubscription;
+begin
+  lBus := maxBus;
+  lRaised := False;
+  lSub := nil;
+  try
+    lSub := maxBusObj(lBus).SubscribeNamedWildcard(aPattern,
+      procedure
+      begin
+      end,
+      TmaxDelivery.Posting);
+  except
+    on EmaxInvalidSubscription do
+      lRaised := True;
+  end;
+  Check(lRaised, aMessage);
+  lSub := nil;
+end;
+
 procedure TTestWildcardNamed.PrefixAndGlobalWildcardMatch;
 var
   lBus: ImaxBus;
@@ -7611,6 +7675,49 @@ begin
     CheckEquals('prefix', lOrder[3]);
     CheckEquals('global', lOrder[4]);
     CheckEquals('global', lOrder[5]);
+  finally
+    lOrder.Free;
+  end;
+end;
+
+procedure TTestWildcardNamed.InvalidWildcardPatternsAreRejected;
+var
+  lBus: ImaxBus;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  AssertInvalidWildcardPattern('', 'Empty wildcard pattern should be rejected');
+  AssertInvalidWildcardPattern('room', 'Pattern without trailing * should be rejected');
+  AssertInvalidWildcardPattern('room.*.detail*', 'Pattern with more than one * should be rejected');
+  AssertInvalidWildcardPattern('**', 'Double-star wildcard pattern should be rejected');
+end;
+
+procedure TTestWildcardNamed.LongerPrefixWildcardPrecedenceWins;
+var
+  lBus: ImaxBus;
+  lOrder: TList<string>;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lOrder := TList<string>.Create;
+  try
+    maxBusObj(lBus).SubscribeNamedWildcard('room.*',
+      procedure
+      begin
+        lOrder.Add('short');
+      end,
+      TmaxDelivery.Posting);
+    maxBusObj(lBus).SubscribeNamedWildcard('room.kitchen.*',
+      procedure
+      begin
+        lOrder.Add('long');
+      end,
+      TmaxDelivery.Posting);
+
+    maxBusObj(lBus).PostNamed('room.kitchen.42');
+    CheckEquals(2, lOrder.Count);
+    CheckEquals('long', lOrder[0]);
+    CheckEquals('short', lOrder[1]);
   finally
     lOrder.Free;
   end;

@@ -2,8 +2,8 @@
 Next task ID: T-1117
 
 ## Summary
-Open tasks: 5 (In Progress: 0, Next Today: 4, Next This Week: 1, Next Later: 0, Blocked: 0)
-Done tasks: 134
+Open tasks: 3 (In Progress: 0, Next Today: 2, Next This Week: 1, Next Later: 0, Blocked: 0)
+Done tasks: 136
 
 ## In Progress
 
@@ -23,20 +23,6 @@ Touches: tests/src/MaxEventNexus.Main.Tests.pas
 Verify: unit-test, cli-proof
 Notes: Spec section 4.4. Added from `.agents/spec-gaps-review/2026-03-20_18-01-57.md`.
 
-### T-1114 [TEST] Add wildcard parser and precedence edge regressions
-Outcome:
-- invalid wildcard patterns are rejected by tests according to the published grammar
-- longer-prefix wildcard precedence is covered by tests in addition to same-prefix subscription order
-- wildcard error-path coverage is extended beyond the current happy-path-only fixture set
-Proof:
-- Run: `rg -n "InvalidWildcard|LongerPrefix|Wildcard.*Precedence|Wildcard.*Reject" tests/src/MaxEventNexus.Main.Tests.pas`
-  Expect: exit=0, new wildcard edge regressions are present
-- Run: `./build-and-run-tests.sh`
-  Expect: exit=0, including the new wildcard parser/precedence regressions
-Touches: tests/src/MaxEventNexus.Main.Tests.pas
-Verify: unit-test, cli-proof
-Notes: Spec section 5. Added from `.agents/spec-gaps-review/2026-03-20_18-01-57.md`.
-
 ### T-1113 [TEST] Add mixed-case named routing regressions
 Outcome:
 - mixed-case `SubscribeNamed` / `PostNamed` routing is covered by tests
@@ -50,20 +36,6 @@ Proof:
 Touches: tests/src/MaxEventNexus.Main.Tests.pas
 Verify: unit-test, cli-proof
 Notes: Spec section 5. Added from `.agents/spec-gaps-review/2026-03-20_18-01-57.md`.
-
-### T-1112 [API] Replace wildcard error index sentinel with explicit metadata
-Outcome:
-- wildcard subscriber failures no longer rely on undocumented negative `SubscriberIndex` values
-- `TmaxDispatchErrorDetail` exposes explicit metadata that distinguishes exact vs wildcard subscriber failures
-- wildcard failure behavior is pinned by regression tests
-Proof:
-- Run: `rg -n "TmaxDispatchErrorDetail|SubscriberKind|IsWildcard|Wildcard.*Subscriber" maxLogic.EventNexus.Core.pas tests/src/MaxEventNexus.Main.Tests.pas spec.md`
-  Expect: exit=0, explicit wildcard failure metadata is present in runtime/tests/docs
-- Run: `./build-and-run-tests.sh`
-  Expect: exit=0, including wildcard error-detail regressions
-Touches: maxLogic.EventNexus.Core.pas, tests/src/MaxEventNexus.Main.Tests.pas, spec.md
-Verify: unit-test, cli-proof
-Notes: Spec section 10. Added from `.agents/spec-gaps-review/2026-03-20_18-01-57.md`.
 
 ## Next – This Week
 
@@ -95,6 +67,26 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1114 [TEST] Add wildcard parser and precedence edge regressions
+Summary: Added wildcard regression coverage for invalid patterns, longer-prefix precedence, and wildcard failure metadata so the named-wildcard contract is pinned beyond the existing happy paths.
+
+Details:
+- Added `InvalidWildcardPatternsAreRejected` to prove the published grammar rejects empty, no-suffix, and multi-asterisk wildcard patterns.
+- Added `LongerPrefixWildcardPrecedenceWins` to pin longer-prefix dispatch ordering in addition to the existing same-prefix token-order regression.
+- Added `WildcardSubscriberFailuresExposeWildcardMetadata` so wildcard failure behavior is covered in the same suite as dispatch error details.
+- Proof: `rg -n "InvalidWildcard|LongerPrefix|Wildcard.*Precedence|Wildcard.*Reject" tests/src/MaxEventNexus.Main.Tests.pas` (exit `0`, wildcard parser/precedence regressions present).
+- Proof: `./build-and-run-tests.sh` (exit `0`, including the wildcard parser/precedence/error regressions plus the normal analyzer/benchmark/API gates).
+
+### T-1112 [API] Replace wildcard error index sentinel with explicit metadata
+Summary: `EmaxDispatchError.Details` now exposes explicit subscriber kind metadata so wildcard failures no longer depend on undocumented negative subscriber indexes.
+
+Details:
+- Added `TmaxDispatchSubscriberKind = (Unknown, Exact, Wildcard)` and surfaced it on `TmaxDispatchErrorDetail`.
+- Updated dispatch error collection so exact and wildcard failures carry explicit kind metadata, wildcard failures use zero-based wildcard indexes, and only non-subscriber batch-level failures stay tagged as `Unknown`.
+- Updated the spec and regression assertions so both exact and wildcard failure details are pinned by tests.
+- Proof: `rg -n "TmaxDispatchErrorDetail|SubscriberKind|IsWildcard|Wildcard.*Subscriber" maxLogic.EventNexus.Core.pas tests/src/MaxEventNexus.Main.Tests.pas spec.md` (exit `0`, explicit wildcard failure metadata present in runtime/tests/spec).
+- Proof: `./build-and-run-tests.sh` (exit `0`, including wildcard error-detail regressions and the normal analyzer/benchmark/API gates).
 
 ### T-1111 [SPEC] Clarify delayed-post hook-only failure semantics
 Summary: Clarified delayed-post failures as async-path hook-only behavior in the public docs and added a regression proving delayed failures remain non-raising when no async hook is installed.
