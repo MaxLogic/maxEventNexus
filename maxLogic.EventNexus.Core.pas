@@ -533,6 +533,10 @@ type
           function SnapshotAutoBridgeTyped(const aParamType: PTypeInfo): TArray<TmaxAutoBridgeSnapshot>;
           function SnapshotAutoBridgeNamedTyped(const aNameKey: TmaxString; const aParamType: PTypeInfo): TArray<TmaxAutoBridgeSnapshot>;
           function SnapshotAutoBridgeGuid(const aGuidKey: TGuid): TArray<TmaxAutoBridgeSnapshot>;
+          procedure DescribeAutoBridgeDispatch(const aSnapshots: TArray<TmaxAutoBridgeSnapshot>;
+            out aHasInline, aHasDeferred: boolean);
+          function DeliveryRunsInline(aDelivery: TmaxDelivery): boolean;
+          class function HasLiveTypedSubscribers<t>(const aTopic: TTypedTopic<t>): boolean; static;
           procedure DispatchAutoBridge<t>(const aTopic: TmaxString; const aSnapshots: TArray<TmaxAutoBridgeSnapshot>;
             const aEvent: t);
           procedure DispatchTypedSubscribers<t>(const aTopicName: TmaxString; const aTopic: TTypedTopic<t>;
@@ -3725,6 +3729,71 @@ begin
   end;
 end;
 
+procedure TmaxBus.DescribeAutoBridgeDispatch(const aSnapshots: TArray<TmaxAutoBridgeSnapshot>;
+  out aHasInline, aHasDeferred: boolean);
+var
+  lIdx: integer;
+  lStateObj: TmaxSubscriptionState;
+begin
+  aHasInline := False;
+  aHasDeferred := False;
+  for lIdx := 0 to High(aSnapshots) do
+  begin
+    lStateObj := aSnapshots[lIdx].StateObj;
+    if (lStateObj <> nil) and (not lStateObj.IsActive) then
+      Continue;
+    if not aSnapshots[lIdx].Target.IsAlive then
+      Continue;
+    if DeliveryRunsInline(aSnapshots[lIdx].Mode) then
+      aHasInline := True
+    else
+      aHasDeferred := True;
+  end;
+end;
+
+function TmaxBus.DeliveryRunsInline(aDelivery: TmaxDelivery): boolean;
+begin
+  case aDelivery of
+    Posting:
+      Result := True;
+    Async:
+      Result := False;
+    Main:
+      begin
+        if (TThread.CurrentThread.ThreadID = fMainThreadId) or fAsync.IsMainThread() then
+          Exit(True);
+        if not IsConsole then
+          Exit(False);
+        Result := gMainThreadPolicy = TmaxMainThreadPolicy.DegradeToPosting;
+      end;
+    Background:
+      Result := (TThread.CurrentThread.ThreadID <> fMainThreadId) and (not fAsync.IsMainThread());
+  else
+    Result := False;
+  end;
+end;
+
+class function TmaxBus.HasLiveTypedSubscribers<t>(const aTopic: TTypedTopic<t>): boolean;
+var
+  lIdx: integer;
+  lSnapshot: TArray<TTypedSubscriber<t>>;
+  lStateObj: TmaxSubscriptionState;
+begin
+  Result := False;
+  if aTopic = nil then
+    Exit;
+  lSnapshot := aTopic.Snapshot;
+  for lIdx := 0 to High(lSnapshot) do
+  begin
+    lStateObj := lSnapshot[lIdx].StateObj;
+    if (lStateObj <> nil) and (not lStateObj.IsActive) then
+      Continue;
+    if not lSnapshot[lIdx].Target.IsAlive then
+      Continue;
+    Exit(True);
+  end;
+end;
+
 procedure TmaxBus.DispatchAutoBridge<t>(const aTopic: TmaxString; const aSnapshots: TArray<TmaxAutoBridgeSnapshot>;
   const aEvent: t);
 type
@@ -5238,6 +5307,10 @@ end;
 
 function TmaxBus.PostResult<t>(const aEvent: t): TmaxPostResult;
 var
+  lAutoSubs: TArray<TmaxAutoBridgeSnapshot>;
+  lHasDeferredAutoSubs: boolean;
+  lHasInlineAutoSubs: boolean;
+  lHasLiveSubscribers: boolean;
   lKey: PTypeInfo;
   lObj: TmaxTopicBase;
   lTopic: TTypedTopic<t>;
@@ -5248,6 +5321,9 @@ var
 begin
   lKey := TypeInfo(t);
   lTopic := nil;
+  lAutoSubs := SnapshotAutoBridgeTyped(lKey);
+  DescribeAutoBridgeDispatch(lAutoSubs, lHasInlineAutoSubs, lHasDeferredAutoSubs);
+  lHasLiveSubscribers := False;
   lQueueDepth := 0;
   lWasProcessing := False;
 
@@ -5267,11 +5343,12 @@ begin
     finally
       fConfigLock.EndWrite;
     end;
-    if (not lSticky) and (Length(SnapshotAutoBridgeTyped(lKey)) = 0) then
+    if (not lSticky) and (Length(lAutoSubs) = 0) then
       Exit(TmaxPostResult.NoTopic);
   end
   else
   begin
+    lHasLiveSubscribers := HasLiveTypedSubscribers<t>(lTopic);
     lQueueDepth := lTopic.GetStats.CurrentQueueDepth;
     lWasProcessing := lTopic.IsProcessing;
   end;
@@ -5288,6 +5365,8 @@ begin
   if not lAccepted then
     Exit(TmaxPostResult.Dropped);
   if (lQueueDepth > 0) or lWasProcessing then
+    Exit(TmaxPostResult.Queued);
+  if (not lHasLiveSubscribers) and (not lHasInlineAutoSubs) and lHasDeferredAutoSubs then
     Exit(TmaxPostResult.Queued);
   Result := TmaxPostResult.DispatchedInline;
 end;
@@ -6553,6 +6632,10 @@ end;
 
 function TmaxBus.PostResultNamedOf<t>(const aName: TmaxString; const aEvent: t): TmaxPostResult;
 var
+  lAutoSubs: TArray<TmaxAutoBridgeSnapshot>;
+  lHasDeferredAutoSubs: boolean;
+  lHasInlineAutoSubs: boolean;
+  lHasLiveSubscribers: boolean;
   lTypeDict: TmaxTypeTopicDict;
   lObj: TmaxTopicBase;
   lTopic: TTypedTopic<t>;
@@ -6566,6 +6649,9 @@ begin
   lNameKey := aName;
   lKey := TypeInfo(t);
   lTopic := nil;
+  lAutoSubs := SnapshotAutoBridgeNamedTyped(lNameKey, lKey);
+  DescribeAutoBridgeDispatch(lAutoSubs, lHasInlineAutoSubs, lHasDeferredAutoSubs);
+  lHasLiveSubscribers := False;
   lQueueDepth := 0;
   lWasProcessing := False;
 
@@ -6585,11 +6671,12 @@ begin
     finally
       fConfigLock.EndWrite;
     end;
-    if (not lSticky) and (Length(SnapshotAutoBridgeNamedTyped(lNameKey, lKey)) = 0) then
+    if (not lSticky) and (Length(lAutoSubs) = 0) then
       Exit(TmaxPostResult.NoTopic);
   end
   else
   begin
+    lHasLiveSubscribers := HasLiveTypedSubscribers<t>(lTopic);
     lQueueDepth := lTopic.GetStats.CurrentQueueDepth;
     lWasProcessing := lTopic.IsProcessing;
   end;
@@ -6606,6 +6693,8 @@ begin
   if not lAccepted then
     Exit(TmaxPostResult.Dropped);
   if (lQueueDepth > 0) or lWasProcessing then
+    Exit(TmaxPostResult.Queued);
+  if (not lHasLiveSubscribers) and (not lHasInlineAutoSubs) and lHasDeferredAutoSubs then
     Exit(TmaxPostResult.Queued);
   Result := TmaxPostResult.DispatchedInline;
 end;
@@ -7178,6 +7267,10 @@ begin
 
 function TmaxBus.PostResultGuidOf<t>(const aEvent: t): TmaxPostResult;
 var
+  lAutoSubs: TArray<TmaxAutoBridgeSnapshot>;
+  lHasDeferredAutoSubs: boolean;
+  lHasInlineAutoSubs: boolean;
+  lHasLiveSubscribers: boolean;
   lKey: TGuid;
   lObj: TmaxTopicBase;
   lTopic: TTypedTopic<t>;
@@ -7190,6 +7283,9 @@ begin
   lTypeKey := TypeInfo(t);
   lKey := GuidForType(lTypeKey);
   lTopic := nil;
+  lAutoSubs := SnapshotAutoBridgeGuid(lKey);
+  DescribeAutoBridgeDispatch(lAutoSubs, lHasInlineAutoSubs, lHasDeferredAutoSubs);
+  lHasLiveSubscribers := False;
   lQueueDepth := 0;
   lWasProcessing := False;
 
@@ -7209,11 +7305,12 @@ begin
     finally
       fConfigLock.EndWrite;
     end;
-    if (not lSticky) and (Length(SnapshotAutoBridgeGuid(lKey)) = 0) then
+    if (not lSticky) and (Length(lAutoSubs) = 0) then
       Exit(TmaxPostResult.NoTopic);
   end
   else
   begin
+    lHasLiveSubscribers := HasLiveTypedSubscribers<t>(lTopic);
     lQueueDepth := lTopic.GetStats.CurrentQueueDepth;
     lWasProcessing := lTopic.IsProcessing;
   end;
@@ -7230,6 +7327,8 @@ begin
   if not lAccepted then
     Exit(TmaxPostResult.Dropped);
   if (lQueueDepth > 0) or lWasProcessing then
+    Exit(TmaxPostResult.Queued);
+  if (not lHasLiveSubscribers) and (not lHasInlineAutoSubs) and lHasDeferredAutoSubs then
     Exit(TmaxPostResult.Queued);
   Result := TmaxPostResult.DispatchedInline;
 end;
