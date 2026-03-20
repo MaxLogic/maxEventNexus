@@ -2,25 +2,12 @@
 Next task ID: T-1107
 
 ## Summary
-Open tasks: 2 (In Progress: 0, Next Today: 2, Next This Week: 0, Next Later: 0, Blocked: 0)
-Done tasks: 127
+Open tasks: 1 (In Progress: 0, Next Today: 1, Next This Week: 0, Next Later: 0, Blocked: 0)
+Done tasks: 128
 
 ## In Progress
 
 ## Next – Today
-
-### T-1105 [TEST] Restore policy cleanup for post-Clear regression tests
-Outcome:
-- The new explicit-policy-after-`Clear` regression tests no longer leak typed, named, or GUID policy configuration into later tests on the shared singleton bus.
-- Named-topic cleanup resets the actual effective policy state rather than only clearing preset metadata.
-Proof:
-- Run: `./build-and-run-tests.sh`
-  Expect: exit `0`, with the regression suite still green after isolating post-`Clear` policy tests.
-- Run: `rg -n "ClearPreserves.*Policy|ResetNamedPolicy|SetPolicyFor<integer>|SetPolicyGuidOf<IIntEvent>" tests/src/MaxEventNexus.Main.Tests.pas`
-  Expect: exit `0`, and cleanup paths are explicit for the affected test surfaces.
-Touches: tests/src/MaxEventNexus.Main.Tests.pas
-Verify: unit-test, cli-proof
-Notes: Follow-up from review of T-1100/T-1101/T-1102/T-1104. `Clear` now preserves config by design, so test teardown must not rely on `Clear` as a config reset.
 
 ### T-1106 [API] Fix PostResult status for deferred AutoSubscribe-only delivery
 Outcome:
@@ -51,6 +38,15 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1105 [TEST] Restore policy cleanup for post-Clear regression tests
+Summary: The post-`Clear` explicit-policy regressions no longer leak durable typed, named, or GUID queue policy into later shared-bus tests.
+
+Details:
+- Added `CreateIsolatedBus` for policy-sensitive regressions and moved the typed, named, and GUID `ClearPreserves*ExplicitPolicy` tests onto dedicated bus instances.
+- Reworked the named-topic policy regressions to use distinct topic names on `maxBus` instead of the old preset-only cleanup helper.
+- Proof: `./build-and-run-tests.sh` (exit `0`, including the post-`Clear` policy regressions under isolated state).
+- Proof: `rg -n "CreateIsolatedBus|named\\.sticky\\.coalesce|named\\.queue\\.metrics|ClearPreserves.*Policy" tests/src/MaxEventNexus.Main.Tests.pas` (exit `0`, affected regressions now show explicit isolation paths).
 
 ### T-1103 [OBS] Clarify TraceEnqueue delivery semantics
 Summary: Chose and documented the topic-queue interpretation for `TraceEnqueue`, then pinned the same contract in tracing regressions and supporting docs.

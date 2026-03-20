@@ -826,9 +826,9 @@ begin
   Result.DeadlineUs := aDeadlineUs;
 end;
 
-procedure ResetNamedPolicy(const aBus: ImaxBus; const aName: string);
+function CreateIsolatedBus: ImaxBus;
 begin
-  maxBusObj(aBus).SetQueuePresetNamed(aName, TmaxQueuePreset.Unspecified);
+  Result := TmaxBus.Create(CreateMaxAsyncScheduler);
 end;
 
 procedure PostIntegerValue(const aBus: ImaxBus; aValue: integer);
@@ -1410,7 +1410,7 @@ var
   lBus: ImaxBus;
   lDelivered: integer;
 begin
-  lBus := maxBus;
+  lBus := CreateIsolatedBus;
   lBus.Clear;
   lDelivered := 0;
 
@@ -1463,7 +1463,7 @@ var
   end;
   {$ENDIF}
 begin
-  lBus := maxBus;
+  lBus := CreateIsolatedBus;
   lBus.Clear;
   lMainId := TThread.CurrentThread.ThreadID;
   {$IFDEF max_DELPHI} LogLine('TTestAsyncDelivery.AsyncAndBackgroundRunOffPostingThread', 'Start; MainTID=' + IntToStr(lMainId)); {$ENDIF}
@@ -4180,7 +4180,7 @@ var
 begin
   lBus := maxBus;
   lBus.Clear;
-  lName := 'named';
+  lName := 'named.sticky.coalesce';
   try
     (lBus as ImaxBusAdvanced).EnableStickyNamed(lName, True);
     maxBusObj(lBus).EnableCoalesceNamedOf<integer>(lName,
@@ -4209,7 +4209,6 @@ begin
   finally
     maxBusObj(lBus).EnableCoalesceNamedOf<integer>(lName, nil);
     (lBus as ImaxBusAdvanced).EnableStickyNamed(lName, False);
-    ResetNamedPolicy(lBus, lName);
   end;
 end;
 
@@ -4235,7 +4234,7 @@ var
 begin
   lBus := maxBus;
   lBus.Clear;
-  lName := 'named';
+  lName := 'named.queue.metrics';
   lQueues := lBus as ImaxBusQueues;
   lPolicy.MaxDepth := 1;
   lPolicy.Overflow := DropNewest;
@@ -4279,7 +4278,6 @@ begin
     CheckEquals(1, lStats.DroppedTotal);
   finally
     t.Free;
-    ResetNamedPolicy(lBus, lName);
   end;
 end;
 
@@ -5791,7 +5789,7 @@ var
   lThread: TThread;
   lPostResult: TmaxPostResult;
 begin
-  lBus := maxBus;
+  lBus := CreateIsolatedBus;
   lBus.Clear;
   lStarted := TEvent.Create(nil, True, False, '');
   lRelease := TEvent.Create(nil, True, False, '');
@@ -5847,7 +5845,7 @@ var
   lPostResult: TmaxPostResult;
   lName: string;
 begin
-  lBus := maxBus;
+  lBus := CreateIsolatedBus;
   lBus.Clear;
   lName := 'postresult.named.drop';
   lStarted := TEvent.Create(nil, True, False, '');
@@ -5899,7 +5897,7 @@ var
   lBus: ImaxBus;
   lEvt: TKeyed;
 begin
-  lBus := maxBus;
+  lBus := CreateIsolatedBus;
   lBus.Clear;
   maxBusObj(lBus).EnableCoalesceOf<TKeyed>(
     function(const aValue: TKeyed): TmaxString
@@ -5936,7 +5934,7 @@ var
   lInlineResult: TmaxPostResult;
   lQueuedResult: TmaxPostResult;
 begin
-  lBus := maxBus;
+  lBus := CreateIsolatedBus;
   lBus.Clear;
 
   maxBusObj(lBus).Subscribe<integer>(
@@ -5996,7 +5994,7 @@ var
   lQueuedResult: TmaxPostResult;
   lDroppedResult: TmaxPostResult;
 begin
-  lBus := maxBus;
+  lBus := CreateIsolatedBus;
   lBus.Clear;
   lStarted := TEvent.Create(nil, True, False, '');
   lRelease := TEvent.Create(nil, True, False, '');
@@ -6049,7 +6047,7 @@ var
   lResult: TmaxPostResult;
   lHits: integer;
 begin
-  lBus := maxBus;
+  lBus := CreateIsolatedBus;
   lBus.Clear;
   lHits := 0;
 
@@ -6078,7 +6076,7 @@ var
   lStarted: TEvent;
   lThread: TThread;
 begin
-  lBus := maxBus;
+  lBus := CreateIsolatedBus;
   lBus.Clear;
   lStarted := TEvent.Create(nil, True, False, '');
   lRelease := TEvent.Create(nil, True, False, '');
@@ -6132,7 +6130,7 @@ var
   lStarted: TEvent;
   lThread: TThread;
 begin
-  lBus := maxBus;
+  lBus := CreateIsolatedBus;
   lBus.Clear;
   lStarted := TEvent.Create(nil, True, False, '');
   lRelease := TEvent.Create(nil, True, False, '');
@@ -6181,7 +6179,7 @@ var
   lStarted: TEvent;
   lThread: TThread;
 begin
-  lBus := maxBus;
+  lBus := CreateIsolatedBus;
   lBus.Clear;
   lStarted := TEvent.Create(nil, True, False, '');
   lRelease := TEvent.Create(nil, True, False, '');
