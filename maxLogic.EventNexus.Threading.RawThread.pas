@@ -3,13 +3,16 @@ unit maxLogic.EventNexus.Threading.RawThread;
 interface
 
 uses
-  Classes, SysUtils, System.Threading,
+  Classes, SysUtils,
   maxLogic.EventNexus.Threading.Adapter;
 
 type
   TmaxRawThreadScheduler = class(TInterfacedObject, IEventNexusScheduler)
   protected
     class function DelayUsToDelayMs(aDelayUs: Integer): Integer; static;
+    function ResolveDelayMs(aDelayUs: Integer): Integer; virtual;
+    function CreateProcThread(const aProc: TmaxProc; aDelayMs: Integer): TThread; virtual;
+    procedure StartProcThread(const aProc: TmaxProc; aDelayUs: Integer);
   public
     procedure RunAsync(const aProc: TmaxProc);
     procedure RunOnMain(const aProc: TmaxProc);
@@ -23,40 +26,34 @@ type
   TmaxProcThread = class(TThread)
   private
     fProc: TmaxProc;
-    fDelayUs: Integer;
+    fDelayMs: Integer;
   protected
     procedure Execute; override;
   public
-    constructor Create(const aProc: TmaxProc; aDelayUs: Integer);
-    class procedure StartAsync(const aProc: TmaxProc; aDelayUs: Integer = 0); static;
+    constructor Create(const aProc: TmaxProc; aDelayMs: Integer);
   end;
 
 { TmaxProcThread }
 
-constructor TmaxProcThread.Create(const aProc: TmaxProc; aDelayUs: Integer);
+constructor TmaxProcThread.Create(const aProc: TmaxProc; aDelayMs: Integer);
 begin
   inherited Create(True);
   FreeOnTerminate := True;
   fProc := aProc;
-  if aDelayUs > 0 then
-    fDelayUs := aDelayUs
+  if aDelayMs > 0 then
+    fDelayMs := aDelayMs
   else
-    fDelayUs := 0;
+    fDelayMs := 0;
 end;
 
 procedure TmaxProcThread.Execute;
 var
   lProc: TmaxProc;
-  lDelayMs: Integer;
 begin
   lProc := fProc;
   fProc := nil;
-  if fDelayUs > 0 then
-  begin
-    lDelayMs := fDelayUs div 1000;
-    if lDelayMs > 0 then
-      TThread.Sleep(lDelayMs);
-  end;
+  if fDelayMs > 0 then
+    TThread.Sleep(fDelayMs);
   if ProcAssigned(lProc) then
     lProc();
 end;
@@ -68,27 +65,35 @@ begin
   Result := (aDelayUs + 999) div 1000;
 end;
 
-class procedure TmaxProcThread.StartAsync(const aProc: TmaxProc; aDelayUs: Integer);
+{ TmaxRawThreadScheduler }
+
+function TmaxRawThreadScheduler.ResolveDelayMs(aDelayUs: Integer): Integer;
+begin
+  Result := DelayUsToDelayMs(aDelayUs);
+end;
+
+function TmaxRawThreadScheduler.CreateProcThread(const aProc: TmaxProc; aDelayMs: Integer): TThread;
+begin
+  Result := TmaxProcThread.Create(aProc, aDelayMs);
+end;
+
+procedure TmaxRawThreadScheduler.StartProcThread(const aProc: TmaxProc; aDelayUs: Integer);
 var
   lDelayMs: Integer;
+  lThread: TThread;
 begin
   if not ProcAssigned(aProc) then
     Exit;
-  lDelayMs := TmaxRawThreadScheduler.DelayUsToDelayMs(aDelayUs);
-  TTask.Run(
-    procedure
-    begin
-      if lDelayMs > 0 then
-        TThread.Sleep(lDelayMs);
-      aProc();
-    end);
+  lDelayMs := ResolveDelayMs(aDelayUs);
+  lThread := CreateProcThread(aProc, lDelayMs);
+  if lThread = nil then
+    Exit;
+  lThread.Start;
 end;
-
-{ TmaxRawThreadScheduler }
 
 procedure TmaxRawThreadScheduler.RunAsync(const aProc: TmaxProc);
 begin
-  TmaxProcThread.StartAsync(aProc);
+  StartProcThread(aProc, 0);
 end;
 
 procedure TmaxRawThreadScheduler.RunOnMain(const aProc: TmaxProc);
@@ -104,7 +109,7 @@ end;
 
 procedure TmaxRawThreadScheduler.RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);
 begin
-  TmaxProcThread.StartAsync(aProc, aDelayUs);
+  StartProcThread(aProc, aDelayUs);
 end;
 
 function TmaxRawThreadScheduler.IsMainThread: Boolean;

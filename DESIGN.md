@@ -78,6 +78,14 @@ When `Main` delivery is requested but no UI main-thread marshaling is available 
 
 Global configuration is set via `maxSetMainThreadPolicy`.
 
+## Scheduler adapters
+
+The shipped scheduler adapters are intentionally different:
+
+- `MaxAsync` is the recommended default and may fall back to dedicated-thread execution if its primary backend rejects work.
+- `RawThread` bypasses the Delphi thread pool and creates a dedicated `TThread` for each async or delayed work item.
+- `TTask` is the explicit RTL thread-pool adapter.
+
 ## Sticky cache and coalescing
 
 Sticky:
