@@ -195,6 +195,9 @@ type
   TTestNamedTopics = class(TmaxTestCase)
   published
     procedure StickyAndCoalesceNamed;
+    procedure MixedCaseNamedRoutingForNamedTopic;
+    procedure MixedCaseNamedRoutingForNamedOfTopic;
+    procedure CaseInsensitiveNamedStickyPolicyAndPresetLookups;
     procedure QueuePolicyAndMetricsNamed;
     procedure TryPostNamedNoTopicReturnsTrueWithoutCounters;
     procedure TryPostNamedDeliversWhenSubscriberExists;
@@ -432,6 +435,8 @@ type
     procedure NamedOfBulkPreservesOrder;
     procedure GuidOfBulkPreservesOrder;
     procedure BulkAggregatesAcrossItems;
+    procedure BulkNamedErrorAggregationMatchesTypedContract;
+    procedure BulkGuidErrorAggregationMatchesTypedContract;
     procedure TypedAsyncPostsPreserveOrderAgainstReorderingScheduler;
     procedure NamedOfMainPostsPreserveOrderAgainstReorderingScheduler;
     procedure GuidOfBackgroundPostsPreserveOrderAgainstReorderingScheduler;
@@ -4349,6 +4354,97 @@ begin
   end;
 end;
 
+procedure TTestNamedTopics.MixedCaseNamedRoutingForNamedTopic;
+var
+  lBus: ImaxBus;
+  lHits: integer;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lHits := 0;
+  lBus.SubscribeNamed('Orders.Mixed.Route',
+    procedure
+    begin
+      Inc(lHits);
+    end,
+    TmaxDelivery.Posting);
+
+  lBus.PostNamed('orders.mixed.route');
+  CheckEquals(1, lHits);
+end;
+
+procedure TTestNamedTopics.MixedCaseNamedRoutingForNamedOfTopic;
+var
+  lBus: ImaxBus;
+  lValues: TList<integer>;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lValues := TList<integer>.Create;
+  try
+    maxBusObj(lBus).SubscribeNamedOf<integer>('Orders.Mixed.Of',
+      procedure(const aValue: integer)
+      begin
+        lValues.Add(aValue);
+      end,
+      TmaxDelivery.Posting);
+
+    maxBusObj(lBus).PostNamedOf<integer>('orders.mixed.of', 37);
+    CheckEquals(1, lValues.Count);
+    CheckEquals(37, lValues[0]);
+  finally
+    lValues.Free;
+  end;
+end;
+
+procedure TTestNamedTopics.CaseInsensitiveNamedStickyPolicyAndPresetLookups;
+var
+  lBus: ImaxBus;
+  lExplicit: TmaxQueuePolicy;
+  lHits: integer;
+  lPolicy: TmaxQueuePolicy;
+  lPresetName: string;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  (lBus as ImaxBusAdvanced).EnableStickyNamed('CaseInsensitive.NamedSticky', True);
+  try
+    lBus.PostNamed('caseinsensitive.namedsticky');
+    lHits := 0;
+    lBus.SubscribeNamed('CASEINSENSITIVE.NAMEDSTICKY',
+      procedure
+      begin
+        Inc(lHits);
+      end,
+      TmaxDelivery.Posting);
+    CheckEquals(1, lHits);
+
+    lExplicit.MaxDepth := 7;
+    lExplicit.Overflow := TmaxOverflow.Deadline;
+    lExplicit.DeadlineUs := 3210;
+    (lBus as ImaxBusQueues).SetPolicyNamed('CaseInsensitive.NamedPolicy', lExplicit);
+    lPolicy := (lBus as ImaxBusQueues).GetPolicyNamed('caseinsensitive.namedpolicy');
+    CheckEquals(lExplicit.MaxDepth, lPolicy.MaxDepth);
+    CheckEquals(Integer(lExplicit.Overflow), Integer(lPolicy.Overflow));
+    CheckEquals(lExplicit.DeadlineUs, lPolicy.DeadlineUs);
+  finally
+    (lBus as ImaxBusAdvanced).EnableStickyNamed('CaseInsensitive.NamedSticky', False);
+  end;
+
+  lPresetName := 'CaseInsensitive.NamedPreset';
+  maxBus.Clear;
+  maxSetQueuePresetNamed(lPresetName, TmaxQueuePreset.ControlPlane);
+  try
+    lPolicy := (maxBus as ImaxBusQueues).GetPolicyNamed('caseinsensitive.namedpreset');
+    CheckEquals(1, lPolicy.MaxDepth);
+    CheckEquals(Integer(TmaxOverflow.Block), Integer(lPolicy.Overflow));
+    CheckEquals(0, lPolicy.DeadlineUs);
+  finally
+    maxSetQueuePresetNamed(lPresetName, TmaxQueuePreset.Unspecified);
+    maxBus.Clear;
+  end;
+end;
+
 procedure TTestNamedTopics.QueuePolicyAndMetricsNamed;
 var
   lBus: ImaxBus;
@@ -7339,6 +7435,77 @@ begin
       CheckEquals('bulk-second', lEx.Inner[1].Message);
       CheckEquals('bulk-first', lEx.Inner[2].Message);
       CheckEquals('bulk-second', lEx.Inner[3].Message);
+    end;
+  end;
+end;
+
+procedure TTestBulkDispatch.BulkNamedErrorAggregationMatchesTypedContract;
+var
+  lBus: ImaxBus;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  maxBusObj(lBus).SubscribeNamedOf<integer>('bulk.named.error',
+    procedure(const aValue: integer)
+    begin
+      raise Exception.Create('bulk named error first');
+    end,
+    TmaxDelivery.Posting);
+  maxBusObj(lBus).SubscribeNamedOf<integer>('bulk.named.error',
+    procedure(const aValue: integer)
+    begin
+      raise Exception.Create('bulk named error second');
+    end,
+    TmaxDelivery.Posting);
+  try
+    maxBusObj(lBus).PostManyNamedOf<integer>('bulk.named.error', [10, 20]);
+    Check(False, 'Expected EmaxDispatchError from bulk named post');
+  except
+    on lEx: EmaxDispatchError do
+    begin
+      CheckEquals(4, lEx.Inner.Count);
+      CheckEquals(4, Length(lEx.Details));
+      CheckEquals('bulk named error first', lEx.Inner[0].Message);
+      CheckEquals('bulk named error second', lEx.Inner[1].Message);
+      CheckEquals('bulk named error first', lEx.Inner[2].Message);
+      CheckEquals('bulk named error second', lEx.Inner[3].Message);
+    end;
+  end;
+end;
+
+procedure TTestBulkDispatch.BulkGuidErrorAggregationMatchesTypedContract;
+var
+  lBus: ImaxBus;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
+    procedure(const aValue: IIntEvent)
+    begin
+      raise Exception.Create('bulk guid error first');
+    end,
+    TmaxDelivery.Posting);
+  maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
+    procedure(const aValue: IIntEvent)
+    begin
+      raise Exception.Create('bulk guid error second');
+    end,
+    TmaxDelivery.Posting);
+  try
+    maxBusObj(lBus).PostManyGuidOf<IIntEvent>([
+      IIntEvent(TIntEvent.Create(41)),
+      IIntEvent(TIntEvent.Create(42))
+    ]);
+    Check(False, 'Expected EmaxDispatchError from bulk guid post');
+  except
+    on lEx: EmaxDispatchError do
+    begin
+      CheckEquals(4, lEx.Inner.Count);
+      CheckEquals(4, Length(lEx.Details));
+      CheckEquals('bulk guid error first', lEx.Inner[0].Message);
+      CheckEquals('bulk guid error second', lEx.Inner[1].Message);
+      CheckEquals('bulk guid error first', lEx.Inner[2].Message);
+      CheckEquals('bulk guid error second', lEx.Inner[3].Message);
     end;
   end;
 end;
