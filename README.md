@@ -1,9 +1,10 @@
 # EventNexus
 
-## What's New (2026-02-26)
+## What's New (2026-03-20)
 
 - `Clear` now stays a runtime reset: explicit queue policies and coalescing configuration survive, while queued/pending runtime state is still dropped.
 - `PostResult<T>`, `PostResultNamedOf<T>`, and `PostResultGuidOf<T>` now report live `AutoSubscribe` handlers as real receivers instead of returning `NoTopic`.
+- Deferred-only `AutoSubscribe` handlers now make `PostResult<T>`, `PostResultNamedOf<T>`, and `PostResultGuidOf<T>` return `Queued` instead of misreporting `DispatchedInline`, with `Main`/`Background` decided from the actual runtime context.
 - `bench/BenchHarness` now uses the supported `TmaxBus` / `maxBusObj(...)` bridge contract and has a maintained `bench/BenchHarness.dproj` build path.
 - Runtime/public units are now fully Delphi-only; remaining FPC conditionals were removed from adapter/facade scheduler paths.
 - Tests run through DUnitX (`tests/MaxEventNexusTests.dpr`) with compatibility support for published-method legacy suites.

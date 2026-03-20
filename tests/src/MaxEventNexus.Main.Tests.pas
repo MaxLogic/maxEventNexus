@@ -392,6 +392,9 @@ type
     procedure PostResultTypedAutoSubscribeIsNotNoTopic;
     procedure PostResultNamedOfAutoSubscribeIsNotNoTopic;
     procedure PostResultGuidOfAutoSubscribeIsNotNoTopic;
+    procedure PostResultTypedAutoSubscribeAsyncReturnsQueued;
+    procedure PostResultNamedOfAutoSubscribeBackgroundReturnsQueued;
+    procedure PostResultGuidOfAutoSubscribeMainReturnsQueued;
   end;
 
   TTestDispatchErrorDetails = class(TmaxTestCase)
@@ -575,6 +578,22 @@ type
     [maxSubscribe]
     procedure OnGuid(const aValue: IIntEvent);
   end;
+
+  TAutoSubDeferred = class
+  public
+    IntHits: integer;
+    LastInt: integer;
+    DataHits: integer;
+    LastData: integer;
+    GuidHits: integer;
+    LastGuidValue: integer;
+    [maxSubscribe(TmaxDelivery.Async)]
+    procedure OnIntAsync(const aValue: integer);
+    [maxSubscribe('data.defer', TmaxDelivery.Background)]
+    procedure OnDataBackground(const aValue: integer);
+    [maxSubscribe(TmaxDelivery.Main)]
+    procedure OnGuidMain(const aValue: IIntEvent);
+  end;
 {$ENDIF}
 
 {$IFDEF max_DELPHI}
@@ -634,6 +653,27 @@ begin
 end;
 
 procedure TAutoSubGuid.OnGuid(const aValue: IIntEvent);
+begin
+  Inc(GuidHits);
+  if aValue <> nil then
+    LastGuidValue := aValue.GetValue
+  else
+    LastGuidValue := 0;
+end;
+
+procedure TAutoSubDeferred.OnIntAsync(const aValue: integer);
+begin
+  Inc(IntHits);
+  LastInt := aValue;
+end;
+
+procedure TAutoSubDeferred.OnDataBackground(const aValue: integer);
+begin
+  Inc(DataHits);
+  LastData := aValue;
+end;
+
+procedure TAutoSubDeferred.OnGuidMain(const aValue: IIntEvent);
 begin
   Inc(GuidHits);
   if aValue <> nil then
@@ -952,6 +992,48 @@ begin
     aThread.WaitFor;
     aThread.Free;
     aThread := nil;
+  end;
+end;
+
+function PostGuidResultOffMain(const aBus: ImaxBus; const aValue: IIntEvent): TmaxPostResult;
+var
+  lDone: TEvent;
+  lError: string;
+  lResult: TmaxPostResult;
+  lThread: TThread;
+  lValue: IIntEvent;
+begin
+  lDone := TEvent.Create(nil, True, False, '');
+  lError := '';
+  lResult := TmaxPostResult.NoTopic;
+  lThread := nil;
+  lValue := aValue;
+  try
+    lThread := TThread.CreateAnonymousThread(
+      procedure
+      begin
+        try
+          lResult := maxBusObj(aBus).PostResultGuidOf<IIntEvent>(lValue);
+        except
+          on e: Exception do
+            lError := e.ClassName + ': ' + e.Message;
+        end;
+        lDone.SetEvent;
+      end);
+    lThread.FreeOnTerminate := False;
+    lThread.Start;
+
+    if lDone.WaitFor(1000) <> wrSignaled then
+      raise Exception.Create('Timed out waiting for off-main auto-subscribed guid PostResult');
+
+    lThread.WaitFor;
+    if lError <> '' then
+      raise Exception.Create(lError);
+    Result := lResult;
+  finally
+    if lThread <> nil then
+      lThread.Free;
+    lDone.Free;
   end;
 end;
 
@@ -6284,6 +6366,117 @@ begin
     AutoUnsubscribe(lTarget);
     lTarget.Free;
     lBus.Clear;
+  end;
+end;
+
+procedure TTestPostResult.PostResultTypedAutoSubscribeAsyncReturnsQueued;
+var
+  lBus: ImaxBus;
+  lPostResult: TmaxPostResult;
+  lPrevScheduler: IEventNexusScheduler;
+  lScheduler: TReverseScheduler;
+  lTarget: TAutoSubDeferred;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lPrevScheduler := maxGetAsyncScheduler;
+  lScheduler := TReverseScheduler.Create;
+  lTarget := TAutoSubDeferred.Create;
+  try
+    maxSetAsyncScheduler(lScheduler);
+    AutoSubscribe(lTarget);
+
+    lPostResult := maxBusObj(lBus).PostResult<integer>(17);
+
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(lPostResult));
+    CheckEquals(1, lScheduler.AsyncCount);
+    CheckEquals(0, lTarget.IntHits);
+
+    lScheduler.DrainAsyncReverse;
+
+    CheckEquals(1, lTarget.IntHits);
+    CheckEquals(17, lTarget.LastInt);
+  finally
+    lScheduler.DrainAsyncReverse;
+    lScheduler.DrainMainReverse;
+    AutoUnsubscribe(lTarget);
+    lTarget.Free;
+    maxSetAsyncScheduler(lPrevScheduler);
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestPostResult.PostResultNamedOfAutoSubscribeBackgroundReturnsQueued;
+var
+  lBus: ImaxBus;
+  lPostResult: TmaxPostResult;
+  lPrevScheduler: IEventNexusScheduler;
+  lScheduler: TReverseScheduler;
+  lTarget: TAutoSubDeferred;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lPrevScheduler := maxGetAsyncScheduler;
+  lScheduler := TReverseScheduler.Create;
+  lTarget := TAutoSubDeferred.Create;
+  try
+    maxSetAsyncScheduler(lScheduler);
+    AutoSubscribe(lTarget);
+
+    lPostResult := maxBusObj(lBus).PostResultNamedOf<integer>('data.defer', 88);
+
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(lPostResult));
+    CheckEquals(1, lScheduler.AsyncCount);
+    CheckEquals(0, lTarget.DataHits);
+
+    lScheduler.DrainAsyncReverse;
+
+    CheckEquals(1, lTarget.DataHits);
+    CheckEquals(88, lTarget.LastData);
+  finally
+    lScheduler.DrainAsyncReverse;
+    lScheduler.DrainMainReverse;
+    AutoUnsubscribe(lTarget);
+    lTarget.Free;
+    maxSetAsyncScheduler(lPrevScheduler);
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestPostResult.PostResultGuidOfAutoSubscribeMainReturnsQueued;
+var
+  lPostResult: TmaxPostResult;
+  lPrevScheduler: IEventNexusScheduler;
+  lScheduler: TReverseScheduler;
+  lTarget: TAutoSubDeferred;
+begin
+  maxBus.Clear;
+  lPrevScheduler := maxGetAsyncScheduler;
+  lScheduler := TReverseScheduler.Create;
+  lTarget := TAutoSubDeferred.Create;
+  try
+    maxSetAsyncScheduler(lScheduler);
+    maxSetMainThreadPolicy(TmaxMainThreadPolicy.DegradeToAsync);
+    AutoSubscribe(lTarget);
+
+    lPostResult := PostGuidResultOffMain(maxBus, TIntEvent.Create(42));
+
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(lPostResult));
+    CheckEquals(1, lScheduler.AsyncCount);
+    CheckEquals(0, lTarget.GuidHits);
+
+    lScheduler.DrainAsyncReverse;
+
+    CheckEquals(1, lTarget.GuidHits);
+    CheckEquals(42, lTarget.LastGuidValue);
+  finally
+    lScheduler.DrainAsyncReverse;
+    lScheduler.DrainMainReverse;
+    AutoUnsubscribe(lTarget);
+    lTarget.Free;
+    maxSetMainThreadPolicy(TmaxMainThreadPolicy.DegradeToPosting);
+    maxSetAsyncScheduler(lPrevScheduler);
+    maxBus.Clear;
   end;
 end;
 

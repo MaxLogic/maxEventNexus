@@ -2,25 +2,12 @@
 Next task ID: T-1107
 
 ## Summary
-Open tasks: 1 (In Progress: 0, Next Today: 1, Next This Week: 0, Next Later: 0, Blocked: 0)
-Done tasks: 128
+Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
+Done tasks: 129
 
 ## In Progress
 
 ## Next – Today
-
-### T-1106 [API] Fix PostResult status for deferred AutoSubscribe-only delivery
-Outcome:
-- `PostResult<T>`, `PostResultNamedOf<T>`, and `PostResultGuidOf<T>` stop reporting `DispatchedInline` when the only effective receivers are `AutoSubscribe` handlers using non-`Posting` delivery modes.
-- Regression tests cover `AutoSubscribe` handlers with deferred delivery so the returned status matches spec section 4.3.
-Proof:
-- Run: `./build-and-run-tests.sh`
-  Expect: exit `0`, including new `PostResult*` + deferred `AutoSubscribe` regression coverage.
-- Run: `rg -n "PostResult.*AutoSubscribe|AutoSubscribe.*Async|AutoSubscribe.*Background|AutoSubscribe.*Main" tests/src/MaxEventNexus.Main.Tests.pas maxLogic.EventNexus.Core.pas`
-  Expect: exit `0`, runtime and tests both cover deferred auto-subscribed receiver status.
-Touches: maxLogic.EventNexus.Core.pas, tests/src/MaxEventNexus.Main.Tests.pas
-Verify: unit-test, cli-proof
-Notes: Spec section 4.3. `DispatchAutoBridge` can schedule non-`Posting` handlers, so `DispatchedInline` is not a correct result for those receiver-only paths.
 
 ## Next – This Week
 
@@ -38,6 +25,15 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1106 [API] Fix PostResult status for deferred AutoSubscribe-only delivery
+Summary: `PostResult<T>`, `PostResultNamedOf<T>`, and `PostResultGuidOf<T>` now return `Queued` for deferred-only auto-subscribed receivers instead of misreporting `DispatchedInline`.
+
+Details:
+- Added runtime-context-aware auto-bridge classification so `Async` always counts as deferred, while `Background` and `Main` only count as deferred when they really schedule instead of running inline in the current context.
+- Added typed `Async`, named `Background`-from-main, and GUID `Main`-off-main regressions proving deferred `AutoSubscribe` handlers now return `Queued` and do not run until the scheduler drains.
+- Proof: `./build-and-run-tests.sh` (exit `0`, including deferred `AutoSubscribe` `PostResult*` regressions and the normal analyzer/smoke gates).
+- Proof: `rg -n "PostResult.*AutoSubscribe|AutoSubscribe.*Async|AutoSubscribe.*Background|AutoSubscribe.*Main" tests/src/MaxEventNexus.Main.Tests.pas maxLogic.EventNexus.Core.pas` (exit `0`, runtime and tests both cover deferred auto-subscribed receiver status).
 
 ### T-1105 [TEST] Restore policy cleanup for post-Clear regression tests
 Summary: The post-`Clear` explicit-policy regressions no longer leak durable typed, named, or GUID queue policy into later shared-bus tests.
