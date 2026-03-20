@@ -238,7 +238,7 @@ That means a type preset now acts as the fallback default for named-of topics wh
 Recommendation:
 
 - Default to `MaxAsync` for lowest async latency and highest throughput on current Delphi targets.
-- Use `RawThread` when you want a minimal dependency chain and predictable behavior in constrained runtime environments.
+- Use `RawThread` when you want the scheduler to bypass the Delphi thread pool and run async/delayed work on dedicated `TThread` instances.
 - Use `TTask` when you explicitly want RTL-native scheduling semantics.
 - `MaxAsync` preserves async/delayed semantics on backend submission failure by falling back to dedicated-thread execution before any final inline safety net.
 

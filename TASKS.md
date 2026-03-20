@@ -2,28 +2,14 @@
 Next task ID: T-1117
 
 ## Summary
-Open tasks: 1 (In Progress: 0, Next Today: 0, Next This Week: 1, Next Later: 0, Blocked: 0)
-Done tasks: 138
+Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
+Done tasks: 139
 
 ## In Progress
 
 ## Next – Today
 
 ## Next – This Week
-
-### T-1116 [CORE] Replace RawThread TTask usage with dedicated TThread execution
-Outcome:
-- `maxLogic.EventNexus.Threading.RawThread` no longer uses `TTask.Run` for async or delayed execution
-- the RawThread adapter uses dedicated `TThread` execution so it does not consume the Delphi thread pool
-- docs and scheduler tests reflect the dedicated-thread RawThread contract
-Proof:
-- Run: `rg -n "TTask\\.Run" maxLogic.EventNexus.Threading.RawThread.pas`
-  Expect: exit=1, no TTask usage remains in the RawThread adapter
-- Run: `./build-and-run-tests.sh`
-  Expect: exit=0, including scheduler contract coverage for the RawThread adapter
-Touches: maxLogic.EventNexus.Threading.RawThread.pas, tests/src/MaxEventNexus.Scheduler.Tests.pas, README.md, DESIGN.md
-Verify: unit-test, cli-proof
-Notes: RawThread must avoid the Delphi thread pool so async/delayed fallback work cannot exhaust or contend with the RTL pool. Follow-up to `.agents/spec-gaps-review/2026-03-20_18-01-57.md`.
 
 ## Next – Later
 
@@ -39,6 +25,16 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1116 [CORE] Replace RawThread TTask usage with dedicated TThread execution
+Summary: Replaced the RawThread scheduler’s thread-pool-backed submission path with dedicated `TThread` creation and added scheduler coverage for that non-pool contract.
+
+Details:
+- Removed `TTask.Run` from `maxLogic.EventNexus.Threading.RawThread` and routed async/delayed submission through scheduler-owned `TThread` creation hooks.
+- Kept positive sub-millisecond delay rounding in the real runtime path by converting to milliseconds before worker-thread creation, then added `RawThreadRuntimeDelayConversionRoundsUpSubMillisecondWork` plus dedicated-thread creation coverage in `tests/src/MaxEventNexus.Scheduler.Tests.pas`.
+- Updated `README.md` and `DESIGN.md` so RawThread is documented as the non-pool dedicated-thread adapter rather than a thin RTL-pool fallback.
+- Proof: `rg -n "TTask\\.Run" maxLogic.EventNexus.Threading.RawThread.pas` (exit `1`, no TTask usage remains in the RawThread adapter).
+- Proof: `./build-and-run-tests.sh` (exit `0`, including the dedicated-thread RawThread scheduler regressions plus the normal analyzer/benchmark/API gates).
 
 ### T-1115 [TEST] Add bulk named and GUID failure aggregation regressions
 Summary: Added named-of and guid-of bulk dispatch regressions so merged `EmaxDispatchError` behavior is covered beyond the existing typed `PostMany<T>` fixture.

@@ -6,6 +6,7 @@
 - Clarified the `Clear` runtime-reset contract across the spec, README, and design notes so explicit queue policies, queue presets, coalescing selectors/windows, scheduler identity, and bus main-thread identity survive `Clear` while queued runtime state is dropped. (T-1110)
 - Clarified delayed-post failures as async-hook-only in the spec/README and added delayed no-hook regression coverage documenting that later failures are swallowed unless `maxSetAsyncErrorHandler` is installed. (T-1111)
 - `EmaxDispatchError.Details` now reports explicit subscriber kind metadata (`Unknown`, `Exact`, `Wildcard`), and wildcard failures use zero-based wildcard indexes instead of negative sentinel values. (T-1112)
+- `maxLogic.EventNexus.Threading.RawThread` now bypasses the Delphi thread pool and runs async/delayed work on dedicated `TThread` instances. (T-1116)
 - Clarified dispatch tracing semantics: `TraceEnqueue` is a topic-queue event, while `TraceInvoke*` carries per-subscriber delivery mode. (T-1103)
 - `bench/BenchHarness` now follows the supported Delphi bridge contract (`TmaxBus` / `maxBusObj(...)`) and ships with a maintained `bench/BenchHarness.dproj` build path. (T-1104)
 - Added root stress entrypoints `run-stress.sh` / `run-stress.bat` and a dedicated `--stress-suite` mode in the test binary for on-demand async/delayed/coalesce stress runs. (T-1087)
