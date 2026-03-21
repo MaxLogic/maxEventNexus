@@ -1,7 +1,8 @@
 # EventNexus
 
-## What's New (2026-03-20)
+## What's New (2026-03-21)
 
+- Refreshed the published isolated-process benchmark snapshot for Win32/Win64 async and posting profiles, and stabilized the framework benchmark smoke path around the final `SchedulerCompare` contract.
 - `Clear` now stays a runtime reset: explicit queue policies and coalescing configuration survive, while queued/pending runtime state is still dropped.
 - `PostResult<T>`, `PostResultNamedOf<T>`, and `PostResultGuidOf<T>` now report live `AutoSubscribe` handlers as real receivers instead of returning `NoTopic`.
 - Deferred-only `AutoSubscribe` handlers now make `PostResult<T>`, `PostResultNamedOf<T>`, and `PostResultGuidOf<T>` return `Queued` instead of misreporting `DispatchedInline`, with `Main`/`Background` decided from the actual runtime context.
@@ -21,7 +22,7 @@
 
 EventNexus is a type-safe event bus for Delphi 12+ with typed, named, and GUID topic routing, delivery-mode control, sticky cache, coalescing, and queue policies.
 
-## Performance and Scope Snapshot (2026-02-28)
+## Performance and Scope Snapshot (2026-03-21)
 
 The cross-library benchmark uses a deliberately small common surface (`subscribe + post`) across EventNexus, iPub, and EventHorizon.
 So raw speed numbers below do not include advanced features such as delayed posting, queue policies, tracing, or sticky/coalescing behavior.
@@ -30,34 +31,53 @@ Method:
 
 - Tool: `bench/SchedulerCompare.exe` with `bench/run-framework-isolated.sh`
 - Isolated-process medians (fresh process per sample)
-- Async profile: `--events=2000 --consumers=2 --runs=1 --delivery=async --max-inflight=64`
-- Successful samples per framework: `5` (retry budget `max-attempts=20`)
+- Async profile: `--events=2000 --consumers=2 --runs=1 --delivery=async --max-inflight=0`
+- Posting profile: `--events=2000 --consumers=2 --runs=1 --delivery=posting --max-inflight=0`
+- Successful samples per framework: `5` (retry budget `max-attempts=10`)
 - Platform lanes: Win32 and Win64
 
 Median async framework results (Win32):
 
 | Framework | Median avg us | Median throughput evt/s | Successful samples | Attempts |
 |---|---:|---:|---:|---:|
-| EventNexus(TTask-weak) | 30967 | 129169 | 5 | 5 |
-| EventNexus(TTask-strong) | 47795 | 83690 | 5 | 5 |
-| iPub | 44833 | 89219 | 5 | 5 |
-| EventHorizon | 46160 | 86655 | 5 | 6 |
+| EventNexus(TTask-weak) | 31003 | 129019 | 5 | 9 |
+| EventNexus(TTask-strong) | 18856 | 212134 | 5 | 5 |
+| iPub | 16493 | 242527 | 5 | 5 |
+| EventHorizon | 16267 | 245896 | 5 | 5 |
 
 Median async framework results (Win64):
 
 | Framework | Median avg us | Median throughput evt/s | Successful samples | Attempts |
 |---|---:|---:|---:|---:|
-| EventNexus(TTask-weak) | 34380 | 116346 | 5 | 5 |
-| EventNexus(TTask-strong) | 57959 | 69014 | 5 | 5 |
-| iPub | 27783 | 143972 | 5 | 5 |
-| EventHorizon | 44085 | 90733 | 5 | 6 |
+| EventNexus(TTask-weak) | 35768 | 111831 | 5 | 5 |
+| EventNexus(TTask-strong) | 23531 | 169988 | 5 | 6 |
+| iPub | 9431 | 424133 | 5 | 5 |
+| EventHorizon | 27335 | 146332 | 5 | 5 |
+
+Median posting framework results (Win32):
+
+| Framework | Median avg us | Median throughput evt/s | Successful samples | Attempts |
+|---|---:|---:|---:|---:|
+| EventNexus(TTask-weak) | 856 | 4672897 | 5 | 5 |
+| EventNexus(TTask-strong) | 783 | 5108556 | 5 | 5 |
+| iPub | 644 | 6211180 | 5 | 5 |
+| EventHorizon | 1687 | 2371072 | 5 | 5 |
+
+Median posting framework results (Win64):
+
+| Framework | Median avg us | Median throughput evt/s | Successful samples | Attempts |
+|---|---:|---:|---:|---:|
+| EventNexus(TTask-weak) | 996 | 4016064 | 5 | 5 |
+| EventNexus(TTask-strong) | 761 | 5256241 | 5 | 5 |
+| iPub | 608 | 6578947 | 5 | 5 |
+| EventHorizon | 1693 | 2362669 | 5 | 5 |
 
 Interpretation:
 
-- Win32 async: EventNexus weak is ahead of iPub in this run set; EventNexus strong is slightly behind iPub.
-- Win64 async: iPub is ahead of both EventNexus weak and EventNexus strong in this run set.
-- EventHorizon needed retries in both lanes (`wait-drain` transient failures), which is why we report successful-sample counts and attempt counts.
-- This update reports async-only medians; posting will be refreshed in a follow-up run with the same isolated-process method.
+- Win32 async: EventHorizon and iPub lead this run set; EventNexus strong is third, while EventNexus weak needed several retries before producing five successful samples.
+- Win64 async: iPub leads, EventNexus strong is second, EventHorizon is third, and EventNexus weak is fourth; EventNexus strong needed one retry to complete the sample set.
+- Posting lanes: iPub leads both lanes, EventNexus strong is second in both lanes, EventNexus weak is third, and EventHorizon is slowest.
+- RawThread is intentionally absent from the cross-framework tables: those rows keep EventNexus on the same `subscribe + post` TTask-backed surface as the comparison libraries, while RawThread remains our dedicated-thread non-pool scheduler when we want isolation from the Delphi thread pool.
 
 Feature scope beyond baseline pub/sub:
 
@@ -299,7 +319,7 @@ maxSetMetricCallback(
 - Stress runner: `./run-stress.sh`
 - Binary: `tests/MaxEventNexusTests.exe`
 - Coverage depth (current suite): the DUnitX compatibility fixture executes the active published-method regression suite from `tests/src`, including dedicated scheduler-contract coverage.
-- Default verification also runs a lightweight `bench/SchedulerCompare` smoke profile and validates the documented benchmark CSV contract.
+- Default verification also runs a lightweight `bench/SchedulerCompare` smoke profile plus a framework-only async smoke, and validates the documented benchmark CSV contract.
 - Diagnostics policy gate: build scripts enforce `build/diagnostics-policy.regex` and fail on untriaged warnings/hints.
 - API coverage proxy: `./build/report-api-test-coverage.sh --enforce-target` (target in `build/api-test-coverage-target.txt`, report in `build/analysis/test-api-coverage.md`).
 

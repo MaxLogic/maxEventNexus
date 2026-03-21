@@ -74,6 +74,12 @@ bench\SchedulerCompare.exe --events=200 --consumers=1 --runs=1 --delivery=async 
 build\check-benchmark-smoke.bat build\analysis\benchmark-smoke.csv
 ```
 
+Framework-only async smoke:
+
+```batch
+build\run-framework-benchmark-smoke.bat
+```
+
 Output contract (clock source, percentile method, CSV schema):
 
 - `docs/benchmarks/benchmark-output-contract.md`
@@ -87,7 +93,7 @@ Threshold gate (pass/fail, scheduler rows only):
 Isolated-process framework medians (fresh process per sample):
 
 ```bash
-./bench/run-framework-isolated.sh --delivery=async --events=2000 --consumers=2 --samples=9 --platform=Win32
+./bench/run-framework-isolated.sh --delivery=async --events=2000 --consumers=2 --samples=9 --platform=Win32 --max-inflight=0
 ```
 
 This runner executes one framework row per process (`--skip-schedulers --framework=<token> --runs=1`) and writes a summary CSV with median `avg_us` and median throughput.

@@ -1,9 +1,9 @@
 # Tasks
-Next task ID: T-1117
+Next task ID: T-1119
 
 ## Summary
 Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
-Done tasks: 139
+Done tasks: 141
 
 ## In Progress
 
@@ -25,6 +25,33 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1118 [BENCH] Fix framework benchmark teardown and stable profile
+Summary: Stabilized the framework-only `SchedulerCompare` path so raw weak/strong async profile commands exit cleanly, the default verification flow includes a framework-only async smoke, and the isolated runner uses per-process timeout/cleanup instead of global image kills.
+
+Details:
+- Updated `bench/SchedulerCompare.dpr` so the framework benchmark bus tears down deterministically for benchmark-only process scope, and successful framework-only runs now terminate via `ExitProcess(0)` after writing results.
+- Added `build/run-framework-benchmark-smoke.bat` and `build/run-framework-benchmark-smoke.sh`, extended `build/check-benchmark-smoke.*` with a `framework-only` mode, and wired that smoke into `build-and-run-tests.bat`.
+- Updated `bench/run-framework-isolated.sh` to launch each sample through a per-process PowerShell wrapper with timeout control, avoiding hangs and avoiding destructive image-name cleanup.
+- Proof: `timeout 30s /mnt/c/Windows/System32/cmd.exe /C "cd /d F:\projects\MaxLogic\maxEventNexus && bench\SchedulerCompare.exe --skip-schedulers --framework=weak --events=2000 --consumers=2 --runs=1 --delivery=async --max-inflight=0 --csv=build\analysis\weak-async-2000.csv"` (exit `0`, framework row emitted).
+- Proof: `timeout 30s /mnt/c/Windows/System32/cmd.exe /C "cd /d F:\projects\MaxLogic\maxEventNexus && bench\SchedulerCompare.exe --skip-schedulers --framework=strong --events=2000 --consumers=2 --runs=1 --delivery=async --max-inflight=0 --csv=build\analysis\strong-async-2000.csv"` (exit `0`, framework row emitted).
+- Proof: `./build/run-framework-benchmark-smoke.sh` (exit `0`, framework-only smoke passes).
+- Proof: `./bench/run-framework-isolated.sh --delivery=async --events=2000 --consumers=2 --samples=3 --platform=Win32 --max-inflight=0 --out=build/analysis/bench-async-win32-smoke.csv` (exit `0`, summary CSV emitted).
+- Proof: `./build-and-run-tests.sh` (exit `0`, including the framework-only async smoke path).
+
+### T-1117 [BENCH] Refresh published isolated benchmark snapshot
+Summary: Refreshed the published isolated-process benchmark snapshot in `README.md` with current Win32/Win64 async and posting medians, removed the stale posting follow-up note, and documented RawThread as the dedicated-thread non-pool scheduler rather than a throughput-baseline comparison row.
+
+Details:
+- Re-ran isolated-process framework medians for async and posting delivery on Win32 and Win64 with `--max-inflight=0` and `--max-attempts=10`, writing the final CSVs under `build/analysis/`.
+- Updated the README performance snapshot to the new 2026-03-21 run set, including both posting tables and the actual retry counts from the final isolated runs.
+- Updated `bench/readme.md` to document the framework-only async smoke and the maintained isolated runner command with `--max-inflight=0`.
+- Proof: `./bench/run-framework-isolated.sh --delivery=async --events=2000 --consumers=2 --samples=5 --max-attempts=10 --platform=Win32 --max-inflight=0 --out=build/analysis/bench-async-win32.csv` (exit `0`, four framework rows emitted).
+- Proof: `./bench/run-framework-isolated.sh --delivery=async --events=2000 --consumers=2 --samples=5 --max-attempts=10 --platform=Win64 --max-inflight=0 --out=build/analysis/bench-async-win64.csv` (exit `0`, four framework rows emitted).
+- Proof: `./bench/run-framework-isolated.sh --delivery=posting --events=2000 --consumers=2 --samples=5 --max-attempts=10 --platform=Win32 --max-inflight=0 --out=build/analysis/bench-posting-win32.csv` (exit `0`, four framework rows emitted).
+- Proof: `./bench/run-framework-isolated.sh --delivery=posting --events=2000 --consumers=2 --samples=5 --max-attempts=10 --platform=Win64 --max-inflight=0 --out=build/analysis/bench-posting-win64.csv` (exit `0`, four framework rows emitted).
+- Proof: `rg -n "Performance and Scope Snapshot|Median async framework results|Median posting framework results|RawThread" README.md` (exit `0`, refreshed snapshot and RawThread positioning present).
+- Proof: `rg -n "follow-up run" README.md` (exit `1`, stale note removed).
 
 ### T-1116 [CORE] Replace RawThread TTask usage with dedicated TThread execution
 Summary: Replaced the RawThread scheduler’s thread-pool-backed submission path with dedicated `TThread` creation and added scheduler coverage for that non-pool contract.
