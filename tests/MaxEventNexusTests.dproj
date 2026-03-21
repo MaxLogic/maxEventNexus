@@ -93,7 +93,7 @@
         <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
         <Icon_MainIcon>$(BDS)\bin\delphi_PROJECTICON.ico</Icon_MainIcon>
         <Icns_MainIcns>$(BDS)\bin\delphi_PROJECTICNS.icns</Icns_MainIcns>
-        <DCC_UnitSearchPath>..\;..\lib\maxlogicfoundation;..\lib\mORMot2\src;..\lib\mORMot2\src\core;..\lib\mORMot2\src\..\lub;..\lib\mORMot2\src\misc;..\lib\mORMot2\src\net;..\lib\mORMot2\src\rest;..\lib\mORMot2\src\script;..\lib\mORMot2\src\tools;..\lib\mORMot2\src\db;..\lib\mORMot2\src\lib;..\lib\mORMot2\src\crypt;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_UnitSearchPath>..\;..\lib\maxlogicfoundation;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
         <DCC_ConsoleTarget>true</DCC_ConsoleTarget>
         <CfgDependentOn>..\..\MaxLogicFoundation\MaxLogicDefault.optset</CfgDependentOn>
     </PropertyGroup>

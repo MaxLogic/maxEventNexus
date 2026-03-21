@@ -1,9 +1,9 @@
 # Tasks
-Next task ID: T-1119
+Next task ID: T-1120
 
 ## Summary
 Open tasks: 0 (In Progress: 0, Next Today: 0, Next This Week: 0, Next Later: 0, Blocked: 0)
-Done tasks: 141
+Done tasks: 142
 
 ## In Progress
 
@@ -25,6 +25,17 @@ Details:
 - Prefer short callouts in README and defer deep details to `spec.md` / `DESIGN.md`.
 
 ## Done
+
+### T-1119 [BUILD] Remove unused mORMot2 submodule
+Summary: Removed the unused `mORMot2` submodule, scrubbed stale Delphi project search paths that still referenced it, and dropped the leftover README note that described it as part of the maintained build surface.
+
+Details:
+- Verified the repo had no active source imports of `mORMot2`; remaining references were limited to the git submodule entry, `.dproj` search paths, and one README bullet.
+- Removed the `lib/mORMot2` submodule from `.gitmodules`, deleted the tracked gitlink and local submodule metadata, and removed stale `mORMot2` search paths from maintained sample, benchmark, and test project files.
+- Updated `README.md` so the explicit group-build search-path note now refers only to shared foundation units.
+- Proof: `git submodule status --recursive` (no `lib/mORMot2` entry remains).
+- Proof: `rg -n -i 'mormot2|mormot' . --glob '!TASKS.md' --glob '!TASKS.ARCHIVE.md' --glob '!CHANGELOG.md' --glob '!lib/mORMot2/**'` (exit `1`, no active repo references remain).
+- Proof: `./build-and-run-tests.sh` (exit `0`).
 
 ### T-1118 [BENCH] Fix framework benchmark teardown and stable profile
 Summary: Stabilized the framework-only `SchedulerCompare` path so raw weak/strong async profile commands exit cleanly, the default verification flow includes a framework-only async smoke, and the isolated runner uses per-process timeout/cleanup instead of global image kills.

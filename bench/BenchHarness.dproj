@@ -79,7 +79,7 @@
         <Base>true</Base>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base)'!=''">
-        <DCC_UnitSearchPath>..\;..\lib\maxlogicfoundation;..\lib\mORMot2\src;..\lib\mORMot2\src\core;..\lib\mORMot2\src\misc;..\lib\mORMot2\src\net;..\lib\mORMot2\src\rest;..\lib\mORMot2\src\script;..\lib\mORMot2\src\tools;..\lib\mORMot2\src\db;..\lib\mORMot2\src\lib;..\lib\mORMot2\src\crypt;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_UnitSearchPath>..\;..\lib\maxlogicfoundation;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
         <DCC_E>false</DCC_E>
         <DCC_F>false</DCC_F>
         <DCC_K>false</DCC_K>

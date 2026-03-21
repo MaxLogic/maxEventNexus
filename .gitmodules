@@ -1,6 +1,3 @@
-[submodule "lib/mORMot2"]
-	path = lib/mORMot2
-	url = https://github.com/synopse/mORMot2.git
 [submodule "lib/MaxLogicFoundation"]
 	path = lib/MaxLogicFoundation
 	url = https://github.com/MaxLogic/MaxLogicFoundation.git

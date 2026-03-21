@@ -13,7 +13,7 @@
 - Delphi AutoSubscribe one-parameter attributed handlers now bind correctly for typed, named, and GUID topics.
 - Test/CI scripts enforce diagnostics policy (`build/diagnostics-policy.regex`) so untriaged warnings/hints fail the build.
 - Async benchmark profile is stabilized (bounded queue/in-flight guards + scheduler submission fallbacks), with CSV contract rows remaining `status=ok`.
-- Sample and benchmark projects now carry explicit unit search paths for shared foundation/mORMot units in group builds.
+- Sample and benchmark projects now carry explicit unit search paths for shared foundation units in group builds.
 - Queue policy preset defaults/overrides and lock-free posting behavior are documented for typed, named, and GUID topics.
 - Added delayed posting APIs (`PostDelayed*`) with cancel/pending handle semantics.
 - Reduced static-analysis top debt again (`C101=20`, `C103=14`) with test-fixture refactors and no public API changes.
