@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Changed
+- Refreshed the README benchmark snapshot with current isolated Win32/Win64 async and posting framework medians, switched the published framework profile to `--max-inflight=0`, and documented RawThread as the dedicated-thread non-pool scheduler rather than a cross-framework throughput baseline. (T-1117)
+- Default verification now includes a framework-only async benchmark smoke, and `SchedulerCompare` framework-only runs now exit cleanly under the published `--max-inflight=0` profile. (T-1118)
 - Clarified the `Clear` runtime-reset contract across the spec, README, and design notes so explicit queue policies, queue presets, coalescing selectors/windows, scheduler identity, and bus main-thread identity survive `Clear` while queued runtime state is dropped. (T-1110)
 - Clarified delayed-post failures as async-hook-only in the spec/README and added delayed no-hook regression coverage documenting that later failures are swallowed unless `maxSetAsyncErrorHandler` is installed. (T-1111)
 - `EmaxDispatchError.Details` now reports explicit subscriber kind metadata (`Unknown`, `Exact`, `Wildcard`), and wildcard failures use zero-based wildcard indexes instead of negative sentinel values. (T-1112)

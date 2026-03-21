@@ -129,7 +129,6 @@ if [[ -z "$lOutPath" ]]; then
 fi
 
 lRootWin="$(wslpath -w -a "$lRootDir")"
-lExeWinRel="${lExePath//\//\\}"
 
 framework_tokens=(weak strong ipub eventhorizon)
 declare -A lNameByToken
@@ -173,12 +172,15 @@ for lFramework in "${framework_tokens[@]}"; do
   while (( lSuccess < lSamples )) && (( lAttempt < lMaxAttempts )); do
     ((lAttempt += 1))
     lCsvRel="bench/scheduler-${lDelivery}-isolated-${lFramework}-${lPlatform,,}-$(printf '%02d' "$lAttempt").csv"
-    lCsvWinRel="${lCsvRel//\//\\}"
+    lCsvWin="$(wslpath -w -a "$lRootDir/$lCsvRel")"
+    lExeWin="$(wslpath -w -a "$lRootDir/$lExePath")"
 
-    /mnt/c/Windows/System32/cmd.exe /C "cd /d $lRootWin && $lExeWinRel --skip-schedulers --framework=$lFramework --events=$lEvents --consumers=$lConsumers --runs=1 --delivery=$lDelivery --max-inflight=$lMaxInflight --csv=$lCsvWinRel" >/tmp/framework-isolated-run.log 2>&1 || {
+    if ! /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
+      "\$ErrorActionPreference = 'Stop'; \$lExe = '$lExeWin'; \$lArgs = @('--skip-schedulers','--framework=$lFramework','--events=$lEvents','--consumers=$lConsumers','--runs=1','--delivery=$lDelivery','--max-inflight=$lMaxInflight','--csv=$lCsvWin'); \$lProc = Start-Process -FilePath \$lExe -ArgumentList \$lArgs -WorkingDirectory '$lRootWin' -PassThru -NoNewWindow; if (-not \$lProc.WaitForExit(30000)) { \$lProc.Kill(); \$lProc.WaitForExit(); exit 124 }; exit \$lProc.ExitCode" \
+      >/tmp/framework-isolated-run.log 2>&1; then
       echo "sample failed to execute: framework=$lFramework attempt=$lAttempt" >&2
       continue
-    }
+    fi
 
     lStatus="$(csv_value_for_column "$lCsvRel" "status")"
     lAvgUs="$(csv_value_for_column "$lCsvRel" "avg_us")"

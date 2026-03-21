@@ -4,6 +4,7 @@ program SchedulerCompare;
 
 uses
   Classes, SysUtils, SyncObjs,
+  Winapi.Windows,
   System.Diagnostics, System.Generics.Collections, System.Math, System.StrUtils, System.Threading,
   iPub.Rtl.Messaging,
   NX.Horizon,
@@ -58,6 +59,17 @@ type
   public
     constructor Create(const aCallback: TFrameworkCallback);
     procedure Handle(const aEvent: IBenchmarkEvent);
+  end;
+
+  TFrameworkRunState = class
+  private
+    fDone: TEvent;
+    fRemaining: Integer;
+    fRemainingLock: TCriticalSection;
+  public
+    constructor Create(aDone: TEvent; aRemainingLock: TCriticalSection; aRemaining: Integer);
+    procedure Handle(const aEvent: IBenchmarkEvent);
+    function Remaining: Integer;
   end;
 
   TEventNexusFrameworkBus = class(TInterfacedObject, IFrameworkBus)
@@ -157,6 +169,43 @@ begin
   end;
 end;
 
+constructor TFrameworkRunState.Create(aDone: TEvent; aRemainingLock: TCriticalSection; aRemaining: Integer);
+begin
+  inherited Create;
+  fDone := aDone;
+  fRemainingLock := aRemainingLock;
+  fRemaining := aRemaining;
+end;
+
+procedure TFrameworkRunState.Handle(const aEvent: IBenchmarkEvent);
+begin
+  if aEvent <> nil then
+  begin
+    aEvent.GetValue;
+  end;
+
+  fRemainingLock.Enter;
+  try
+    Dec(fRemaining);
+    if fRemaining = 0 then
+    begin
+      fDone.SetEvent;
+    end;
+  finally
+    fRemainingLock.Leave;
+  end;
+end;
+
+function TFrameworkRunState.Remaining: Integer;
+begin
+  fRemainingLock.Enter;
+  try
+    Result := fRemaining;
+  finally
+    fRemainingLock.Leave;
+  end;
+end;
+
 function DeliveryToIpub(aDelivery: TmaxDelivery): TipMessagingThread;
 begin
   case aDelivery of
@@ -188,7 +237,9 @@ begin
   fUseStrongSubscriptions := aUseStrongSubscriptions;
   fBus := TmaxBus.Create(CreateTTaskScheduler);
   fSubscriptions := TList<ImaxSubscription>.Create;
-  fConsumers := TObjectList<TFrameworkConsumer>.Create(True);
+  // Framework benchmark runs are process-scoped; keeping consumer objects alive
+  // until process exit avoids async teardown races against late worker callbacks.
+  fConsumers := TObjectList<TFrameworkConsumer>.Create(False);
 end;
 
 destructor TEventNexusFrameworkBus.Destroy;
@@ -196,6 +247,7 @@ begin
   Clear;
   fConsumers.Free;
   fSubscriptions.Free;
+  fBus.Free;
   inherited;
 end;
 
@@ -228,8 +280,11 @@ begin
   begin
     lSubscription.Unsubscribe;
   end;
+  if fBus <> nil then
+  begin
+    fBus.Clear;
+  end;
   fSubscriptions.Clear;
-  fConsumers.Clear;
 end;
 
 constructor TiPubFrameworkBus.Create(aDelivery: TmaxDelivery);
@@ -728,9 +783,9 @@ var
   lI: Integer;
   lPhase: string;
   lPostedDeliveries: Int64;
-  lRemaining: Integer;
   lRemainingLock: TCriticalSection;
   lRun: Integer;
+  lState: TFrameworkRunState;
   lTotalExpected: Int64;
   lWatch: TStopwatch;
 begin
@@ -740,35 +795,18 @@ begin
     lBus := aEntry.Factory(aCfg.Delivery);
     lDone := TEvent.Create(nil, True, False, '');
     lRemainingLock := TCriticalSection.Create;
+    lState := nil;
     lPhase := 'setup';
     try
       try
-        lRemaining := aCfg.Events * aCfg.Consumers;
         lTotalExpected := Int64(aCfg.Events) * aCfg.Consumers;
+        lState := TFrameworkRunState.Create(lDone, lRemainingLock, aCfg.Events * aCfg.Consumers);
         lPostedDeliveries := 0;
 
         lPhase := 'subscribe';
         for lI := 1 to aCfg.Consumers do
         begin
-          lBus.Subscribe(
-            procedure(const aEvent: IBenchmarkEvent)
-            begin
-              if aEvent <> nil then
-              begin
-                aEvent.GetValue;
-              end;
-
-              lRemainingLock.Enter;
-              try
-                Dec(lRemaining);
-                if lRemaining = 0 then
-                begin
-                  lDone.SetEvent;
-                end;
-              finally
-                lRemainingLock.Leave;
-              end;
-            end);
+          lBus.Subscribe(lState.Handle);
         end;
 
         lPhase := 'post';
@@ -779,12 +817,7 @@ begin
           begin
             while True do
             begin
-              lRemainingLock.Enter;
-              try
-                lInFlight := lPostedDeliveries - (lTotalExpected - lRemaining);
-              finally
-                lRemainingLock.Leave;
-              end;
+              lInFlight := lPostedDeliveries - (lTotalExpected - lState.Remaining);
               if lInFlight < aCfg.MaxInFlight then
               begin
                 Break;
@@ -798,7 +831,7 @@ begin
         end;
 
         lPhase := 'wait-drain';
-        if (lRemaining > 0) and (not WaitForSignal(lDone, 180000)) then
+        if (lState.Remaining > 0) and (not WaitForSignal(lDone, 180000)) then
         begin
           raise Exception.CreateFmt('%s failed to drain queue on run %d', [aEntry.Name, lRun + 1]);
         end;
@@ -823,8 +856,12 @@ begin
         lBus.Clear;
       end;
       lBus := nil;
-      lRemainingLock.Free;
-      lDone.Free;
+      if aCfg.Delivery = TmaxDelivery.Posting then
+      begin
+        lState.Free;
+        lRemainingLock.Free;
+        lDone.Free;
+      end;
     end;
   end;
 end;
@@ -1073,6 +1110,7 @@ end;
 begin
   try
     Run;
+    ExitProcess(0);
   except
     on E: Exception do
     begin
