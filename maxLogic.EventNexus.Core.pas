@@ -5,7 +5,7 @@ interface
 uses
   Classes, SysUtils,
   System.Diagnostics, System.Generics.Collections, System.Generics.Defaults, System.SyncObjs, System.TypInfo, System.Rtti,
-  maxLogic.EventNexus.Threading.Adapter;
+  maxLogic.EventNexus.Mailbox, maxLogic.EventNexus.Threading.Adapter;
 
 const
   max_BUS_VERSION = '1.1.0';
@@ -329,6 +329,8 @@ type
 
   TTypedSubscriber<t> = record
     Handler: TmaxProcOf<t>;
+    Mailbox: ImaxMailbox;
+    MailboxInternal: ImaxBusMailbox;
     Mode: TmaxDelivery;
     Token: TmaxSubscriptionToken;
     Target: TmaxWeakTarget;
@@ -390,7 +392,8 @@ type
   public
     constructor Create;
     function Add(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery; out aState: ImaxSubscriptionState;
-      const aTarget: TObject = nil; aTrackWeakTarget: boolean = True): TmaxSubscriptionToken;
+      const aTarget: TObject = nil; aTrackWeakTarget: boolean = True; const aMailbox: ImaxMailbox = nil;
+      const aMailboxInternal: ImaxBusMailbox = nil): TmaxSubscriptionToken;
     procedure RemoveByToken(aToken: TmaxSubscriptionToken);
     function Snapshot: TArray<TTypedSubscriber<t>>;
     function SnapshotAndTryBeginDirectDispatch(out aSubs: TArray<TTypedSubscriber<t>>): boolean;
@@ -446,6 +449,23 @@ type
       SubscriberIndex: integer;
     end;
 
+    TMailboxTypedDispatchItem<T> = class(TInterfacedObject, ImaxMailboxWorkItem)
+    private
+      fGeneration: Int64;
+      fHandler: TmaxProcOf<T>;
+      fOwner: TObject;
+      fStateObj: TmaxSubscriptionState;
+      fToken: TmaxSubscriptionToken;
+      fTopic: TTypedTopic<T>;
+      fValue: T;
+    public
+      constructor Create(const aOwner: TObject; aGeneration: Int64; const aTopic: TTypedTopic<T>;
+        const aHandler: TmaxProcOf<T>; const aValue: T; aToken: TmaxSubscriptionToken;
+        const aStateObj: TmaxSubscriptionState);
+      function ShouldPurge(const aOwner: TObject; aGeneration: Int64): Boolean;
+      function Invoke: Boolean;
+    end;
+
     TDeferredBatchRunner<T> = class(TInterfacedObject)
     private
       fKeepAlive: IInterface;
@@ -495,10 +515,14 @@ type
 		    fAutoSubsLock: TmaxMonitorObject;
 		    fAutoSubs: TmaxAutoSubDict;
         fAutoBridgeLock: TmaxMonitorObject;
-		    fAutoBridgeSubs: TObjectList<TmaxAutoBridgeEntry>;
+        fAutoBridgeSubs: TObjectList<TmaxAutoBridgeEntry>;
         fAutoBridgeCount: integer;
         fAutoBridgeNextToken: TmaxSubscriptionToken;
         fDelayedPostEpoch: Int64;
+        fMailboxClearActive: Integer;
+        fMailboxGeneration: Int64;
+        fMailboxLock: TmaxMonitorObject;
+        fMailboxes: TList<TmaxWeakTarget>;
         fTypedHotStamp: integer;
         fTypedHotKey: PTypeInfo;
         fTypedHotTopic: TmaxTopicBase;
@@ -528,6 +552,9 @@ type
             const aPresetTypes: TmaxPresetDictOfTypeInfo; const aNameKey: TmaxString;
             const aTypeKey: PTypeInfo): TmaxQueuePreset; static;
           function GuidForType(const aTypeKey: PTypeInfo): TGuid;
+          function CurrentMailboxGeneration: Int64;
+          procedure RegisterMailbox(const aMailbox: ImaxBusMailbox);
+          function SnapshotMailboxes: TArray<ImaxBusMailbox>;
 			    function AddNamedWildcard(const aPattern: TmaxString; const aPrefix: TmaxString; const aHandler: TmaxProc;
 			      aMode: TmaxDelivery; out aState: ImaxSubscriptionState): TmaxSubscriptionToken;
 			    procedure RemoveNamedWildcardByToken(aToken: TmaxSubscriptionToken);
@@ -571,8 +598,9 @@ type
 	    procedure SetQueuePresetForType(const aKey: PTypeInfo; aPreset: TmaxQueuePreset);
 	    procedure SetQueuePresetNamed(const aNameKey: TmaxString; aPreset: TmaxQueuePreset);
 	    procedure SetQueuePresetGuid(const aGuid: TGuid; aPreset: TmaxQueuePreset);
-	    function Subscribe<t>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
-	    function Subscribe<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
+    function Subscribe<t>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
+    function Subscribe<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
+    function SubscribeIn<t>(const aMailbox: ImaxMailbox; const aHandler: TmaxProcOf<t>): ImaxSubscription;
     function SubscribeStrong<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
 	    procedure Post<t>(const aEvent: t);
 	    function TryPost<t>(const aEvent: t): boolean; overload;
@@ -2241,7 +2269,7 @@ var
   lIdx: integer;
 begin
   for lIdx := 0 to High(fSubs) do
-    if fSubs[lIdx].Mode <> Posting then
+    if (fSubs[lIdx].Mode <> Posting) or (fSubs[lIdx].MailboxInternal <> nil) then
     begin
       TInterlocked.Exchange(fHasDeferredFast, 1);
       Exit;
@@ -2291,7 +2319,8 @@ begin
 end;
 
 function TTypedTopic<t>.Add(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery; out aState: ImaxSubscriptionState;
-  const aTarget: TObject = nil; aTrackWeakTarget: boolean = True): TmaxSubscriptionToken;
+  const aTarget: TObject = nil; aTrackWeakTarget: boolean = True; const aMailbox: ImaxMailbox = nil;
+  const aMailboxInternal: ImaxBusMailbox = nil): TmaxSubscriptionToken;
 var
   lNew: TArray<TTypedSubscriber<t>>;
   lSub: TTypedSubscriber<t>;
@@ -2309,6 +2338,8 @@ begin
       lSub.Target := TmaxWeakTarget.Create(aTarget) // store weak target when available (object-method overload)
     else
       lSub.Target := TmaxWeakTarget.CreateStrong(aTarget);
+    lSub.Mailbox := aMailbox;
+    lSub.MailboxInternal := aMailboxInternal;
     lStateObj := TmaxSubscriptionState.Create;
     lSub.State := lStateObj;
     lSub.StateObj := lStateObj;
@@ -2318,7 +2349,7 @@ begin
     SetLength(lNew, length(lNew) + 1);
     lNew[High(lNew)] := lSub;
     fSubs := lNew;
-    if aMode <> Posting then
+    if (aMode <> Posting) or (aMailboxInternal <> nil) then
       TInterlocked.Exchange(fHasDeferredFast, 1);
     Inc(fSubsVersion);
     Result := lSub.Token;
@@ -3403,6 +3434,56 @@ begin
     end;
 end;
 
+{ TMailboxTypedDispatchItem<T> }
+
+constructor TMailboxTypedDispatchItem<T>.Create(const aOwner: TObject; aGeneration: Int64;
+  const aTopic: TTypedTopic<T>; const aHandler: TmaxProcOf<T>; const aValue: T; aToken: TmaxSubscriptionToken;
+  const aStateObj: TmaxSubscriptionState);
+begin
+  inherited Create;
+  fGeneration := aGeneration;
+  fHandler := aHandler;
+  fOwner := aOwner;
+  fStateObj := aStateObj;
+  fToken := aToken;
+  fTopic := aTopic;
+  fValue := aValue;
+end;
+
+function TMailboxTypedDispatchItem<T>.ShouldPurge(const aOwner: TObject; aGeneration: Int64): Boolean;
+begin
+  Result := (fOwner = aOwner) and (fGeneration < aGeneration);
+end;
+
+function TMailboxTypedDispatchItem<T>.Invoke: Boolean;
+begin
+  Result := False;
+  if (fStateObj <> nil) and (not fStateObj.TryEnter) then
+    Exit;
+
+  try
+    try
+      fHandler(fValue);
+      fTopic.AddDelivered(1);
+      Result := True;
+    except
+      on e: Exception do
+      begin
+        fTopic.AddException;
+        if (e is EAccessViolation) or (e is EInvalidPointer) then
+        begin
+          fTopic.RemoveByToken(fToken);
+          Exit(False);
+        end;
+        raise;
+      end;
+    end;
+  finally
+    if fStateObj <> nil then
+      fStateObj.Leave;
+  end;
+end;
+
 { TDeferredBatchRunner<T> }
 
 constructor TDeferredBatchRunner<T>.Create(const aBus: TmaxBus; const aTopicName: TmaxString;
@@ -4085,6 +4166,7 @@ var
   lBox: TInvokeBox<t>;
   lDeliveredCount: integer;
   lHasDeferred: boolean;
+  lMailboxGeneration: Int64;
 begin
   lErrs := nil;
   lErrDetails := nil;
@@ -4099,7 +4181,7 @@ begin
   begin
     for i := 0 to High(aSubs) do
     begin
-      if aSubs[i].Mode <> Posting then
+      if (aSubs[i].Mode <> Posting) or (aSubs[i].MailboxInternal <> nil) then
         Continue;
       lHandler := aSubs[i].Handler;
       lToken := aSubs[i].Token;
@@ -4210,6 +4292,39 @@ begin
     // Pass 2: deferred subscribers (Main/Async/Background).
     for i := 0 to High(aSubs) do
     begin
+      if aSubs[i].MailboxInternal <> nil then
+      begin
+        lHandler := aSubs[i].Handler;
+        lToken := aSubs[i].Token;
+        lMailboxGeneration := CurrentMailboxGeneration;
+
+        if TInterlocked.CompareExchange(fMailboxClearActive, 0, 0) <> 0 then
+        begin
+          aTopic.AddDropped;
+          Continue;
+        end;
+
+        if not aSubs[i].Target.IsAlive then
+        begin
+          aTopic.RemoveByToken(lToken);
+          Continue;
+        end;
+
+        if not aSubs[i].MailboxInternal.TryPostItem(
+          TMailboxTypedDispatchItem<t>.Create(Self, lMailboxGeneration, aTopic, lHandler, aValue, lToken,
+            aSubs[i].StateObj)) then
+        begin
+          aTopic.RemoveByToken(lToken);
+          aTopic.AddDropped;
+          Continue;
+        end;
+
+        if (TInterlocked.CompareExchange(fMailboxClearActive, 0, 0) <> 0) or
+          (CurrentMailboxGeneration <> lMailboxGeneration) then
+          aSubs[i].MailboxInternal.PurgeOwner(Self, CurrentMailboxGeneration);
+        Continue;
+      end;
+
       lMode := aSubs[i].Mode;
       if lMode = Posting then
         Continue;
@@ -4382,6 +4497,64 @@ begin
   end;
 end;
 
+function TmaxBus.CurrentMailboxGeneration: Int64;
+begin
+  Result := TInterlocked.Read(fMailboxGeneration);
+end;
+
+// Register mailbox instances so Clear can purge queued bus-owned mailbox work.
+procedure TmaxBus.RegisterMailbox(const aMailbox: ImaxBusMailbox);
+var
+  lIdx: Integer;
+  lMailboxObj: TObject;
+begin
+  if aMailbox = nil then
+    Exit;
+
+  lMailboxObj := aMailbox.GetObject;
+  if lMailboxObj = nil then
+    Exit;
+
+  TMonitor.Enter(fMailboxLock);
+  try
+    for lIdx := 0 to fMailboxes.Count - 1 do
+      if fMailboxes[lIdx].IsAlive and fMailboxes[lIdx].Matches(lMailboxObj) then
+        Exit;
+    fMailboxes.Add(TmaxWeakTarget.Create(lMailboxObj));
+  finally
+    TMonitor.Exit(fMailboxLock);
+  end;
+end;
+
+function TmaxBus.SnapshotMailboxes: TArray<ImaxBusMailbox>;
+var
+  lIdx: Integer;
+  lMailbox: ImaxBusMailbox;
+  lMailboxObj: TObject;
+  lOut: Integer;
+begin
+  TMonitor.Enter(fMailboxLock);
+  try
+    SetLength(Result, fMailboxes.Count);
+    lOut := 0;
+    for lIdx := 0 to fMailboxes.Count - 1 do
+    begin
+      if not fMailboxes[lIdx].IsAlive then
+        Continue;
+
+      lMailboxObj := fMailboxes[lIdx].Raw;
+      if (lMailboxObj <> nil) and Supports(lMailboxObj, ImaxBusMailbox, lMailbox) then
+      begin
+        Result[lOut] := lMailbox;
+        Inc(lOut);
+      end;
+    end;
+    SetLength(Result, lOut);
+  finally
+    TMonitor.Exit(fMailboxLock);
+  end;
+end;
+
 { TmaxBus }
 
 constructor TmaxBus.Create(const aAsync: IEventNexusScheduler);
@@ -4415,6 +4588,10 @@ begin
   fAutoBridgeCount := 0;
   fAutoBridgeNextToken := 1;
   fDelayedPostEpoch := 0;
+  fMailboxClearActive := 0;
+  fMailboxGeneration := 0;
+  fMailboxLock := TmaxMonitorObject.Create;
+  fMailboxes := TList<TmaxWeakTarget>.Create;
   fTypedHotStamp := 0;
   fTypedHotKey := nil;
   fTypedHotTopic := nil;
@@ -4527,6 +4704,8 @@ begin
   fAutoBridgeLock.Free;
   fAutoSubs.Free;
   fAutoSubsLock.Free;
+  fMailboxes.Free;
+  fMailboxLock.Free;
   fNamedWildcardLock.Free;
   fGuidLock.Free;
   fNamedTypedLock.Free;
@@ -4940,6 +5119,62 @@ begin
           on e: Exception do ; // swallow; metrics already updated via aOnException
         end;
       end);
+  Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
+end;
+
+function TmaxBus.SubscribeIn<t>(const aMailbox: ImaxMailbox; const aHandler: TmaxProcOf<t>): ImaxSubscription;
+var
+  lInternalMailbox: ImaxBusMailbox;
+  lKey: PTypeInfo;
+  lObj: TmaxTopicBase;
+  lMetricName: TmaxString;
+  lPreset: TmaxQueuePreset;
+  lState: ImaxSubscriptionState;
+  lSticky: Boolean;
+  lToken: TmaxSubscriptionToken;
+  lTopic: TTypedTopic<t>;
+  lCreated: Boolean;
+begin
+  if aMailbox = nil then
+    raise EmaxInvalidSubscription.Create('Mailbox subscription requires a mailbox');
+  if not Supports(aMailbox, ImaxBusMailbox, lInternalMailbox) then
+    raise EmaxInvalidSubscription.Create('Mailbox does not support EventNexus bus delivery');
+
+  RegisterMailbox(lInternalMailbox);
+  lKey := TypeInfo(t);
+  lMetricName := TypeMetricName(lKey);
+  fConfigLock.BeginWrite;
+  try
+    lSticky := fStickyTypes.ContainsKey(lKey);
+    lPreset := TmaxQueuePreset.Unspecified;
+    fPresetTypes.TryGetValue(lKey, lPreset);
+  finally
+    fConfigLock.EndWrite;
+  end;
+
+  lCreated := False;
+  TMonitor.Enter(fTypedLock);
+  try
+    if not fTyped.TryGetValue(lKey, lObj) then
+    begin
+      lTopic := TTypedTopic<t>.Create;
+      lTopic.SetMetricName(lMetricName);
+      if lPreset <> TmaxQueuePreset.Unspecified then
+        lTopic.SetPolicyImplicit(PolicyForPreset(lPreset));
+      if lSticky then
+        lTopic.SetSticky(True);
+      fTyped.Add(lKey, lTopic);
+      lCreated := True;
+      lObj := lTopic;
+    end;
+    lTopic := TTypedTopic<t>(lObj);
+    lTopic.SetMetricName(lMetricName);
+    lToken := lTopic.Add(aHandler, TmaxDelivery.Posting, lState, nil, True, aMailbox, lInternalMailbox);
+  finally
+    TMonitor.Exit(fTypedLock);
+  end;
+  if lCreated then
+    PublishMetricTypedTopic(lKey, lTopic);
   Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
 end;
 
@@ -7769,6 +8004,9 @@ end;
 procedure TmaxBus.Clear;
 var
   lAutoKeys: TArray<TObject>;
+  lMailboxes: TArray<ImaxBusMailbox>;
+  lMailbox: ImaxBusMailbox;
+  lMailboxGeneration: Int64;
   lKey: TObject;
 var
   lStickyTypes: TmaxBoolDictOfTypeInfo;
@@ -7791,137 +8029,147 @@ var
   lIdx: integer;
 begin
   TInterlocked.Increment(fDelayedPostEpoch);
-  lAutoKeys := nil;
-  TMonitor.Enter(fAutoSubsLock);
+  TInterlocked.Exchange(fMailboxClearActive, 1);
   try
-    lAutoKeys := fAutoSubs.Keys.ToArray;
-  finally
-    TMonitor.Exit(fAutoSubsLock);
-  end;
-  for lKey in lAutoKeys do
-    AutoUnsubscribeInstance(lKey);
-
-  lStickyTypes := nil;
-  lStickyNames := nil;
-  lPresetTypes := nil;
-  lPresetNames := nil;
-  lPresetGuids := nil;
-  lStickyGuids := nil;
-  try
-    lStickyTypes := TmaxBoolDictOfTypeInfo.Create;
-    lStickyNames := TmaxBoolDictOfString.Create;
-    lPresetTypes := TmaxPresetDictOfTypeInfo.Create;
-    lPresetNames := TmaxPresetDictOfString.Create;
-    lPresetGuids := TmaxPresetDictOfGuid.Create;
-    lStickyGuids := TDictionary<TGuid, boolean>.Create;
-
-    // Snapshot config without holding it during bus/topic locks (avoid lock-order deadlocks)
-    fConfigLock.BeginWrite;
+    // Mailbox generation lets Clear purge queued mailbox work that belongs to an older bus state.
+    lMailboxGeneration := TInterlocked.Increment(fMailboxGeneration);
+    lMailboxes := SnapshotMailboxes;
+    for lMailbox in lMailboxes do
+      lMailbox.PurgeOwner(Self, lMailboxGeneration);
+    lAutoKeys := nil;
+    TMonitor.Enter(fAutoSubsLock);
     try
-      for lKvStickyType in fStickyTypes do
-        lStickyTypes.AddOrSetValue(lKvStickyType.Key, True);
-      for lKvStickyName in fStickyNames do
-        lStickyNames.AddOrSetValue(lKvStickyName.Key, True);
-      for lKvPresetType in fPresetTypes do
-        lPresetTypes.AddOrSetValue(lKvPresetType.Key, lKvPresetType.Value);
-      for lKvPresetName in fPresetNames do
-        lPresetNames.AddOrSetValue(lKvPresetName.Key, lKvPresetName.Value);
-      for lKvPresetGuid in fPresetGuids do
-        lPresetGuids.AddOrSetValue(lKvPresetGuid.Key, lKvPresetGuid.Value);
+      lAutoKeys := fAutoSubs.Keys.ToArray;
     finally
-      fConfigLock.EndWrite;
+      TMonitor.Exit(fAutoSubsLock);
     end;
+    for lKey in lAutoKeys do
+      AutoUnsubscribeInstance(lKey);
 
-    for lKvStickyType in lStickyTypes do
-      lStickyGuids.AddOrSetValue(GuidForType(lKvStickyType.Key), True);
-
-    TMonitor.Enter(fTypedLock);
+    lStickyTypes := nil;
+    lStickyNames := nil;
+    lPresetTypes := nil;
+    lPresetNames := nil;
+    lPresetGuids := nil;
+    lStickyGuids := nil;
     try
-      for lKvTyped in fTyped do
-      begin
-        lKvTyped.Value.ResetTopic;
-        lKvTyped.Value.SetMetricName(TypeMetricName(lKvTyped.Key));
-        lPreset := TmaxQueuePreset.Unspecified;
-        if lPresetTypes.TryGetValue(lKvTyped.Key, lPreset) and (lPreset <> TmaxQueuePreset.Unspecified) then
-          lKvTyped.Value.SetPolicyImplicit(PolicyForPreset(lPreset));
-        if lStickyTypes.ContainsKey(lKvTyped.Key) then
-          lKvTyped.Value.SetSticky(True);
+      lStickyTypes := TmaxBoolDictOfTypeInfo.Create;
+      lStickyNames := TmaxBoolDictOfString.Create;
+      lPresetTypes := TmaxPresetDictOfTypeInfo.Create;
+      lPresetNames := TmaxPresetDictOfString.Create;
+      lPresetGuids := TmaxPresetDictOfGuid.Create;
+      lStickyGuids := TDictionary<TGuid, boolean>.Create;
+
+      // Snapshot config without holding it during bus/topic locks (avoid lock-order deadlocks)
+      fConfigLock.BeginWrite;
+      try
+        for lKvStickyType in fStickyTypes do
+          lStickyTypes.AddOrSetValue(lKvStickyType.Key, True);
+        for lKvStickyName in fStickyNames do
+          lStickyNames.AddOrSetValue(lKvStickyName.Key, True);
+        for lKvPresetType in fPresetTypes do
+          lPresetTypes.AddOrSetValue(lKvPresetType.Key, lKvPresetType.Value);
+        for lKvPresetName in fPresetNames do
+          lPresetNames.AddOrSetValue(lKvPresetName.Key, lKvPresetName.Value);
+        for lKvPresetGuid in fPresetGuids do
+          lPresetGuids.AddOrSetValue(lKvPresetGuid.Key, lKvPresetGuid.Value);
+      finally
+        fConfigLock.EndWrite;
       end;
-    finally
-      TMonitor.Exit(fTypedLock);
-    end;
 
-    TMonitor.Enter(fNamedLock);
-    try
-      for lKvNamed in fNamed do
-      begin
-        lKvNamed.Value.ResetTopic;
-        lKvNamed.Value.SetMetricName(NamedMetricName(lKvNamed.Key));
-        lPreset := TmaxQueuePreset.Unspecified;
-        if lPresetNames.TryGetValue(lKvNamed.Key, lPreset) and (lPreset <> TmaxQueuePreset.Unspecified) then
-          lKvNamed.Value.SetPolicyImplicit(PolicyForPreset(lPreset));
-        if lStickyNames.ContainsKey(lKvNamed.Key) then
-          lKvNamed.Value.SetSticky(True);
-      end;
-    finally
-      TMonitor.Exit(fNamedLock);
-    end;
+      for lKvStickyType in lStickyTypes do
+        lStickyGuids.AddOrSetValue(GuidForType(lKvStickyType.Key), True);
 
-    TMonitor.Enter(fNamedTypedLock);
-    try
-      for lKvName in fNamedTyped do
-      begin
-        for lKvInner in lKvName.Value do
+      TMonitor.Enter(fTypedLock);
+      try
+        for lKvTyped in fTyped do
         begin
-          lKvInner.Value.ResetTopic;
-          lKvInner.Value.SetMetricName(NamedTypeMetricName(lKvName.Key, lKvInner.Key));
-          lPreset := ResolveNamedOfPreset(lPresetNames, lPresetTypes, lKvName.Key, lKvInner.Key);
-          if (lPreset <> TmaxQueuePreset.Unspecified) then
-            lKvInner.Value.SetPolicyImplicit(PolicyForPreset(lPreset));
-          if lStickyNames.ContainsKey(lKvName.Key) or lStickyTypes.ContainsKey(lKvInner.Key) then
-            lKvInner.Value.SetSticky(True);
+          lKvTyped.Value.ResetTopic;
+          lKvTyped.Value.SetMetricName(TypeMetricName(lKvTyped.Key));
+          lPreset := TmaxQueuePreset.Unspecified;
+          if lPresetTypes.TryGetValue(lKvTyped.Key, lPreset) and (lPreset <> TmaxQueuePreset.Unspecified) then
+            lKvTyped.Value.SetPolicyImplicit(PolicyForPreset(lPreset));
+          if lStickyTypes.ContainsKey(lKvTyped.Key) then
+            lKvTyped.Value.SetSticky(True);
         end;
+      finally
+        TMonitor.Exit(fTypedLock);
       end;
-    finally
-      TMonitor.Exit(fNamedTypedLock);
-    end;
 
-	    TMonitor.Enter(fGuidLock);
-	    try
-	      for lKvGuid in fGuid do
-      begin
-        lKvGuid.Value.ResetTopic;
-        lKvGuid.Value.SetMetricName(GuidMetricName(lKvGuid.Key));
-        lPreset := TmaxQueuePreset.Unspecified;
-        if lPresetGuids.TryGetValue(lKvGuid.Key, lPreset) and (lPreset <> TmaxQueuePreset.Unspecified) then
-          lKvGuid.Value.SetPolicyImplicit(PolicyForPreset(lPreset));
-        if lStickyGuids.ContainsKey(lKvGuid.Key) then
-          lKvGuid.Value.SetSticky(True);
+      TMonitor.Enter(fNamedLock);
+      try
+        for lKvNamed in fNamed do
+        begin
+          lKvNamed.Value.ResetTopic;
+          lKvNamed.Value.SetMetricName(NamedMetricName(lKvNamed.Key));
+          lPreset := TmaxQueuePreset.Unspecified;
+          if lPresetNames.TryGetValue(lKvNamed.Key, lPreset) and (lPreset <> TmaxQueuePreset.Unspecified) then
+            lKvNamed.Value.SetPolicyImplicit(PolicyForPreset(lPreset));
+          if lStickyNames.ContainsKey(lKvNamed.Key) then
+            lKvNamed.Value.SetSticky(True);
+        end;
+      finally
+        TMonitor.Exit(fNamedLock);
       end;
-	    finally
-	      TMonitor.Exit(fGuidLock);
-	    end;
 
-    TMonitor.Enter(fNamedWildcardLock);
-    try
-      for lIdx := 0 to High(fNamedWildcardSubs) do
-        if Assigned(fNamedWildcardSubs[lIdx].State) then
-          fNamedWildcardSubs[lIdx].State.Deactivate;
-      if Length(fNamedWildcardSubs) <> 0 then
-        Inc(fNamedWildcardVersion);
-      SetLength(fNamedWildcardSubs, 0);
-      SetLength(fNamedWildcardSnapshot, 0);
-      fNamedWildcardSnapshotVersion := 0;
-    finally
-      TMonitor.Exit(fNamedWildcardLock);
+      TMonitor.Enter(fNamedTypedLock);
+      try
+        for lKvName in fNamedTyped do
+        begin
+          for lKvInner in lKvName.Value do
+          begin
+            lKvInner.Value.ResetTopic;
+            lKvInner.Value.SetMetricName(NamedTypeMetricName(lKvName.Key, lKvInner.Key));
+            lPreset := ResolveNamedOfPreset(lPresetNames, lPresetTypes, lKvName.Key, lKvInner.Key);
+            if (lPreset <> TmaxQueuePreset.Unspecified) then
+              lKvInner.Value.SetPolicyImplicit(PolicyForPreset(lPreset));
+            if lStickyNames.ContainsKey(lKvName.Key) or lStickyTypes.ContainsKey(lKvInner.Key) then
+              lKvInner.Value.SetSticky(True);
+          end;
+        end;
+      finally
+        TMonitor.Exit(fNamedTypedLock);
+      end;
+
+  	    TMonitor.Enter(fGuidLock);
+  	    try
+  	      for lKvGuid in fGuid do
+        begin
+          lKvGuid.Value.ResetTopic;
+          lKvGuid.Value.SetMetricName(GuidMetricName(lKvGuid.Key));
+          lPreset := TmaxQueuePreset.Unspecified;
+          if lPresetGuids.TryGetValue(lKvGuid.Key, lPreset) and (lPreset <> TmaxQueuePreset.Unspecified) then
+            lKvGuid.Value.SetPolicyImplicit(PolicyForPreset(lPreset));
+          if lStickyGuids.ContainsKey(lKvGuid.Key) then
+            lKvGuid.Value.SetSticky(True);
+        end;
+  	    finally
+  	      TMonitor.Exit(fGuidLock);
+  	    end;
+
+      TMonitor.Enter(fNamedWildcardLock);
+      try
+        for lIdx := 0 to High(fNamedWildcardSubs) do
+          if Assigned(fNamedWildcardSubs[lIdx].State) then
+            fNamedWildcardSubs[lIdx].State.Deactivate;
+        if Length(fNamedWildcardSubs) <> 0 then
+          Inc(fNamedWildcardVersion);
+        SetLength(fNamedWildcardSubs, 0);
+        SetLength(fNamedWildcardSnapshot, 0);
+        fNamedWildcardSnapshotVersion := 0;
+      finally
+        TMonitor.Exit(fNamedWildcardLock);
+      end;
+  	  finally
+  	    lStickyGuids.Free;
+  	    lPresetGuids.Free;
+      lPresetNames.Free;
+      lPresetTypes.Free;
+      lStickyNames.Free;
+      lStickyTypes.Free;
     end;
-	  finally
-	    lStickyGuids.Free;
-	    lPresetGuids.Free;
-    lPresetNames.Free;
-    lPresetTypes.Free;
-    lStickyNames.Free;
-    lStickyTypes.Free;
+  finally
+    TInterlocked.Exchange(fMailboxClearActive, 0);
   end;
 
 end;

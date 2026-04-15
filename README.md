@@ -8,7 +8,7 @@
 - Deferred-only `AutoSubscribe` handlers now make `PostResult<T>`, `PostResultNamedOf<T>`, and `PostResultGuidOf<T>` return `Queued` instead of misreporting `DispatchedInline`, with `Main`/`Background` decided from the actual runtime context.
 - Named-of topics now resolve queue presets as explicit `SetPolicyNamed(name, ...)` policy, then name preset, then type preset, then `Unspecified`; type-preset changes also reapply to existing implicit named-of topics.
 - `bench/BenchHarness` now uses the supported `TmaxBus` / `maxBusObj(...)` bridge contract and has a maintained `bench/BenchHarness.dproj` build path.
-- Runtime/public units are now fully Delphi-only; remaining FPC conditionals were removed from adapter/facade scheduler paths.
+- Runtime/public units are now fully Delphi-only; remaining non-Delphi conditionals were removed from adapter/facade scheduler paths.
 - Tests run through DUnitX (`tests/MaxEventNexusTests.dpr`) with compatibility support for published-method legacy suites.
 - Delphi AutoSubscribe one-parameter attributed handlers now bind correctly for typed, named, and GUID topics.
 - Test/CI scripts enforce diagnostics policy (`build/diagnostics-policy.regex`) so untriaged warnings/hints fail the build.
@@ -246,6 +246,46 @@ That means a type preset now acts as the fallback default for named-of topics wh
 
 - `Clear` drops subscriptions, queued work, sticky cached values, pending coalesce batches, and delayed posts scheduled before the clear boundary.
 - `Clear` preserves sticky enablement, explicit per-topic queue policies, queue presets, coalescing selectors/windows, scheduler identity, and bus main-thread identity.
+
+## Mailbox delivery
+
+Mailbox delivery adds a receiver-owned execution context without introducing a platform-specific message loop.
+
+- Create `ImaxMailbox` / `TmaxMailbox` on the receiver thread.
+- Subscribe through `TmaxBus.SubscribeIn<T>(...)`.
+- Post from any other thread as usual.
+- Pump the mailbox on the receiver thread so queued handlers execute there.
+
+Baseline mailbox semantics:
+
+- Cooperative pumping: the receiver thread must call `PumpOne(...)` or `PumpAll`.
+- Owner-thread enforcement: `PumpOne` and `PumpAll` fail fast on the wrong thread.
+- FIFO per mailbox.
+- Unbounded queue in the first slice.
+- `Clear` purges queued mailbox work owned by the bus.
+- `Close(True)` rejects future enqueue and discards queued-but-not-dequeued items.
+
+Typical patterns:
+
+```pascal
+var
+  lBusObj: TmaxBus;
+  lMailbox: ImaxMailbox;
+begin
+  lBusObj := maxBusObj(maxBus);
+  lMailbox := TmaxMailbox.Create;
+  lBusObj.SubscribeIn<Integer>(lMailbox,
+    procedure(const aValue: Integer)
+    begin
+      Writeln(aValue);
+    end);
+
+  while not Terminated do
+    lMailbox.PumpOne(cMaxWaitInfinite);
+end;
+```
+
+See `samples/MailboxWorkerSample.dpr` for the basic worker-thread pattern and `samples/MailboxClearShutdownSample.dpr` for the `Clear` / close boundary.
 
 ## Scheduling adapters
 

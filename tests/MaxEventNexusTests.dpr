@@ -272,6 +272,7 @@ begin
     TTestFuzz,
     TTestGuidTopics,
     TTestHighWaterReset,
+    TTestMailbox,
     TTestMainThreadPolicy,
     TTestAutoSubscribe,
     TTestMetrics,
