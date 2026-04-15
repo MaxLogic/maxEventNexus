@@ -12,9 +12,9 @@ uses
   // Third-party
   MaxEventNexus.Testing,
   // Project
-  maxLogic.EventNexus.Threading.Adapter, maxLogic.EventNexus.Threading.RawThread,
-  maxLogic.EventNexus.Core, maxLogic.EventNexus.Threading.MaxAsync,
-  maxLogic.EventNexus.Threading.TTask, maxLogic.EventNexus;
+  maxLogic.EventNexus, maxLogic.EventNexus.Core, maxLogic.EventNexus.Mailbox,
+  maxLogic.EventNexus.Threading.Adapter, maxLogic.EventNexus.Threading.MaxAsync,
+  maxLogic.EventNexus.Threading.RawThread, maxLogic.EventNexus.Threading.TTask;
 
 type
   TKeyed = record
@@ -236,6 +236,17 @@ type
     procedure Execute; override;
   end;
 
+  TMailboxOwnerThread = class(TThread)
+  public
+    fCreated: TEvent;
+    fMailbox: ImaxMailbox;
+    fRelease: TEvent;
+    constructor Create;
+    destructor Destroy; override;
+  protected
+    procedure Execute; override;
+  end;
+
   TTestSticky = class(TmaxTestCase)
   published
     procedure LateSubscriberGetsLastEvent;
@@ -388,6 +399,19 @@ type
     procedure ClearInvalidatesOldHandlesWithoutCrossUnsubscribe;
     procedure ClearInFlightAsyncNamedKeepsNewSubscriptionActive;
     procedure ClearInFlightAsyncGuidKeepsNewSubscriptionActive;
+  end;
+
+  TTestMailbox = class(TmaxTestCase)
+  published
+    procedure MailboxDirectPostRunsOnOwnerThread;
+    procedure MailboxWrongThreadPumpAllFailsFast;
+    procedure MailboxWrongThreadPumpFailsFast;
+    procedure MailboxFIFOOrder;
+    procedure MailboxSubscribeRunsOnOwnerThread;
+    procedure MailboxUnsubscribeSkipsQueuedWork;
+    procedure MailboxClearPurgesQueuedWork;
+    procedure MailboxCloseDiscardPending;
+    procedure MailboxTimeoutReturnsFalse;
   end;
 
   TTestPostResult = class(TmaxTestCase)
@@ -6271,6 +6295,267 @@ begin
     lProbe.Free;
     maxSetAsyncScheduler(lPrevScheduler);
   end;
+end;
+
+constructor TMailboxOwnerThread.Create;
+begin
+  inherited Create(True);
+  FreeOnTerminate := False;
+  fCreated := TEvent.Create(nil, True, False, '');
+  fRelease := TEvent.Create(nil, True, False, '');
+end;
+
+destructor TMailboxOwnerThread.Destroy;
+begin
+  fRelease.Free;
+  fCreated.Free;
+  inherited Destroy;
+end;
+
+procedure TMailboxOwnerThread.Execute;
+begin
+  fMailbox := TmaxMailbox.Create;
+  fCreated.SetEvent;
+  fRelease.WaitFor(2000);
+end;
+
+{ TTestMailbox }
+
+procedure TTestMailbox.MailboxDirectPostRunsOnOwnerThread;
+var
+  lDone: TEvent;
+  lHandledThreadId: TThreadID;
+  lMailbox: ImaxMailbox;
+begin
+  lMailbox := TmaxMailbox.Create;
+  lDone := TEvent.Create(nil, True, False, '');
+  lHandledThreadId := 0;
+  try
+    Check(lMailbox.TryPost(
+      procedure
+      begin
+        lHandledThreadId := TThread.CurrentThread.ThreadID;
+        lDone.SetEvent;
+      end));
+    Check(lMailbox.PumpOne(2000));
+    Check(lDone.WaitFor(2000) = wrSignaled);
+    CheckEquals(TThread.CurrentThread.ThreadID, lHandledThreadId);
+  finally
+    lDone.Free;
+  end;
+end;
+
+procedure TTestMailbox.MailboxWrongThreadPumpFailsFast;
+var
+  lMailbox: ImaxMailbox;
+  lThread: TMailboxOwnerThread;
+begin
+  lMailbox := nil;
+  lThread := nil;
+  try
+    lThread := TMailboxOwnerThread.Create;
+    lThread.Start;
+    Check(lThread.fCreated.WaitFor(2000) = wrSignaled);
+    lMailbox := lThread.fMailbox;
+    try
+      lMailbox.PumpOne(0);
+      Check(False, 'Wrong-thread pump should fail');
+    except
+      on e: EmaxMailboxWrongThread do
+        ;
+    end;
+  finally
+    if lThread <> nil then
+      lThread.fRelease.SetEvent;
+    if lThread <> nil then
+      lThread.WaitFor;
+    if lThread <> nil then
+      lThread.Free;
+  end;
+end;
+
+procedure TTestMailbox.MailboxWrongThreadPumpAllFailsFast;
+var
+  lMailbox: ImaxMailbox;
+  lThread: TMailboxOwnerThread;
+begin
+  lMailbox := nil;
+  lThread := nil;
+  try
+    lThread := TMailboxOwnerThread.Create;
+    lThread.Start;
+    Check(lThread.fCreated.WaitFor(2000) = wrSignaled);
+    lMailbox := lThread.fMailbox;
+    try
+      lMailbox.PumpAll;
+      Check(False, 'Wrong-thread PumpAll should fail');
+    except
+      on e: EmaxMailboxWrongThread do
+        ;
+    end;
+  finally
+    if lThread <> nil then
+      lThread.fRelease.SetEvent;
+    if lThread <> nil then
+      lThread.WaitFor;
+    if lThread <> nil then
+      lThread.Free;
+  end;
+end;
+
+procedure TTestMailbox.MailboxFIFOOrder;
+var
+  lMailbox: ImaxMailbox;
+  lValues: TList<Integer>;
+begin
+  lMailbox := TmaxMailbox.Create;
+  lValues := TList<Integer>.Create;
+  try
+    Check(lMailbox.TryPost(
+      procedure
+      begin
+        lValues.Add(1);
+      end));
+    Check(lMailbox.TryPost(
+      procedure
+      begin
+        lValues.Add(2);
+      end));
+    Check(lMailbox.TryPost(
+      procedure
+      begin
+        lValues.Add(3);
+      end));
+    CheckEquals(3, lMailbox.PumpAll);
+    CheckEquals(3, lValues.Count);
+    CheckEquals(1, lValues[0]);
+    CheckEquals(2, lValues[1]);
+    CheckEquals(3, lValues[2]);
+  finally
+    lValues.Free;
+  end;
+end;
+
+procedure TTestMailbox.MailboxSubscribeRunsOnOwnerThread;
+var
+  lBus: ImaxBus;
+  lDone: TEvent;
+  lHandledThreadId: TThreadID;
+  lMailbox: ImaxMailbox;
+  lThread: TPostThread;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lDone := TEvent.Create(nil, True, False, '');
+  lHandledThreadId := 0;
+  lThread := nil;
+  try
+    maxBusObj(lBus).SubscribeIn<Integer>(lMailbox,
+      procedure(const aValue: Integer)
+      begin
+        lHandledThreadId := TThread.CurrentThread.ThreadID;
+        lDone.SetEvent;
+      end);
+
+    lThread := TPostThread.Create(lBus, 42);
+    lThread.Start;
+    lThread.WaitFor;
+    Check(lMailbox.PumpOne(2000));
+    Check(lDone.WaitFor(2000) = wrSignaled);
+    CheckEquals(TThread.CurrentThread.ThreadID, lHandledThreadId);
+  finally
+    lBus.Clear;
+    lDone.Free;
+    if lThread <> nil then
+      lThread.Free;
+  end;
+end;
+
+procedure TTestMailbox.MailboxUnsubscribeSkipsQueuedWork;
+var
+  lBus: ImaxBus;
+  lHits: Integer;
+  lMailbox: ImaxMailbox;
+  lSub: ImaxSubscription;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lHits := 0;
+  lSub := nil;
+  try
+    lSub := maxBusObj(lBus).SubscribeIn<Integer>(lMailbox,
+      procedure(const aValue: Integer)
+      begin
+        Inc(lHits);
+      end);
+    maxBusObj(lBus).Post<Integer>(1);
+    lSub.Unsubscribe;
+    CheckEquals(0, lMailbox.PumpAll);
+    CheckEquals(0, lHits);
+  finally
+    lSub := nil;
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestMailbox.MailboxClearPurgesQueuedWork;
+var
+  lBus: ImaxBus;
+  lHits: Integer;
+  lMailbox: ImaxMailbox;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lHits := 0;
+  try
+    maxBusObj(lBus).SubscribeIn<Integer>(lMailbox,
+      procedure(const aValue: Integer)
+      begin
+        Inc(lHits);
+      end);
+    maxBusObj(lBus).Post<Integer>(1);
+    lBus.Clear;
+    CheckEquals(0, lMailbox.PendingCount);
+    CheckEquals(0, lMailbox.PumpAll);
+    CheckEquals(0, lHits);
+  finally
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestMailbox.MailboxCloseDiscardPending;
+var
+  lHits: Integer;
+  lMailbox: ImaxMailbox;
+begin
+  lMailbox := TmaxMailbox.Create;
+  lHits := 0;
+  Check(lMailbox.TryPost(
+    procedure
+    begin
+      Inc(lHits);
+    end));
+  lMailbox.Close(True);
+  Check(lMailbox.IsClosed);
+  CheckEquals(0, lMailbox.PendingCount);
+  CheckEquals(0, lMailbox.PumpAll);
+  CheckEquals(0, lHits);
+  Check(not lMailbox.TryPost(
+    procedure
+    begin
+      Inc(lHits);
+    end));
+end;
+
+procedure TTestMailbox.MailboxTimeoutReturnsFalse;
+var
+  lMailbox: ImaxMailbox;
+begin
+  lMailbox := TmaxMailbox.Create;
+  Check(not lMailbox.PumpOne(20));
 end;
 
 { TTestPostResult }

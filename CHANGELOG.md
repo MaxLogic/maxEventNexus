@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- Added portable mailbox delivery through `ImaxMailbox` / `TmaxMailbox`, typed `SubscribeIn<T>`, cooperative pumping docs, and mailbox lifecycle coverage for unsubscribe, `Clear`, close, timeout, and receiver affinity. (T-1121..T-1125)
 - Removed the unused `lib/mORMot2` submodule, cleaned stale Delphi project search paths that still pointed at it, and updated the README to describe only the maintained foundation-unit build surface. (T-1119)
 - Refreshed the README benchmark snapshot with current isolated Win32/Win64 async and posting framework medians, switched the published framework profile to `--max-inflight=0`, and documented RawThread as the dedicated-thread non-pool scheduler rather than a cross-framework throughput baseline. (T-1117)
 - Default verification now includes a framework-only async benchmark smoke, and `SchedulerCompare` framework-only runs now exit cleanly under the published `--max-inflight=0` profile. (T-1118)

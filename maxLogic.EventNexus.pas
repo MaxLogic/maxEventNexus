@@ -3,7 +3,7 @@ unit maxLogic.EventNexus;
 interface
 
 uses
-  maxLogic.EventNexus.Core;
+  maxLogic.EventNexus.Core, maxLogic.EventNexus.Mailbox;
 
 implementation
 
