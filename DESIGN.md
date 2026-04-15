@@ -86,6 +86,28 @@ The shipped scheduler adapters are intentionally different:
 - `RawThread` bypasses the Delphi thread pool and creates a dedicated `TThread` for each async or delayed work item.
 - `TTask` is the explicit RTL thread-pool adapter.
 
+## Mailbox delivery model
+
+Receiver-affine delivery is handled through a mailbox owned by exactly one thread.
+
+- The receiver thread creates an `ImaxMailbox`.
+- The receiver subscribes through `TmaxBus.SubscribeIn<T>(...)`.
+- A post from another thread does not execute the handler directly on that posting thread.
+- EventNexus enqueues a bus-owned work item into the receiver mailbox.
+- The receiver thread pumps the mailbox and executes the handler on itself.
+
+The mailbox contract is cooperative by design.
+
+- `PumpOne` and `PumpAll` are owner-thread operations and must fail fast on the wrong thread.
+- `TryPost(const aProc: TmaxProc)` is the direct mailbox enqueue primitive used both by demos and by bus integration.
+- The baseline mailbox is FIFO and unbounded.
+- The portable baseline uses RTL synchronization primitives and stays cross-platform across Delphi-supported desktop targets.
+
+This is intentionally different from `Main`/`Async`/`Background` delivery:
+
+- scheduler delivery selects a runtime queue owned by the scheduler
+- mailbox delivery selects a queue owned by the receiver itself
+
 ## Sticky cache and coalescing
 
 Sticky:
@@ -107,6 +129,15 @@ Coalescing:
 - It removes live subscriptions plus queued or pending runtime work.
 - It drops sticky cached values, pending coalesce buckets, and delayed posts created before the clear boundary.
 - It preserves durable configuration: sticky enablement, explicit queue policy, queue presets, coalescing selectors/windows, and scheduler/main-thread identity.
+- For mailbox-bound subscriptions, it must also purge queued mailbox work owned by the bus before returning.
+- Already-dequeued mailbox work may still finish, but queued mailbox work must not survive the clear boundary.
+
+Mailbox lifecycle rules:
+
+- `Unsubscribe` makes queued mailbox work inert at pump time.
+- `Close(aDiscardPending = True)` discards queued mailbox items, wakes waiters, and rejects future enqueue.
+- `IsClosed` reports that close boundary.
+- Future roadmap items are mailbox-bound named/GUID subscribe APIs, mailbox coalescing, and mailbox-owned overflow policy.
 
 ## Queue policy and presets
 

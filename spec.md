@@ -135,6 +135,68 @@ Delay timing contract:
 - Any positive `aDelayUs` must remain delayed, even if an adapter rounds up to the nearest supported timer resolution.
 - The shipped `maxAsync` adapter preserves async/delayed semantics on primary-backend submission failure by falling back to dedicated-thread execution; inline execution is a final safety net only if even thread creation fails.
 
+### 3.1 Mailbox delivery
+
+EventNexus also supports receiver-affine delivery through a cooperative mailbox owned by one thread.
+
+Public mailbox contract:
+
+```pascal
+const
+  cMaxWaitInfinite = High(Cardinal);
+
+type
+  ImaxMailbox = interface
+    function IsCurrent: Boolean;
+    function Describe: string;
+    function TryPost(const aProc: TmaxProc): Boolean;
+    function PumpOne(aTimeoutMs: Cardinal = cMaxWaitInfinite): Boolean;
+    function PumpAll(aMaxItems: Integer = MaxInt): Integer;
+    function PendingCount: Integer;
+    procedure Close(aDiscardPending: Boolean = True);
+    function IsClosed: Boolean;
+  end;
+```
+
+Typed mailbox-bound subscribe is additive on `TmaxBus`:
+
+```pascal
+function SubscribeIn<T>(const aMailbox: ImaxMailbox;
+  const aHandler: TmaxProcOf<T>): ImaxSubscription;
+```
+
+Mailbox contract:
+
+- Each mailbox has one owner thread captured at creation time.
+- `PumpOne` and `PumpAll` are owner-thread operations. Pumping from any other thread must fail fast.
+- `TryPost` is asynchronous with respect to the posting thread. It enqueues mailbox work and returns without waiting for the receiver to handle it.
+- Mailbox pumping is cooperative. EventNexus does not inject work into a foreign thread automatically.
+- The baseline mailbox queue is FIFO and unbounded in the first implementation slice.
+- The default mailbox implementation must stay cross-platform within Delphi-supported desktop targets and must not depend on Windows messages.
+
+Supported owner-thread pumping patterns:
+
+- Blocking worker loop: `Mailbox.PumpOne(cMaxWaitInfinite)`
+- Timed cooperative loop: `Mailbox.PumpOne(100)`
+- Manual integration loop: `Mailbox.PumpAll`
+
+### 3.2 Mailbox lifecycle and `Clear`
+
+Mailbox delivery extends the existing hard-reset model.
+
+- `Unsubscribe` marks the subscription inactive.
+- Already-queued mailbox work for an unsubscribed subscription must be skipped when pumped.
+- `Clear` removes current subscriptions and purges queued mailbox work belonging to that bus before returning.
+- Pre-clear subscription handles must become inert and must never affect post-clear subscriptions.
+- Already-dequeued mailbox work may still finish if it crossed the dequeue boundary before the `Clear` purge started.
+- `Close(aDiscardPending = True)` prevents future enqueue, discards queued-but-not-dequeued mailbox items, wakes waiting pump loops, and still allows already-dequeued work to finish.
+- `IsClosed` reports whether the mailbox has crossed that close boundary.
+
+The mailbox roadmap is staged:
+
+- first slice: `ImaxMailbox`, typed `SubscribeIn<T>`, owner-thread pumping, `Clear` purge, close semantics
+- later slices: named mailbox subscribe APIs, GUID mailbox subscribe APIs, mailbox coalescing, and mailbox-owned overflow policy
+
 ## 4. Delivery semantics
 
 - `Posting`: inline execution.
