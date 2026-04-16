@@ -166,6 +166,9 @@ function SubscribeIn<T>(const aMailbox: ImaxMailbox;
 
 function SubscribeNamedIn(const aName: TmaxString;
   const aMailbox: ImaxMailbox; const aHandler: TmaxProc): ImaxSubscription;
+
+function SubscribeNamedOfIn<T>(const aName: TmaxString;
+  const aMailbox: ImaxMailbox; const aHandler: TmaxProcOf<T>): ImaxSubscription;
 ```
 
 Mailbox contract:
@@ -197,8 +200,8 @@ Mailbox delivery extends the existing hard-reset model.
 
 The mailbox roadmap is staged:
 
-- current slice: `ImaxMailbox`, typed `SubscribeIn<T>`, exact named `SubscribeNamedIn`, owner-thread pumping, `Clear` purge, and close semantics
-- later slices: named typed mailbox subscribe APIs, GUID mailbox subscribe APIs, mailbox coalescing, and mailbox-owned overflow policy
+- current slice: `ImaxMailbox`, typed `SubscribeIn<T>`, exact named `SubscribeNamedIn`, named typed `SubscribeNamedOfIn<T>`, owner-thread pumping, `Clear` purge, and close semantics
+- later slices: GUID mailbox subscribe APIs, mailbox coalescing, and mailbox-owned overflow policy
 
 ## 4. Delivery semantics
 

@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- Added named typed mailbox delivery through `SubscribeNamedOfIn<T>`, preserving name-plus-type routing and preset inheritance while expanding regression coverage for receiver affinity, mixed-case routing, sticky replay, FIFO ordering, shared-name multi-type behavior, per-type preset fallback, and `PostResultNamedOf<T>` mailbox handoff classification. (T-1130, T-1131)
 - Added exact named mailbox delivery through `SubscribeNamedIn`, updated the mailbox spec, and expanded regression coverage for receiver affinity, case-insensitive routing, sticky replay, FIFO ordering, unsubscribe or `Clear`, and `PostResultNamed` mailbox handoff classification. (T-1128, T-1129)
 - Added portable mailbox delivery through `ImaxMailbox` / `TmaxMailbox`, typed `SubscribeIn<T>`, cooperative pumping docs, and mailbox lifecycle coverage for unsubscribe, `Clear`, close, timeout, and receiver affinity. (T-1121..T-1125)
 - Removed the unused `lib/mORMot2` submodule, cleaned stale Delphi project search paths that still pointed at it, and updated the README to describe only the maintained foundation-unit build surface. (T-1119)
