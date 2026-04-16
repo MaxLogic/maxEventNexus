@@ -48,6 +48,7 @@ Examples:
 - `SubscribeStrong<T>` when caller-owned lifetime is acceptable
 - `SubscribeNamedOf<T>`, `PostNamedOf<T>`, `TryPostNamedOf<T>`
 - `SubscribeNamedOfStrong<T>` when caller-owned lifetime is acceptable
+- `SubscribeIn<T>`, `SubscribeNamedIn`, `SubscribeNamedOfIn<T>`, `SubscribeGuidOfIn<T: IInterface>` for receiver-owned mailbox delivery
 - `SubscribeGuidOf<T: IInterface>`, `PostGuidOf<T>`, `TryPostGuidOf<T>`
 - `SubscribeGuidOfStrong<T>` when caller-owned lifetime is acceptable
 - `PostResult<T>`, `PostResultNamed`, `PostResultNamedOf<T>`, `PostResultGuidOf<T>`
@@ -169,6 +170,9 @@ function SubscribeNamedIn(const aName: TmaxString;
 
 function SubscribeNamedOfIn<T>(const aName: TmaxString;
   const aMailbox: ImaxMailbox; const aHandler: TmaxProcOf<T>): ImaxSubscription;
+
+function SubscribeGuidOfIn<T: IInterface>(const aMailbox: ImaxMailbox;
+  const aHandler: TmaxProcOf<T>): ImaxSubscription;
 ```
 
 Mailbox contract:
@@ -200,8 +204,8 @@ Mailbox delivery extends the existing hard-reset model.
 
 The mailbox roadmap is staged:
 
-- current slice: `ImaxMailbox`, typed `SubscribeIn<T>`, exact named `SubscribeNamedIn`, named typed `SubscribeNamedOfIn<T>`, owner-thread pumping, `Clear` purge, and close semantics
-- later slices: GUID mailbox subscribe APIs, mailbox coalescing, and mailbox-owned overflow policy
+- current slice: `ImaxMailbox`, typed `SubscribeIn<T>`, exact named `SubscribeNamedIn`, named typed `SubscribeNamedOfIn<T>`, GUID typed `SubscribeGuidOfIn<T>`, owner-thread pumping, `Clear` purge, and close semantics
+- later slices: mailbox coalescing and mailbox-owned overflow policy
 
 ## 4. Delivery semantics
 

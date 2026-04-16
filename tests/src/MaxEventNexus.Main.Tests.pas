@@ -430,6 +430,11 @@ type
     procedure MailboxNamedOfStickyReplayRunsOnOwnerThread;
     procedure MailboxNamedOfFIFOOrder;
     procedure MailboxNamedOfSharedNamePerTypeRouting;
+    procedure MailboxSubscribeGuidRunsOnOwnerThread;
+    procedure MailboxGuidStickyReplayRunsOnOwnerThread;
+    procedure MailboxGuidFIFOOrder;
+    procedure MailboxGuidUnsubscribeSkipsQueuedWork;
+    procedure MailboxGuidClearPurgesQueuedWork;
     procedure MailboxUnsubscribeSkipsQueuedWork;
     procedure MailboxClearPurgesQueuedWork;
     procedure MailboxCloseDiscardPending;
@@ -447,6 +452,7 @@ type
     procedure NamedOfMailboxReturnsQueued;
     procedure GuidOfQueuePressureReturnsQueuedThenDropped;
     procedure GuidOfAcceptedReturnsInline;
+    procedure GuidOfMailboxReturnsQueued;
     procedure ClearPreservesTypedExplicitPolicy;
     procedure ClearPreservesNamedExplicitPolicy;
     procedure ClearPreservesGuidExplicitPolicy;
@@ -6972,6 +6978,164 @@ begin
   end;
 end;
 
+procedure TTestMailbox.MailboxSubscribeGuidRunsOnOwnerThread;
+var
+  lBus: ImaxBus;
+  lDone: TEvent;
+  lHandledThreadId: TThreadID;
+  lMailbox: ImaxMailbox;
+  lThread: TThread;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lDone := TEvent.Create(nil, True, False, '');
+  lHandledThreadId := 0;
+  lThread := nil;
+  try
+    maxBusObj(lBus).SubscribeGuidOfIn<IIntEvent>(lMailbox,
+      procedure(const aValue: IIntEvent)
+      begin
+        lHandledThreadId := TThread.CurrentThread.ThreadID;
+        lDone.SetEvent;
+      end);
+
+    lThread := TThread.CreateAnonymousThread(
+      procedure
+      begin
+        maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(42));
+      end);
+    lThread.FreeOnTerminate := False;
+    lThread.Start;
+    lThread.WaitFor;
+    Check(lMailbox.PumpOne(2000));
+    Check(lDone.WaitFor(2000) = wrSignaled);
+    CheckEquals(TThread.CurrentThread.ThreadID, lHandledThreadId);
+  finally
+    lBus.Clear;
+    lDone.Free;
+    if lThread <> nil then
+      lThread.Free;
+  end;
+end;
+
+procedure TTestMailbox.MailboxGuidStickyReplayRunsOnOwnerThread;
+var
+  lBus: ImaxBus;
+  lDone: TEvent;
+  lHandledThreadId: TThreadID;
+  lMailbox: ImaxMailbox;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lDone := TEvent.Create(nil, True, False, '');
+  lHandledThreadId := 0;
+  try
+    maxBusObj(lBus).EnableSticky<IIntEvent>(True);
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(10));
+
+    maxBusObj(lBus).SubscribeGuidOfIn<IIntEvent>(lMailbox,
+      procedure(const aValue: IIntEvent)
+      begin
+        lHandledThreadId := TThread.CurrentThread.ThreadID;
+        lDone.SetEvent;
+      end);
+
+    Check(lMailbox.PumpOne(2000));
+    Check(lDone.WaitFor(2000) = wrSignaled);
+    CheckEquals(TThread.CurrentThread.ThreadID, lHandledThreadId);
+  finally
+    maxBusObj(lBus).EnableSticky<IIntEvent>(False);
+    lBus.Clear;
+    lDone.Free;
+  end;
+end;
+
+procedure TTestMailbox.MailboxGuidFIFOOrder;
+var
+  lBus: ImaxBus;
+  lMailbox: ImaxMailbox;
+  lValues: TList<Integer>;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lValues := TList<Integer>.Create;
+  try
+    maxBusObj(lBus).SubscribeGuidOfIn<IIntEvent>(lMailbox,
+      procedure(const aValue: IIntEvent)
+      begin
+        lValues.Add(aValue.GetValue);
+      end);
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(1));
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(2));
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(3));
+    CheckEquals(3, lMailbox.PumpAll);
+    CheckEquals(3, lValues.Count);
+    CheckEquals(1, lValues[0]);
+    CheckEquals(2, lValues[1]);
+    CheckEquals(3, lValues[2]);
+  finally
+    lValues.Free;
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestMailbox.MailboxGuidUnsubscribeSkipsQueuedWork;
+var
+  lBus: ImaxBus;
+  lHits: Integer;
+  lMailbox: ImaxMailbox;
+  lSub: ImaxSubscription;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lHits := 0;
+  lSub := nil;
+  try
+    lSub := maxBusObj(lBus).SubscribeGuidOfIn<IIntEvent>(lMailbox,
+      procedure(const aValue: IIntEvent)
+      begin
+        Inc(lHits);
+      end);
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(1));
+    lSub.Unsubscribe;
+    CheckEquals(0, lMailbox.PumpAll);
+    CheckEquals(0, lHits);
+  finally
+    lSub := nil;
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestMailbox.MailboxGuidClearPurgesQueuedWork;
+var
+  lBus: ImaxBus;
+  lHits: Integer;
+  lMailbox: ImaxMailbox;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lHits := 0;
+  try
+    maxBusObj(lBus).SubscribeGuidOfIn<IIntEvent>(lMailbox,
+      procedure(const aValue: IIntEvent)
+      begin
+        Inc(lHits);
+      end);
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(1));
+    lBus.Clear;
+    CheckEquals(0, lMailbox.PendingCount);
+    CheckEquals(0, lMailbox.PumpAll);
+    CheckEquals(0, lHits);
+  finally
+    lBus.Clear;
+  end;
+end;
+
 procedure TTestMailbox.MailboxUnsubscribeSkipsQueuedWork;
 var
   lBus: ImaxBus;
@@ -7415,6 +7579,33 @@ begin
   lResult := maxBusObj(lBus).PostResultGuidOf<IIntEvent>(TIntEvent.Create(17));
   CheckEquals(Integer(TmaxPostResult.DispatchedInline), Integer(lResult));
   CheckEquals(1, lHits);
+end;
+
+procedure TTestPostResult.GuidOfMailboxReturnsQueued;
+var
+  lBus: ImaxBus;
+  lHits: Integer;
+  lMailbox: ImaxMailbox;
+  lResult: TmaxPostResult;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lHits := 0;
+  try
+    maxBusObj(lBus).SubscribeGuidOfIn<IIntEvent>(lMailbox,
+      procedure(const aValue: IIntEvent)
+      begin
+        Inc(lHits);
+      end);
+    lResult := maxBusObj(lBus).PostResultGuidOf<IIntEvent>(TIntEvent.Create(17));
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(lResult));
+    CheckEquals(1, lMailbox.PendingCount);
+    CheckEquals(1, lMailbox.PumpAll);
+    CheckEquals(1, lHits);
+  finally
+    lBus.Clear;
+  end;
 end;
 
 procedure TTestPostResult.ClearPreservesTypedExplicitPolicy;
