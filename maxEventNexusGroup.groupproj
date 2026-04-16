@@ -15,6 +15,9 @@
         <Projects Include="samples\MailboxClearShutdownSample.dproj">
             <Dependencies/>
         </Projects>
+        <Projects Include="samples\MailboxLatestWinsSample.dproj">
+            <Dependencies/>
+        </Projects>
         <Projects Include="samples\MailboxWorkerSample.dproj">
             <Dependencies/>
         </Projects>
@@ -77,6 +80,15 @@
     <Target Name="MailboxClearShutdownSample:Make">
         <MSBuild Projects="samples\MailboxClearShutdownSample.dproj" Targets="Make"/>
     </Target>
+    <Target Name="MailboxLatestWinsSample">
+        <MSBuild Projects="samples\MailboxLatestWinsSample.dproj"/>
+    </Target>
+    <Target Name="MailboxLatestWinsSample:Clean">
+        <MSBuild Projects="samples\MailboxLatestWinsSample.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="MailboxLatestWinsSample:Make">
+        <MSBuild Projects="samples\MailboxLatestWinsSample.dproj" Targets="Make"/>
+    </Target>
     <Target Name="MailboxWorkerSample">
         <MSBuild Projects="samples\MailboxWorkerSample.dproj"/>
     </Target>
@@ -132,13 +144,13 @@
         <MSBuild Projects="bench\BenchHarness.dproj" Targets="Make"/>
     </Target>
     <Target Name="Build">
-        <CallTarget Targets="MaxEventNexusTests;AutoSubscribeSample;ConsoleSample;MailboxClearShutdownSample;MailboxWorkerSample;ManualSubscribeSample;UISample;UISampleConsole;SchedulerCompare;BenchHarness"/>
+        <CallTarget Targets="MaxEventNexusTests;AutoSubscribeSample;ConsoleSample;MailboxClearShutdownSample;MailboxLatestWinsSample;MailboxWorkerSample;ManualSubscribeSample;UISample;UISampleConsole;SchedulerCompare;BenchHarness"/>
     </Target>
     <Target Name="Clean">
-        <CallTarget Targets="MaxEventNexusTests:Clean;AutoSubscribeSample:Clean;ConsoleSample:Clean;MailboxClearShutdownSample:Clean;MailboxWorkerSample:Clean;ManualSubscribeSample:Clean;UISample:Clean;UISampleConsole:Clean;SchedulerCompare:Clean;BenchHarness:Clean"/>
+        <CallTarget Targets="MaxEventNexusTests:Clean;AutoSubscribeSample:Clean;ConsoleSample:Clean;MailboxClearShutdownSample:Clean;MailboxLatestWinsSample:Clean;MailboxWorkerSample:Clean;ManualSubscribeSample:Clean;UISample:Clean;UISampleConsole:Clean;SchedulerCompare:Clean;BenchHarness:Clean"/>
     </Target>
     <Target Name="Make">
-        <CallTarget Targets="MaxEventNexusTests:Make;AutoSubscribeSample:Make;ConsoleSample:Make;MailboxClearShutdownSample:Make;MailboxWorkerSample:Make;ManualSubscribeSample:Make;UISample:Make;UISampleConsole:Make;SchedulerCompare:Make;BenchHarness:Make"/>
+        <CallTarget Targets="MaxEventNexusTests:Make;AutoSubscribeSample:Make;ConsoleSample:Make;MailboxClearShutdownSample:Make;MailboxLatestWinsSample:Make;MailboxWorkerSample:Make;ManualSubscribeSample:Make;UISample:Make;UISampleConsole:Make;SchedulerCompare:Make;BenchHarness:Make"/>
     </Target>
     <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
 </Project>
