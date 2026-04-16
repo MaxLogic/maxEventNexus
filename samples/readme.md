@@ -13,6 +13,7 @@ Bridge rule for samples:
 - `ConsoleSample.pas`: typed, named, and GUID topics with delivery modes, sticky events, coalescing, and queue policy.
 - `MailboxWorkerSample.dpr`: thread A owns a mailbox, thread B posts, and thread A pumps the mailbox and handles on its own thread.
 - `MailboxClearShutdownSample.dpr`: shows `Clear` purging queued mailbox work and `Close(True)` discarding queued items while already-dequeued work may still finish.
+- `MailboxLatestWinsSample.dpr`: shows mailbox coalescing collapsing repeated progress updates per key while unrelated keys keep their original queue order.
 - `UISample.dpr`: VCL UI sample demonstrating `Main` delivery behavior.
 - `UISampleConsole.pas`: console sample for scheduler and coalescing flow.
 
