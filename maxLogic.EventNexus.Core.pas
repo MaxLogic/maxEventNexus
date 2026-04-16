@@ -323,6 +323,7 @@ type
     StateRef: Pointer;
     class function Create(const aObj: TObject): TmaxWeakTarget; static;
     class function CreateStrong(const aObj: TObject): TmaxWeakTarget; static;
+    function AutoRemoveOnFault: boolean;
     function Matches(const aObj: TObject): boolean;
     function IsAlive: boolean;
   end;
@@ -434,6 +435,7 @@ type
       Value: T;
       Token: TmaxSubscriptionToken;
       StateObj: TmaxSubscriptionState;
+      AutoRemoveOnFault: boolean;
       class constructor Create;
       class destructor Destroy;
       class function Acquire: TInvokeBox<T>; static;
@@ -1497,6 +1499,11 @@ end;
 function TmaxWeakTarget.Matches(const aObj: TObject): boolean;
 begin
   Result := (Raw <> nil) and (Raw = aObj);
+end;
+
+function TmaxWeakTarget.AutoRemoveOnFault: boolean;
+begin
+  Result := (Raw <> nil) and (Generation <> 0);
 end;
 
 function TmaxWeakTarget.IsAlive: boolean;
@@ -3359,6 +3366,7 @@ begin
   aBox.Value := Default(T);
   aBox.Token := 0;
   aBox.StateObj := nil;
+  aBox.AutoRemoveOnFault := False;
   lPooled := False;
   TMonitor.Enter(fPoolLock);
   try
@@ -3396,12 +3404,14 @@ var
   lTopic: TTypedTopic<T>;
   lStateObj: TmaxSubscriptionState;
   lToken: TmaxSubscriptionToken;
+  lAutoRemoveOnFault: boolean;
 begin
   lHandler := aBox.Handler;
   lValue := aBox.Value;
   lTopic := aBox.Topic;
   lStateObj := aBox.StateObj;
   lToken := aBox.Token;
+  lAutoRemoveOnFault := aBox.AutoRemoveOnFault;
   try
     try
       lHandler(lValue);
@@ -3410,7 +3420,7 @@ begin
       on e: Exception do
       begin
         lTopic.AddException;
-        if (e is EAccessViolation) or (e is EInvalidPointer) then
+        if lAutoRemoveOnFault and ((e is EAccessViolation) or (e is EInvalidPointer)) then
         begin
           lTopic.RemoveByToken(lToken);
           Exit;
@@ -3545,8 +3555,8 @@ end;
 procedure TDeferredBatchRunner<T>.RunNext(aIndex: integer);
 var
   lItem: TDeferredDispatchItem<T>;
-  lReturned: boolean;
-  lStarted: boolean;
+  lDispatchState: Integer;
+  lPrevState: Integer;
   lStateObj: TmaxSubscriptionState;
 begin
   if aIndex > High(fItems) then
@@ -3556,29 +3566,28 @@ begin
   end;
 
   lItem := fItems[aIndex];
-  lReturned := False;
-  lStarted := False;
+  lDispatchState := 0;
   try
     fBus.Dispatch(fTopicName, lItem.Mode,
       procedure
       begin
-        lStarted := True;
         try
           TInvokeBox<T>.Execute(lItem.Box);
         finally
-          if lReturned then
+          lPrevState := TInterlocked.Exchange(lDispatchState, 2);
+          if lPrevState = 1 then
             RunNext(aIndex + 1);
         end;
       end,
       nil);
-    lReturned := True;
-    if lStarted then
+    lPrevState := TInterlocked.CompareExchange(lDispatchState, 1, 0);
+    if lPrevState = 2 then
       RunNext(aIndex + 1);
   except
     on e: Exception do
     begin
-      lReturned := True;
-      if not lStarted then
+      lPrevState := TInterlocked.Exchange(lDispatchState, 3);
+      if lPrevState <> 2 then
       begin
         lStateObj := lItem.Box.StateObj;
         lItem.Box.ReleaseToPool;
@@ -4207,7 +4216,7 @@ begin
             on e: Exception do
             begin
               aTopic.AddException;
-              if (e is EAccessViolation) or (e is EInvalidPointer) then
+              if aSubs[i].Target.AutoRemoveOnFault and ((e is EAccessViolation) or (e is EInvalidPointer)) then
               begin
                 aTopic.RemoveByToken(lToken);
                 Continue;
@@ -4260,7 +4269,7 @@ begin
             on e: Exception do
             begin
               aTopic.AddException;
-              if (e is EAccessViolation) or (e is EInvalidPointer) then
+              if aSubs[i].Target.AutoRemoveOnFault and ((e is EAccessViolation) or (e is EInvalidPointer)) then
               begin
                 aTopic.RemoveByToken(lToken);
                 Continue;
@@ -4349,6 +4358,7 @@ begin
       lBox.Value := aValue;
       lBox.Token := lToken;
       lBox.StateObj := lStateObj;
+      lBox.AutoRemoveOnFault := aSubs[i].Target.AutoRemoveOnFault;
       if lDeferredCount = lDeferredCapacity then
       begin
         Inc(lDeferredCapacity, 16);
@@ -5190,6 +5200,7 @@ var
   lMetricName: TmaxString;
   lState: ImaxSubscriptionState;
   lTarget: TObject;
+  lAutoRemoveOnFault: boolean;
   lWrapper: TmaxProcOf<t>;
   lSticky: boolean;
   lPreset: TmaxQueuePreset;
@@ -5198,6 +5209,7 @@ begin
   lKey := TypeInfo(t);
   lMetricName := TypeMetricName(lKey);
   lTarget := TObject(TMethod(aHandler).Data);
+  lAutoRemoveOnFault := aTrackWeakTarget and (lTarget <> nil);
   lWrapper :=
     procedure(const v: t)
   begin
@@ -5259,7 +5271,7 @@ begin
                 except
                   on e: Exception do
                   begin
-                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    if lAutoRemoveOnFault and ((e is EAccessViolation) or (e is EInvalidPointer)) then
                     begin
                       lTopic.RemoveByToken(lToken);
                       lTopic.AddException;
@@ -6456,6 +6468,7 @@ var
   lState: ImaxSubscriptionState;
   lBase: TmaxTopicBase;
   lTarget: TObject;
+  lAutoRemoveOnFault: boolean;
 	  lWrapper: TmaxProcOf<t>;
 		  lSticky: boolean;
 		  lPreset: TmaxQueuePreset;
@@ -6467,6 +6480,7 @@ var
   lNameKey := aName;
   lMetric := NamedTypeMetricName(lNameKey, lKey);
   lTarget := TObject(TMethod(aHandler).Data);
+  lAutoRemoveOnFault := aTrackWeakTarget and (lTarget <> nil);
   lWrapper :=
     procedure(const v: t)
   begin
@@ -6547,13 +6561,13 @@ var
                 try
                   aHandler(lVal);
                   lTopic.AddDelivered(1);
-                except
-                  on e: Exception do
-                  begin
-                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                  except
+                    on e: Exception do
                     begin
-                      lTopic.RemoveByToken(lToken);
-                      lTopic.AddException;
+                      if lAutoRemoveOnFault and ((e is EAccessViolation) or (e is EInvalidPointer)) then
+                      begin
+                        lTopic.RemoveByToken(lToken);
+                        lTopic.AddException;
                       exit;
                     end;
                     raise;
@@ -7138,6 +7152,7 @@ var
   lMetric: TmaxString;
   lState: ImaxSubscriptionState;
   lTarget: TObject;
+  lAutoRemoveOnFault: boolean;
   lWrapper: TmaxProcOf<t>;
   lSticky: boolean;
   lPreset: TmaxQueuePreset;
@@ -7148,6 +7163,7 @@ begin
   lKey := GuidForType(lTypeKey);
   lMetric := GuidMetricName(lKey);
   lTarget := TObject(TMethod(aHandler).Data);
+  lAutoRemoveOnFault := aTrackWeakTarget and (lTarget <> nil);
   lWrapper :=
     procedure(const v: t)
   begin
@@ -7209,7 +7225,7 @@ begin
                 except
                   on e: Exception do
                   begin
-                    if (e is EAccessViolation) or (e is EInvalidPointer) then
+                    if lAutoRemoveOnFault and ((e is EAccessViolation) or (e is EInvalidPointer)) then
                     begin
                       lTopic.RemoveByToken(lToken);
                       lTopic.AddException;

@@ -373,6 +373,16 @@ type
     procedure OnIntf(const aValue: IIntEvent);
   end;
 
+  TStrongFaultProbe = class
+  public
+    fDelivered: TEvent;
+    fFaultValue: integer;
+    fHits: integer;
+    constructor Create;
+    destructor Destroy; override;
+    procedure OnIntf(const aValue: IIntEvent);
+  end;
+
   TTestWeakTargets = class(TmaxTestCase)
   published
     procedure SkipsFreedTargetTyped;
@@ -385,6 +395,7 @@ type
     procedure UnsubscribeAllForRemovesTypedStrong;
     procedure UnsubscribeAllForRemovesNamedStrong;
     procedure UnsubscribeAllForRemovesGuidStrong;
+    procedure GuidStrongAsyncFaultDoesNotAutoUnsubscribe;
   end;
 
   TTestWeakTargetABA = class(TmaxTestCase)
@@ -5767,6 +5778,38 @@ begin
   Inc(HitsIntf);
 end;
 
+{ TStrongFaultProbe }
+
+constructor TStrongFaultProbe.Create;
+begin
+  inherited Create;
+  fDelivered := TEvent.Create(nil, True, False, '');
+  fFaultValue := 0;
+  fHits := 0;
+end;
+
+destructor TStrongFaultProbe.Destroy;
+begin
+  fDelivered.Free;
+  inherited;
+end;
+
+procedure TStrongFaultProbe.OnIntf(const aValue: IIntEvent);
+var
+  lValue: integer;
+begin
+  Inc(fHits);
+  if aValue = nil then
+    Exit;
+
+  lValue := aValue.GetValue;
+  if lValue = fFaultValue then
+    raise EInvalidPointer.Create('strong-guid-fault');
+
+  if fDelivered <> nil then
+    fDelivered.SetEvent;
+end;
+
 { TTestWeakTargets }
 
 procedure TTestWeakTargets.SkipsFreedTargetTyped;
@@ -5971,6 +6014,62 @@ begin
     Check(not lSub.IsActive);
   finally
     lProbe.Free;
+  end;
+end;
+
+procedure TTestStrongTargets.GuidStrongAsyncFaultDoesNotAutoUnsubscribe;
+var
+  lBus: ImaxBus;
+  lError: string;
+  lErrorEvent: TEvent;
+  lErrorTopic: string;
+  lPrevScheduler: IEventNexusScheduler;
+  lProbe: TStrongFaultProbe;
+  lSub: ImaxSubscription;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lError := '';
+  lErrorTopic := '';
+  lErrorEvent := TEvent.Create(nil, True, False, '');
+  lPrevScheduler := maxGetAsyncScheduler;
+  lProbe := TStrongFaultProbe.Create;
+  try
+    lProbe.fFaultValue := 1;
+    maxSetAsyncScheduler(TSignalScheduler.Create(nil));
+    maxSetAsyncErrorHandler(
+      procedure(const aTopic: string; const aError: Exception)
+      begin
+        lErrorTopic := aTopic;
+        if aError <> nil then
+          lError := aError.Message
+        else
+          lError := '';
+        lErrorEvent.SetEvent;
+      end);
+
+    lSub := maxBusObj(lBus).SubscribeGuidOfStrong<IIntEvent>(lProbe.OnIntf, TmaxDelivery.Async);
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(1));
+
+    Check(lErrorEvent.WaitFor(1000) = wrSignaled, 'Expected async error hook for strong guid fault');
+    Check(lSub.IsActive, 'Strong guid subscription should stay active after handler fault');
+    CheckEquals('strong-guid-fault', lError);
+    Check(lErrorTopic <> '', 'Expected async error topic');
+    CheckEquals(1, lProbe.fHits);
+
+    lErrorEvent.ResetEvent;
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(2));
+
+    Check(lProbe.fDelivered.WaitFor(1000) = wrSignaled, 'Expected later guid event after strong fault');
+    Check(lErrorEvent.WaitFor(0) <> wrSignaled, 'Did not expect async error for second guid event');
+    Check(lSub.IsActive, 'Strong guid subscription should remain active after second delivery');
+    CheckEquals(2, lProbe.fHits);
+  finally
+    maxSetAsyncErrorHandler(nil);
+    maxSetAsyncScheduler(lPrevScheduler);
+    lProbe.Free;
+    lErrorEvent.Free;
+    lBus.Clear;
   end;
 end;
 
