@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- Added exact named mailbox delivery through `SubscribeNamedIn`, updated the mailbox spec, and expanded regression coverage for receiver affinity, case-insensitive routing, sticky replay, FIFO ordering, unsubscribe or `Clear`, and `PostResultNamed` mailbox handoff classification. (T-1128, T-1129)
 - Added portable mailbox delivery through `ImaxMailbox` / `TmaxMailbox`, typed `SubscribeIn<T>`, cooperative pumping docs, and mailbox lifecycle coverage for unsubscribe, `Clear`, close, timeout, and receiver affinity. (T-1121..T-1125)
 - Removed the unused `lib/mORMot2` submodule, cleaned stale Delphi project search paths that still pointed at it, and updated the README to describe only the maintained foundation-unit build surface. (T-1119)
 - Refreshed the README benchmark snapshot with current isolated Win32/Win64 async and posting framework medians, switched the published framework profile to `--max-inflight=0`, and documented RawThread as the dedicated-thread non-pool scheduler rather than a cross-framework throughput baseline. (T-1117)
