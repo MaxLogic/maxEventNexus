@@ -425,6 +425,11 @@ type
     procedure MailboxNamedFIFOOrder;
     procedure MailboxNamedUnsubscribeSkipsQueuedWork;
     procedure MailboxNamedClearPurgesQueuedWork;
+    procedure MailboxSubscribeNamedOfRunsOnOwnerThread;
+    procedure MailboxNamedOfMixedCaseRoutes;
+    procedure MailboxNamedOfStickyReplayRunsOnOwnerThread;
+    procedure MailboxNamedOfFIFOOrder;
+    procedure MailboxNamedOfSharedNamePerTypeRouting;
     procedure MailboxUnsubscribeSkipsQueuedWork;
     procedure MailboxClearPurgesQueuedWork;
     procedure MailboxCloseDiscardPending;
@@ -439,6 +444,7 @@ type
     procedure CoalescedReturnsCoalesced;
     procedure AcceptedReturnsInlineOrQueued;
     procedure NamedMailboxReturnsQueued;
+    procedure NamedOfMailboxReturnsQueued;
     procedure GuidOfQueuePressureReturnsQueuedThenDropped;
     procedure GuidOfAcceptedReturnsInline;
     procedure ClearPreservesTypedExplicitPolicy;
@@ -547,6 +553,7 @@ type
     procedure NamedOfExplicitPolicyOverridesPresets;
     procedure NamedOfRemovingNamePresetFallsBackToTypePreset;
     procedure NamedOfRemovingNamePresetFallsBackPerType;
+    procedure MailboxNamedOfSharedNamePresetFallbackStaysPerType;
     procedure NamedOfTypePresetUpdateReappliesToExistingImplicitTopic;
     procedure ClearPreservesNamedOfTypePresetFallback;
     procedure NamedPresetsReturnDefaultPolicy;
@@ -5384,6 +5391,36 @@ begin
   AssertNamedOfUnboundedPresetEventPolicy(lBus, cName);
 end;
 
+procedure TTestQueuePolicyPresets.MailboxNamedOfSharedNamePresetFallbackStaysPerType;
+const
+  cName = 'statepreset.namedof.mailbox.sharedname';
+var
+  lBus: ImaxBus;
+  lIntMailbox: ImaxMailbox;
+  lPresetMailbox: ImaxMailbox;
+begin
+  lBus := CreateIsolatedBus;
+  lIntMailbox := TmaxMailbox.Create;
+  lPresetMailbox := TmaxMailbox.Create;
+  maxBusObj(lBus).SetQueuePresetForType(TypeInfo(Integer), TmaxQueuePreset.State);
+  maxBusObj(lBus).SetQueuePresetNamed(cName, TmaxQueuePreset.State);
+  maxBusObj(lBus).SubscribeNamedOfIn<Integer>(cName, lIntMailbox,
+    procedure(const aValue: Integer)
+    begin
+      if aValue = 0 then
+        Exit;
+    end);
+  maxBusObj(lBus).SubscribeNamedOfIn<TPresetEvent>(cName, lPresetMailbox,
+    procedure(const aValue: TPresetEvent)
+    begin
+      if aValue.Value = 0 then
+        Exit;
+    end);
+  maxBusObj(lBus).SetQueuePresetNamed(cName, TmaxQueuePreset.Unspecified);
+  AssertNamedOfStatePolicy(lBus, cName);
+  AssertNamedOfUnboundedPresetEventPolicy(lBus, cName);
+end;
+
 procedure TTestQueuePolicyPresets.NamedOfTypePresetUpdateReappliesToExistingImplicitTopic;
 const
   cName = 'statepreset.namedof.reapply';
@@ -6763,6 +6800,178 @@ begin
   end;
 end;
 
+procedure TTestMailbox.MailboxSubscribeNamedOfRunsOnOwnerThread;
+var
+  lBus: ImaxBus;
+  lDone: TEvent;
+  lHandledThreadId: TThreadID;
+  lMailbox: ImaxMailbox;
+  lThread: TThread;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lDone := TEvent.Create(nil, True, False, '');
+  lHandledThreadId := 0;
+  lThread := nil;
+  try
+    maxBusObj(lBus).SubscribeNamedOfIn<Integer>('mailbox.namedof', lMailbox,
+      procedure(const aValue: Integer)
+      begin
+        lHandledThreadId := TThread.CurrentThread.ThreadID;
+        lDone.SetEvent;
+      end);
+
+    lThread := TThread.CreateAnonymousThread(
+      procedure
+      begin
+        maxBusObj(lBus).PostNamedOf<Integer>('mailbox.namedof', 42);
+      end);
+    lThread.FreeOnTerminate := False;
+    lThread.Start;
+    lThread.WaitFor;
+    Check(lMailbox.PumpOne(2000));
+    Check(lDone.WaitFor(2000) = wrSignaled);
+    CheckEquals(TThread.CurrentThread.ThreadID, lHandledThreadId);
+  finally
+    lBus.Clear;
+    lDone.Free;
+    if lThread <> nil then
+      lThread.Free;
+  end;
+end;
+
+procedure TTestMailbox.MailboxNamedOfMixedCaseRoutes;
+var
+  lBus: ImaxBus;
+  lMailbox: ImaxMailbox;
+  lValues: TList<Integer>;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lValues := TList<Integer>.Create;
+  try
+    maxBusObj(lBus).SubscribeNamedOfIn<Integer>('Orders.Mailbox.Of', lMailbox,
+      procedure(const aValue: Integer)
+      begin
+        lValues.Add(aValue);
+      end);
+    maxBusObj(lBus).PostNamedOf<Integer>('orders.mailbox.of', 37);
+    CheckEquals(1, lMailbox.PumpAll);
+    CheckEquals(1, lValues.Count);
+    CheckEquals(37, lValues[0]);
+  finally
+    lValues.Free;
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestMailbox.MailboxNamedOfStickyReplayRunsOnOwnerThread;
+var
+  lBus: ImaxBus;
+  lDone: TEvent;
+  lHandledThreadId: TThreadID;
+  lMailbox: ImaxMailbox;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lDone := TEvent.Create(nil, True, False, '');
+  lHandledThreadId := 0;
+  try
+    (lBus as ImaxBusAdvanced).EnableStickyNamed('CaseInsensitive.Mailbox.NamedOf.Sticky', True);
+    maxBusObj(lBus).PostNamedOf<Integer>('caseinsensitive.mailbox.namedof.sticky', 10);
+
+    maxBusObj(lBus).SubscribeNamedOfIn<Integer>('CASEINSENSITIVE.MAILBOX.NAMEDOF.STICKY', lMailbox,
+      procedure(const aValue: Integer)
+      begin
+        lHandledThreadId := TThread.CurrentThread.ThreadID;
+        lDone.SetEvent;
+      end);
+
+    Check(lMailbox.PumpOne(2000));
+    Check(lDone.WaitFor(2000) = wrSignaled);
+    CheckEquals(TThread.CurrentThread.ThreadID, lHandledThreadId);
+  finally
+    (lBus as ImaxBusAdvanced).EnableStickyNamed('CaseInsensitive.Mailbox.NamedOf.Sticky', False);
+    lBus.Clear;
+    lDone.Free;
+  end;
+end;
+
+procedure TTestMailbox.MailboxNamedOfFIFOOrder;
+var
+  lBus: ImaxBus;
+  lMailbox: ImaxMailbox;
+  lValues: TList<Integer>;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lValues := TList<Integer>.Create;
+  try
+    maxBusObj(lBus).SubscribeNamedOfIn<Integer>('mailbox.namedof.fifo', lMailbox,
+      procedure(const aValue: Integer)
+      begin
+        lValues.Add(aValue);
+      end);
+    maxBusObj(lBus).PostNamedOf<Integer>('mailbox.namedof.fifo', 1);
+    maxBusObj(lBus).PostNamedOf<Integer>('mailbox.namedof.fifo', 2);
+    maxBusObj(lBus).PostNamedOf<Integer>('mailbox.namedof.fifo', 3);
+    CheckEquals(3, lMailbox.PumpAll);
+    CheckEquals(3, lValues.Count);
+    CheckEquals(1, lValues[0]);
+    CheckEquals(2, lValues[1]);
+    CheckEquals(3, lValues[2]);
+  finally
+    lValues.Free;
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestMailbox.MailboxNamedOfSharedNamePerTypeRouting;
+var
+  lBus: ImaxBus;
+  lIntMailbox: ImaxMailbox;
+  lIntValues: TList<Integer>;
+  lPresetMailbox: ImaxMailbox;
+  lPresetValues: TList<Integer>;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lIntMailbox := TmaxMailbox.Create;
+  lPresetMailbox := TmaxMailbox.Create;
+  lIntValues := TList<Integer>.Create;
+  lPresetValues := TList<Integer>.Create;
+  try
+    maxBusObj(lBus).SubscribeNamedOfIn<Integer>('mailbox.namedof.shared', lIntMailbox,
+      procedure(const aValue: Integer)
+      begin
+        lIntValues.Add(aValue);
+      end);
+    maxBusObj(lBus).SubscribeNamedOfIn<TPresetEvent>('mailbox.namedof.shared', lPresetMailbox,
+      procedure(const aValue: TPresetEvent)
+      begin
+        lPresetValues.Add(aValue.Value);
+      end);
+
+    maxBusObj(lBus).PostNamedOf<Integer>('mailbox.namedof.shared', 11);
+    maxBusObj(lBus).PostNamedOf<TPresetEvent>('mailbox.namedof.shared', MakePresetEvent(22));
+
+    CheckEquals(1, lIntMailbox.PumpAll);
+    CheckEquals(1, lPresetMailbox.PumpAll);
+    CheckEquals(1, lIntValues.Count);
+    CheckEquals(11, lIntValues[0]);
+    CheckEquals(1, lPresetValues.Count);
+    CheckEquals(22, lPresetValues[0]);
+  finally
+    lPresetValues.Free;
+    lIntValues.Free;
+    lBus.Clear;
+  end;
+end;
+
 procedure TTestMailbox.MailboxUnsubscribeSkipsQueuedWork;
 var
   lBus: ImaxBus;
@@ -7090,6 +7299,33 @@ begin
         Inc(lHits);
       end);
     lResult := maxBusObj(lBus).PostResultNamed('postresult.named.mailbox');
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(lResult));
+    CheckEquals(1, lMailbox.PendingCount);
+    CheckEquals(1, lMailbox.PumpAll);
+    CheckEquals(1, lHits);
+  finally
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestPostResult.NamedOfMailboxReturnsQueued;
+var
+  lBus: ImaxBus;
+  lHits: Integer;
+  lMailbox: ImaxMailbox;
+  lResult: TmaxPostResult;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lHits := 0;
+  try
+    maxBusObj(lBus).SubscribeNamedOfIn<Integer>('postresult.namedof.mailbox', lMailbox,
+      procedure(const aValue: Integer)
+      begin
+        Inc(lHits);
+      end);
+    lResult := maxBusObj(lBus).PostResultNamedOf<Integer>('postresult.namedof.mailbox', 17);
     CheckEquals(Integer(TmaxPostResult.Queued), Integer(lResult));
     CheckEquals(1, lMailbox.PendingCount);
     CheckEquals(1, lMailbox.PumpAll);
