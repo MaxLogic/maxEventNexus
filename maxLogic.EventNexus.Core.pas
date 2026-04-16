@@ -573,14 +573,23 @@ type
           procedure DescribeAutoBridgeDispatch(const aSnapshots: TArray<TmaxAutoBridgeSnapshot>;
             out aHasInline, aHasDeferred: boolean);
           function DeliveryRunsInline(aDelivery: TmaxDelivery): boolean;
+          class function MailboxIsClosed(const aMailbox: ImaxBusMailbox): Boolean; static;
           class function HasLiveTypedSubscribers<t>(const aTopic: TTypedTopic<t>): boolean; static;
           procedure DispatchAutoBridge<t>(const aTopic: TmaxString; const aSnapshots: TArray<TmaxAutoBridgeSnapshot>;
             const aEvent: t);
           procedure DispatchTypedSubscribers<t>(const aTopicName: TmaxString; const aTopic: TTypedTopic<t>;
-            const aSubs: TArray<TTypedSubscriber<t>>; const aValue: t; aRaiseMainThreadRequired: boolean);
+            const aSubs: TArray<TTypedSubscriber<t>>; const aValue: t; aRaiseMainThreadRequired: boolean); overload;
+          procedure DispatchTypedSubscribers<t>(const aTopicName: TmaxString; const aTopic: TTypedTopic<t>;
+            const aSubs: TArray<TTypedSubscriber<t>>; const aValue: t; aRaiseMainThreadRequired: boolean;
+            out aAnyAccepted, aMailboxAccepted: Boolean); overload;
           function TryPostMailboxTypedDispatchItem<t>(const aMailbox: ImaxBusMailbox; aTopic: TTypedTopic<t>;
             const aHandler: TmaxProcOf<t>; const aValue: t; aToken: TmaxSubscriptionToken;
             const aState: ImaxSubscriptionState; const aMailboxCoalesceKeyOf: TmaxKeyFunc<t>): Boolean;
+          function TryPostTypedWithMailboxOutcome<t>(const aEvent: t; out aMailboxAccepted: Boolean): Boolean;
+          function TryPostNamedWithMailboxOutcome(const aName: TmaxString; out aMailboxAccepted: Boolean): Boolean;
+          function TryPostNamedOfWithMailboxOutcome<t>(const aName: TmaxString; const aEvent: t;
+            out aMailboxAccepted: Boolean): Boolean;
+          function TryPostGuidOfWithMailboxOutcome<t>(const aEvent: t; out aMailboxAccepted: Boolean): Boolean;
           function SubscribeTypedObjInternal<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery;
             aTrackWeakTarget: boolean): ImaxSubscription;
           function SubscribeNamedOfObjInternal<t>(const aName: TmaxString; const aHandler: TmaxObjProcOf<t>;
@@ -4242,6 +4251,13 @@ end;
 
 { TmaxBus }
 
+class function TmaxBus.MailboxIsClosed(const aMailbox: ImaxBusMailbox): Boolean;
+var
+  lPublicMailbox: ImaxMailbox;
+begin
+  Result := Supports(aMailbox, ImaxMailbox, lPublicMailbox) and lPublicMailbox.IsClosed;
+end;
+
 function TmaxBus.TryPostMailboxTypedDispatchItem<t>(const aMailbox: ImaxBusMailbox; aTopic: TTypedTopic<t>;
   const aHandler: TmaxProcOf<t>; const aValue: t; aToken: TmaxSubscriptionToken; const aState: ImaxSubscriptionState;
   const aMailboxCoalesceKeyOf: TmaxKeyFunc<t>): Boolean;
@@ -4271,7 +4287,8 @@ begin
 
   if not Result then
   begin
-    aTopic.RemoveByToken(aToken);
+    if MailboxIsClosed(aMailbox) then
+      aTopic.RemoveByToken(aToken);
     aTopic.AddDropped;
     Exit;
   end;
@@ -4283,6 +4300,17 @@ end;
 
 procedure TmaxBus.DispatchTypedSubscribers<t>(const aTopicName: TmaxString; const aTopic: TTypedTopic<t>;
   const aSubs: TArray<TTypedSubscriber<t>>; const aValue: t; aRaiseMainThreadRequired: boolean);
+var
+  lAnyAccepted: Boolean;
+  lMailboxAccepted: Boolean;
+begin
+  DispatchTypedSubscribers<t>(aTopicName, aTopic, aSubs, aValue, aRaiseMainThreadRequired, lAnyAccepted,
+    lMailboxAccepted);
+end;
+
+procedure TmaxBus.DispatchTypedSubscribers<t>(const aTopicName: TmaxString; const aTopic: TTypedTopic<t>;
+  const aSubs: TArray<TTypedSubscriber<t>>; const aValue: t; aRaiseMainThreadRequired: boolean;
+  out aAnyAccepted, aMailboxAccepted: Boolean);
 var
   i: Integer;
   lBatchStart: TmaxProc;
@@ -4300,6 +4328,8 @@ var
   lDeliveredCount: integer;
   lHasDeferred: boolean;
 begin
+  aAnyAccepted := False;
+  aMailboxAccepted := False;
   lErrs := nil;
   lErrDetails := nil;
   lDeferredCount := 0;
@@ -4335,6 +4365,7 @@ begin
           try
             lHandler(aValue);
             Inc(lDeliveredCount);
+            aAnyAccepted := True;
           except
             on e: Exception do
             begin
@@ -4388,6 +4419,7 @@ begin
           try
             lHandler(aValue);
             Inc(lDeliveredCount);
+            aAnyAccepted := True;
           except
             on e: Exception do
             begin
@@ -4435,8 +4467,12 @@ begin
           Continue;
         end;
 
-        TryPostMailboxTypedDispatchItem<t>(aSubs[i].MailboxInternal, aTopic, lHandler, aValue, lToken,
-          aSubs[i].StateObj, aSubs[i].MailboxCoalesceKeyOf);
+        if TryPostMailboxTypedDispatchItem<t>(aSubs[i].MailboxInternal, aTopic, lHandler, aValue, lToken,
+          aSubs[i].StateObj, aSubs[i].MailboxCoalesceKeyOf) then
+        begin
+          aAnyAccepted := True;
+          aMailboxAccepted := True;
+        end;
         Continue;
       end;
 
@@ -4475,6 +4511,7 @@ begin
       lDeferredItems[lDeferredCount].Token := lToken;
       lDeferredItems[lDeferredCount].SubscriberIndex := i;
       Inc(lDeferredCount);
+      aAnyAccepted := True;
     end;
 
     if lDeferredCount > 0 then
@@ -5570,8 +5607,9 @@ begin
     DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
 end;
 
-function TmaxBus.TryPost<t>(const aEvent: t): boolean;
+function TmaxBus.TryPostTypedWithMailboxOutcome<t>(const aEvent: t; out aMailboxAccepted: Boolean): Boolean;
 var
+  lDirectAccepted: Boolean;
   lKey: PTypeInfo;
   lObj: TmaxTopicBase;
   lTopic: TTypedTopic<t>;
@@ -5585,6 +5623,7 @@ var
   lPreset: TmaxQueuePreset;
   lCreated: boolean;
 begin
+  aMailboxAccepted := False;
   lCreated := False;
 
   Result := True;
@@ -5705,8 +5744,8 @@ begin
   if lTopic.SnapshotAndTryBeginDirectDispatch(lSubs) then
   begin
     try
-      DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
-      Result := True;
+      DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True, lDirectAccepted, aMailboxAccepted);
+      Result := lDirectAccepted or (Length(lAutoSubs) <> 0);
     finally
       lTopic.EndDirectDispatch;
     end;
@@ -5726,6 +5765,13 @@ begin
     DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
 end;
 
+function TmaxBus.TryPost<t>(const aEvent: t): boolean;
+var
+  lMailboxAccepted: Boolean;
+begin
+  Result := TryPostTypedWithMailboxOutcome<t>(aEvent, lMailboxAccepted);
+end;
+
 function TmaxBus.PostResult<t>(const aEvent: t): TmaxPostResult;
 var
   lAutoSubs: TArray<TmaxAutoBridgeSnapshot>;
@@ -5734,6 +5780,7 @@ var
   lHasLiveSubscribers: boolean;
   lKey: PTypeInfo;
   lObj: TmaxTopicBase;
+  lMailboxAccepted: Boolean;
   lTopic: TTypedTopic<t>;
   lSticky: boolean;
   lAccepted: boolean;
@@ -5745,6 +5792,7 @@ begin
   lAutoSubs := SnapshotAutoBridgeTyped(lKey);
   DescribeAutoBridgeDispatch(lAutoSubs, lHasInlineAutoSubs, lHasDeferredAutoSubs);
   lHasLiveSubscribers := False;
+  lMailboxAccepted := False;
   lQueueDepth := 0;
   lWasProcessing := False;
 
@@ -5776,16 +5824,16 @@ begin
 
   if (lTopic <> nil) and lTopic.HasCoalesce then
   begin
-    lAccepted := TryPost<t>(aEvent);
+    lAccepted := TryPostTypedWithMailboxOutcome<t>(aEvent, lMailboxAccepted);
     if not lAccepted then
       Exit(TmaxPostResult.Dropped);
     Exit(TmaxPostResult.Coalesced);
   end;
 
-  lAccepted := TryPost<t>(aEvent);
+  lAccepted := TryPostTypedWithMailboxOutcome<t>(aEvent, lMailboxAccepted);
   if not lAccepted then
     Exit(TmaxPostResult.Dropped);
-  if (lQueueDepth > 0) or lWasProcessing then
+  if lMailboxAccepted or (lQueueDepth > 0) or lWasProcessing then
     Exit(TmaxPostResult.Queued);
   if (not lHasLiveSubscribers) and (not lHasInlineAutoSubs) and lHasDeferredAutoSubs then
     Exit(TmaxPostResult.Queued);
@@ -5985,7 +6033,8 @@ begin
       if not lInternalMailbox.TryPostItem(
         TMailboxNamedDispatchItem.Create(Self, lMailboxGeneration, lTopic, aHandler, lToken, lState)) then
       begin
-        lTopic.RemoveByToken(lToken);
+        if MailboxIsClosed(lInternalMailbox) then
+          lTopic.RemoveByToken(lToken);
         lTopic.AddDropped;
       end
       else if (TInterlocked.CompareExchange(fMailboxClearActive, 0, 0) <> 0) or
@@ -6136,7 +6185,8 @@ begin
           if not lSubs[i].MailboxInternal.TryPostItem(
             TMailboxNamedDispatchItem.Create(Self, lMailboxGeneration, lTopic, lHandler, lToken, lState)) then
           begin
-            lTopic.RemoveByToken(lToken);
+            if MailboxIsClosed(lSubs[i].MailboxInternal) then
+              lTopic.RemoveByToken(lToken);
             lTopic.AddDropped;
             Continue;
           end;
@@ -6258,8 +6308,11 @@ begin
     end);
 end;
 
-function TmaxBus.TryPostNamed(const aName: TmaxString): boolean;
+function TmaxBus.TryPostNamedWithMailboxOutcome(const aName: TmaxString; out aMailboxAccepted: Boolean): Boolean;
 var
+  lAnyAcceptedInDispatch: Boolean;
+  lDispatchedInline: Boolean;
+  lMailboxAcceptedInDispatch: Boolean;
   lObj: TmaxTopicBase;
   lTopic: TNamedTopic;
   lSubs: TArray<TNamedSubscriber>;
@@ -6270,6 +6323,9 @@ var
   lPreset: TmaxQueuePreset;
   lCreated: boolean;
 begin
+  lAnyAcceptedInDispatch := False;
+  lDispatchedInline := False;
+  lMailboxAcceptedInDispatch := False;
   Result := True;
   lNameKey := aName;
   lMetric := '';
@@ -6349,7 +6405,7 @@ begin
   lTopic.AddPost;
   if (Length(lSubs) = 0) and (Length(lWildcardSubs) = 0) then
     exit;
-  Result := lTopic.Enqueue(
+  Result := lTopic.EnqueueWithDispatchFlag(
     procedure
     var
       lErrs: TmaxExceptionList;
@@ -6392,10 +6448,13 @@ begin
           if not lSubs[i].MailboxInternal.TryPostItem(
             TMailboxNamedDispatchItem.Create(Self, lMailboxGeneration, lTopic, lHandler, lToken, lState)) then
           begin
-            lTopic.RemoveByToken(lToken);
+            if MailboxIsClosed(lSubs[i].MailboxInternal) then
+              lTopic.RemoveByToken(lToken);
             lTopic.AddDropped;
             Continue;
           end;
+          lAnyAcceptedInDispatch := True;
+          lMailboxAcceptedInDispatch := True;
 
           if (TInterlocked.CompareExchange(fMailboxClearActive, 0, 0) <> 0) or
             (CurrentMailboxGeneration <> lMailboxGeneration) then
@@ -6419,6 +6478,7 @@ begin
             try
               try
                 lHandler();
+                lAnyAcceptedInDispatch := True;
                 lTopic.AddDelivered(1);
               except
                 on e: Exception do
@@ -6444,6 +6504,7 @@ begin
             lBox.Handler := lHandler;
             lBox.Token := lToken;
             lBox.State := lState;
+            lAnyAcceptedInDispatch := True;
             Dispatch(lMetric, lMode, MakeNamedHandlerProc(lBox), nil);
           end;
         except
@@ -6472,6 +6533,7 @@ begin
             try
               try
                 lHandler();
+                lAnyAcceptedInDispatch := True;
                 lTopic.AddDelivered(1);
               except
                 on e: Exception do
@@ -6497,6 +6559,7 @@ begin
             lBox.Handler := lHandler;
             lBox.Token := lToken;
             lBox.State := lState;
+            lAnyAcceptedInDispatch := True;
             Dispatch(lMetric, lMode, MakeNamedHandlerProc(lBox), nil);
           end;
         except
@@ -6511,15 +6574,24 @@ begin
 
       if lErrs <> nil then
         raise EmaxDispatchError.Create(lErrs, lErrDetails);
-    end);
+    end,
+    lDispatchedInline);
+  aMailboxAccepted := lMailboxAcceptedInDispatch;
+  if lDispatchedInline then
+    Result := lAnyAcceptedInDispatch;
+end;
+
+function TmaxBus.TryPostNamed(const aName: TmaxString): boolean;
+var
+  lMailboxAccepted: Boolean;
+begin
+  Result := TryPostNamedWithMailboxOutcome(aName, lMailboxAccepted);
 end;
 
 function TmaxBus.PostResultNamed(const aName: TmaxString): TmaxPostResult;
 var
   lObj: TmaxTopicBase;
-  lIdx: Integer;
-  lHasMailbox: Boolean;
-  lSubs: TArray<TNamedSubscriber>;
+  lMailboxAccepted: Boolean;
   lTopic: TNamedTopic;
   lWildcardSubs: TArray<TNamedWildcardSubscriber>;
   lNameKey: TmaxString;
@@ -6529,8 +6601,7 @@ var
   lWasProcessing: boolean;
 begin
   lNameKey := aName;
-  lHasMailbox := False;
-  lSubs := nil;
+  lMailboxAccepted := False;
   lWildcardSubs := SnapshotNamedWildcardMatches(lNameKey);
   lTopic := nil;
   lQueueDepth := 0;
@@ -6558,21 +6629,13 @@ begin
   else
   begin
     lQueueDepth := lTopic.GetStats.CurrentQueueDepth;
-    lSubs := lTopic.Snapshot;
-    for lIdx := 0 to High(lSubs) do
-      if (lSubs[lIdx].MailboxInternal <> nil) and lSubs[lIdx].Target.IsAlive and
-        ((lSubs[lIdx].State = nil) or lSubs[lIdx].State.IsActive) then
-      begin
-        lHasMailbox := True;
-        Break;
-      end;
     lWasProcessing := lTopic.IsProcessing;
   end;
 
-  lAccepted := TryPostNamed(aName);
+  lAccepted := TryPostNamedWithMailboxOutcome(aName, lMailboxAccepted);
   if not lAccepted then
     Exit(TmaxPostResult.Dropped);
-  if lHasMailbox or (lQueueDepth > 0) or lWasProcessing then
+  if lMailboxAccepted or (lQueueDepth > 0) or lWasProcessing then
     Exit(TmaxPostResult.Queued);
   Result := TmaxPostResult.DispatchedInline;
 end;
@@ -7136,8 +7199,10 @@ begin
     DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
 end;
 
-	function TmaxBus.TryPostNamedOf<t>(const aName: TmaxString; const aEvent: t): boolean;
+function TmaxBus.TryPostNamedOfWithMailboxOutcome<t>(const aName: TmaxString; const aEvent: t;
+  out aMailboxAccepted: Boolean): Boolean;
 var
+  lDirectAccepted: Boolean;
   lTypeDict: TmaxTypeTopicDict;
   lObj: TmaxTopicBase;
   lTopic: TTypedTopic<t>;
@@ -7156,6 +7221,7 @@ var
   lHasBasePolicy: boolean;
   lCreated: boolean;
 begin
+  aMailboxAccepted := False;
   Result := True;
   lKey := TypeInfo(t);
   lNameKey := aName;
@@ -7285,8 +7351,8 @@ begin
   if lTopic.SnapshotAndTryBeginDirectDispatch(lSubs) then
   begin
     try
-      DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
-      Result := True;
+      DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True, lDirectAccepted, aMailboxAccepted);
+      Result := lDirectAccepted or (Length(lAutoSubs) <> 0);
     finally
       lTopic.EndDirectDispatch;
     end;
@@ -7306,17 +7372,22 @@ begin
     DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
 end;
 
+function TmaxBus.TryPostNamedOf<t>(const aName: TmaxString; const aEvent: t): boolean;
+var
+  lMailboxAccepted: Boolean;
+begin
+  Result := TryPostNamedOfWithMailboxOutcome<t>(aName, aEvent, lMailboxAccepted);
+end;
+
 function TmaxBus.PostResultNamedOf<t>(const aName: TmaxString; const aEvent: t): TmaxPostResult;
 var
   lAutoSubs: TArray<TmaxAutoBridgeSnapshot>;
   lHasDeferredAutoSubs: boolean;
   lHasInlineAutoSubs: boolean;
-  lHasMailboxSubscribers: Boolean;
   lHasLiveSubscribers: boolean;
-  lIdx: Integer;
-  lSubs: TArray<TTypedSubscriber<t>>;
   lTypeDict: TmaxTypeTopicDict;
   lObj: TmaxTopicBase;
+  lMailboxAccepted: Boolean;
   lTopic: TTypedTopic<t>;
   lNameKey: TmaxString;
   lKey: PTypeInfo;
@@ -7330,8 +7401,8 @@ begin
   lTopic := nil;
   lAutoSubs := SnapshotAutoBridgeNamedTyped(lNameKey, lKey);
   DescribeAutoBridgeDispatch(lAutoSubs, lHasInlineAutoSubs, lHasDeferredAutoSubs);
-  lHasMailboxSubscribers := False;
   lHasLiveSubscribers := False;
+  lMailboxAccepted := False;
   lQueueDepth := 0;
   lWasProcessing := False;
 
@@ -7357,30 +7428,22 @@ begin
   else
   begin
     lHasLiveSubscribers := HasLiveTypedSubscribers<t>(lTopic);
-    lSubs := lTopic.Snapshot;
-    for lIdx := 0 to High(lSubs) do
-      if (lSubs[lIdx].MailboxInternal <> nil) and lSubs[lIdx].Target.IsAlive and
-        ((lSubs[lIdx].State = nil) or lSubs[lIdx].State.IsActive) then
-      begin
-        lHasMailboxSubscribers := True;
-        Break;
-      end;
     lQueueDepth := lTopic.GetStats.CurrentQueueDepth;
     lWasProcessing := lTopic.IsProcessing;
   end;
 
   if (lTopic <> nil) and lTopic.HasCoalesce then
   begin
-    lAccepted := TryPostNamedOf<t>(aName, aEvent);
+    lAccepted := TryPostNamedOfWithMailboxOutcome<t>(aName, aEvent, lMailboxAccepted);
     if not lAccepted then
       Exit(TmaxPostResult.Dropped);
     Exit(TmaxPostResult.Coalesced);
   end;
 
-  lAccepted := TryPostNamedOf<t>(aName, aEvent);
+  lAccepted := TryPostNamedOfWithMailboxOutcome<t>(aName, aEvent, lMailboxAccepted);
   if not lAccepted then
     Exit(TmaxPostResult.Dropped);
-  if lHasMailboxSubscribers or (lQueueDepth > 0) or lWasProcessing then
+  if lMailboxAccepted or (lQueueDepth > 0) or lWasProcessing then
     Exit(TmaxPostResult.Queued);
   if (not lHasLiveSubscribers) and (not lHasInlineAutoSubs) and lHasDeferredAutoSubs then
     Exit(TmaxPostResult.Queued);
@@ -7872,8 +7935,9 @@ begin
     DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
 		end;
 
-function TmaxBus.TryPostGuidOf<t>(const aEvent: t): boolean;
+function TmaxBus.TryPostGuidOfWithMailboxOutcome<t>(const aEvent: t; out aMailboxAccepted: Boolean): Boolean;
 var
+  lDirectAccepted: Boolean;
   lKey: TGuid;
   lObj: TmaxTopicBase;
   lTopic: TTypedTopic<t>;
@@ -7888,6 +7952,7 @@ var
   lTypeKey: PTypeInfo;
   lCreated: boolean;
 begin
+  aMailboxAccepted := False;
   lCreated := False;
 
   Result := True;
@@ -8011,8 +8076,8 @@ begin
   if lTopic.SnapshotAndTryBeginDirectDispatch(lSubs) then
   begin
     try
-      DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True);
-      Result := True;
+      DispatchTypedSubscribers<t>(lMetric, lTopic, lSubs, aEvent, True, lDirectAccepted, aMailboxAccepted);
+      Result := lDirectAccepted or (Length(lAutoSubs) <> 0);
     finally
       lTopic.EndDirectDispatch;
     end;
@@ -8032,17 +8097,22 @@ begin
     DispatchAutoBridge<t>(lMetric, lAutoSubs, aEvent);
 		end;
 
+function TmaxBus.TryPostGuidOf<t>(const aEvent: t): boolean;
+var
+  lMailboxAccepted: Boolean;
+begin
+  Result := TryPostGuidOfWithMailboxOutcome<t>(aEvent, lMailboxAccepted);
+end;
+
 function TmaxBus.PostResultGuidOf<t>(const aEvent: t): TmaxPostResult;
 var
   lAutoSubs: TArray<TmaxAutoBridgeSnapshot>;
   lHasDeferredAutoSubs: boolean;
   lHasInlineAutoSubs: boolean;
-  lHasMailboxSubscribers: Boolean;
   lHasLiveSubscribers: boolean;
-  lIdx: Integer;
   lKey: TGuid;
   lObj: TmaxTopicBase;
-  lSubs: TArray<TTypedSubscriber<t>>;
+  lMailboxAccepted: Boolean;
   lTopic: TTypedTopic<t>;
   lTypeKey: PTypeInfo;
   lSticky: boolean;
@@ -8055,8 +8125,8 @@ begin
   lTopic := nil;
   lAutoSubs := SnapshotAutoBridgeGuid(lKey);
   DescribeAutoBridgeDispatch(lAutoSubs, lHasInlineAutoSubs, lHasDeferredAutoSubs);
-  lHasMailboxSubscribers := False;
   lHasLiveSubscribers := False;
+  lMailboxAccepted := False;
   lQueueDepth := 0;
   lWasProcessing := False;
 
@@ -8082,30 +8152,22 @@ begin
   else
   begin
     lHasLiveSubscribers := HasLiveTypedSubscribers<t>(lTopic);
-    lSubs := lTopic.Snapshot;
-    for lIdx := 0 to High(lSubs) do
-      if (lSubs[lIdx].MailboxInternal <> nil) and lSubs[lIdx].Target.IsAlive and
-        ((lSubs[lIdx].State = nil) or lSubs[lIdx].State.IsActive) then
-      begin
-        lHasMailboxSubscribers := True;
-        Break;
-      end;
     lQueueDepth := lTopic.GetStats.CurrentQueueDepth;
     lWasProcessing := lTopic.IsProcessing;
   end;
 
   if (lTopic <> nil) and lTopic.HasCoalesce then
   begin
-    lAccepted := TryPostGuidOf<t>(aEvent);
+    lAccepted := TryPostGuidOfWithMailboxOutcome<t>(aEvent, lMailboxAccepted);
     if not lAccepted then
       Exit(TmaxPostResult.Dropped);
     Exit(TmaxPostResult.Coalesced);
   end;
 
-  lAccepted := TryPostGuidOf<t>(aEvent);
+  lAccepted := TryPostGuidOfWithMailboxOutcome<t>(aEvent, lMailboxAccepted);
   if not lAccepted then
     Exit(TmaxPostResult.Dropped);
-  if lHasMailboxSubscribers or (lQueueDepth > 0) or lWasProcessing then
+  if lMailboxAccepted or (lQueueDepth > 0) or lWasProcessing then
     Exit(TmaxPostResult.Queued);
   if (not lHasLiveSubscribers) and (not lHasInlineAutoSubs) and lHasDeferredAutoSubs then
     Exit(TmaxPostResult.Queued);

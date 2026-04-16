@@ -415,6 +415,12 @@ type
   TTestMailbox = class(TmaxTestCase)
   published
     procedure MailboxDirectPostRunsOnOwnerThread;
+    procedure MailboxOverflowBlockWaitsForCapacity;
+    procedure MailboxOverflowEmptyCoalesceKeyStillLatestWins;
+    procedure MailboxOverflowCoalescingReplacementBypassesCapacity;
+    procedure MailboxOverflowDropNewestDoesNotUnsubscribe;
+    procedure MailboxOverflowDropNewestRejectsWhenFull;
+    procedure MailboxOverflowDropOldestEvictsOldestPending;
     procedure MailboxWrongThreadPumpAllFailsFast;
     procedure MailboxWrongThreadPumpFailsFast;
     procedure MailboxFIFOOrder;
@@ -444,6 +450,7 @@ type
     procedure MailboxUnsubscribeSkipsQueuedWork;
     procedure MailboxClearPurgesQueuedWork;
     procedure MailboxCloseDiscardPending;
+    procedure MailboxDeadlineTimesOutWhenStillFull;
     procedure MailboxTimeoutReturnsFalse;
   end;
 
@@ -455,6 +462,7 @@ type
     procedure CoalescedReturnsCoalesced;
     procedure AcceptedReturnsInlineOrQueued;
     procedure NamedMailboxReturnsQueued;
+    procedure PostResultNamedMixedInlineAndDroppedMailboxReportsInline;
     procedure NamedOfMailboxReturnsQueued;
     procedure GuidOfQueuePressureReturnsQueuedThenDropped;
     procedure GuidOfAcceptedReturnsInline;
@@ -468,6 +476,9 @@ type
     procedure PostResultTypedAutoSubscribeAsyncReturnsQueued;
     procedure PostResultNamedOfAutoSubscribeBackgroundReturnsQueued;
     procedure PostResultGuidOfAutoSubscribeMainReturnsQueued;
+    procedure PostResultTypedMixedInlineAndDroppedMailboxReportsInline;
+    procedure PostResultNamedOfMixedInlineAndDroppedMailboxReportsInline;
+    procedure PostResultGuidOfMixedInlineAndDroppedMailboxReportsInline;
     procedure PostResultTypedAsyncSubscriberReportsInline;
     procedure PostResultNamedOfBackgroundSubscriberReportsInline;
     procedure PostResultGuidOfMainSubscriberReportsInline;
@@ -956,6 +967,13 @@ type
   end;
 
 function BuildQueuePolicy(aMaxDepth: integer; aOverflow: TmaxOverflow; aDeadlineUs: Int64): TmaxQueuePolicy;
+begin
+  Result.MaxDepth := aMaxDepth;
+  Result.Overflow := aOverflow;
+  Result.DeadlineUs := aDeadlineUs;
+end;
+
+function BuildMailboxPolicy(aMaxDepth: integer; aOverflow: TmaxMailboxOverflow; aDeadlineUs: Int64): TmaxMailboxPolicy;
 begin
   Result.MaxDepth := aMaxDepth;
   Result.Overflow := aOverflow;
@@ -7494,6 +7512,269 @@ begin
     end));
 end;
 
+procedure TTestMailbox.MailboxDeadlineTimesOutWhenStillFull;
+var
+  lHits: Integer;
+  lMailbox: ImaxMailbox;
+  lPolicy: TmaxMailboxPolicy;
+  lStart: UInt64;
+begin
+  lPolicy := BuildMailboxPolicy(1, MailboxDeadline, 50000);
+  lMailbox := TmaxMailbox.Create(lPolicy);
+  lHits := 0;
+
+  Check(lMailbox.TryPost(
+    procedure
+    begin
+      Inc(lHits);
+    end));
+
+  lStart := GetTickCount64;
+  Check(not lMailbox.TryPost(
+    procedure
+    begin
+      Inc(lHits, 10);
+    end));
+  Check(GetTickCount64 - lStart >= 40, 'Deadline overflow should wait before rejecting');
+  CheckEquals(1, lMailbox.PendingCount);
+  CheckEquals(1, lMailbox.PumpAll);
+  CheckEquals(1, lHits);
+end;
+
+procedure TTestMailbox.MailboxOverflowBlockWaitsForCapacity;
+var
+  lAccepted: Boolean;
+  lDone: TEvent;
+  lHits: TList<Integer>;
+  lMailbox: ImaxMailbox;
+  lPolicy: TmaxMailboxPolicy;
+  lThread: TThread;
+begin
+  lPolicy := BuildMailboxPolicy(1, MailboxBlock, 0);
+  lMailbox := TmaxMailbox.Create(lPolicy);
+  lDone := TEvent.Create(nil, True, False, '');
+  lThread := nil;
+  lHits := TList<Integer>.Create;
+  lAccepted := False;
+  try
+    Check(lMailbox.TryPost(
+      procedure
+      begin
+        lHits.Add(1);
+      end));
+
+    lThread := TThread.CreateAnonymousThread(
+      procedure
+      begin
+        lAccepted := lMailbox.TryPost(
+          procedure
+          begin
+            lHits.Add(2);
+          end);
+        lDone.SetEvent;
+      end);
+    lThread.FreeOnTerminate := False;
+    lThread.Start;
+
+    Sleep(50);
+    Check(lDone.WaitFor(0) <> wrSignaled, 'Block overflow should wait until capacity is available');
+    Check(lMailbox.PumpOne(0), 'Expected the first pending item to run');
+    CheckEquals(1, lHits.Count);
+    CheckEquals(1, lHits[0]);
+    Check(lDone.WaitFor(1000) = wrSignaled, 'Blocked poster did not resume after capacity was freed');
+    Check(lAccepted, 'Blocked poster should succeed once capacity becomes available');
+    CheckEquals(1, lMailbox.PendingCount);
+    CheckEquals(1, lMailbox.PumpAll);
+    CheckEquals(2, lHits.Count);
+    CheckEquals(2, lHits[1]);
+  finally
+    if lThread <> nil then
+    begin
+      lThread.WaitFor;
+      lThread.Free;
+    end;
+    lHits.Free;
+    lDone.Free;
+  end;
+end;
+
+procedure TTestMailbox.MailboxOverflowEmptyCoalesceKeyStillLatestWins;
+var
+  lBus: ImaxBus;
+  lMailbox: ImaxMailbox;
+  lPolicy: TmaxMailboxPolicy;
+  lResult: TmaxPostResult;
+  lValues: TList<Integer>;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lPolicy := BuildMailboxPolicy(1, MailboxDropNewest, 0);
+  lMailbox := TmaxMailbox.Create(lPolicy);
+  lValues := TList<Integer>.Create;
+  try
+    maxBusObj(lBus).SubscribeIn<Integer>(lMailbox,
+      procedure(const aValue: Integer)
+      begin
+        lValues.Add(aValue);
+      end,
+      function(const aValue: Integer): string
+      begin
+        Result := '';
+      end);
+
+    lResult := maxBusObj(lBus).PostResult<Integer>(1);
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(lResult));
+
+    lResult := maxBusObj(lBus).PostResult<Integer>(2);
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(lResult));
+    CheckEquals(1, lMailbox.PendingCount);
+    CheckEquals(1, lMailbox.PumpAll);
+    CheckEquals(1, lValues.Count);
+    CheckEquals(2, lValues[0]);
+  finally
+    lValues.Free;
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestMailbox.MailboxOverflowCoalescingReplacementBypassesCapacity;
+var
+  lBus: ImaxBus;
+  lMailbox: ImaxMailbox;
+  lPolicy: TmaxMailboxPolicy;
+  lResult: TmaxPostResult;
+  lValues: TList<Integer>;
+  lValue: TKeyed;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lPolicy := BuildMailboxPolicy(1, MailboxDropNewest, 0);
+  lMailbox := TmaxMailbox.Create(lPolicy);
+  lValues := TList<Integer>.Create;
+  try
+    maxBusObj(lBus).SubscribeIn<TKeyed>(lMailbox,
+      procedure(const aEvent: TKeyed)
+      begin
+        lValues.Add(aEvent.Value);
+      end,
+      function(const aEvent: TKeyed): string
+      begin
+        Result := aEvent.Key;
+      end);
+
+    lValue.Key := 'progress';
+    lValue.Value := 1;
+    lResult := maxBusObj(lBus).PostResult<TKeyed>(lValue);
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(lResult));
+
+    lValue.Value := 2;
+    lResult := maxBusObj(lBus).PostResult<TKeyed>(lValue);
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(lResult));
+    CheckEquals(1, lMailbox.PendingCount);
+    CheckEquals(1, lMailbox.PumpAll);
+    CheckEquals(1, lValues.Count);
+    CheckEquals(2, lValues[0]);
+  finally
+    lValues.Free;
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestMailbox.MailboxOverflowDropNewestDoesNotUnsubscribe;
+var
+  lBus: ImaxBus;
+  lMailbox: ImaxMailbox;
+  lPolicy: TmaxMailboxPolicy;
+  lResult: TmaxPostResult;
+  lValues: TList<Integer>;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lPolicy := BuildMailboxPolicy(1, MailboxDropNewest, 0);
+  lMailbox := TmaxMailbox.Create(lPolicy);
+  lValues := TList<Integer>.Create;
+  try
+    maxBusObj(lBus).SubscribeIn<Integer>(lMailbox,
+      procedure(const aValue: Integer)
+      begin
+        lValues.Add(aValue);
+      end);
+
+    lResult := maxBusObj(lBus).PostResult<Integer>(1);
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(lResult));
+    lResult := maxBusObj(lBus).PostResult<Integer>(2);
+    CheckEquals(Integer(TmaxPostResult.Dropped), Integer(lResult));
+    CheckEquals(1, lMailbox.PendingCount);
+    CheckEquals(1, lMailbox.PumpAll);
+    CheckEquals(1, lValues.Count);
+    CheckEquals(1, lValues[0]);
+
+    lResult := maxBusObj(lBus).PostResult<Integer>(3);
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(lResult));
+    CheckEquals(1, lMailbox.PendingCount);
+    CheckEquals(1, lMailbox.PumpAll);
+    CheckEquals(2, lValues.Count);
+    CheckEquals(3, lValues[1]);
+  finally
+    lValues.Free;
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestMailbox.MailboxOverflowDropNewestRejectsWhenFull;
+var
+  lHits: Integer;
+  lMailbox: ImaxMailbox;
+  lPolicy: TmaxMailboxPolicy;
+begin
+  lPolicy := BuildMailboxPolicy(1, MailboxDropNewest, 0);
+  lMailbox := TmaxMailbox.Create(lPolicy);
+  lHits := 0;
+
+  Check(lMailbox.TryPost(
+    procedure
+    begin
+      Inc(lHits);
+    end));
+  Check(not lMailbox.TryPost(
+    procedure
+    begin
+      Inc(lHits, 10);
+    end));
+  CheckEquals(1, lMailbox.PendingCount);
+  CheckEquals(1, lMailbox.PumpAll);
+  CheckEquals(1, lHits);
+end;
+
+procedure TTestMailbox.MailboxOverflowDropOldestEvictsOldestPending;
+var
+  lHits: TList<Integer>;
+  lMailbox: ImaxMailbox;
+  lPolicy: TmaxMailboxPolicy;
+begin
+  lPolicy := BuildMailboxPolicy(1, MailboxDropOldest, 0);
+  lMailbox := TmaxMailbox.Create(lPolicy);
+  lHits := TList<Integer>.Create;
+  try
+    Check(lMailbox.TryPost(
+      procedure
+      begin
+        lHits.Add(1);
+      end));
+    Check(lMailbox.TryPost(
+      procedure
+      begin
+        lHits.Add(2);
+      end));
+    CheckEquals(1, lMailbox.PendingCount);
+    CheckEquals(1, lMailbox.PumpAll);
+    CheckEquals(1, lHits.Count);
+    CheckEquals(2, lHits[0]);
+  finally
+    lHits.Free;
+  end;
+end;
+
 procedure TTestMailbox.MailboxTimeoutReturnsFalse;
 var
   lMailbox: ImaxMailbox;
@@ -7747,6 +8028,48 @@ begin
     CheckEquals(1, lMailbox.PendingCount);
     CheckEquals(1, lMailbox.PumpAll);
     CheckEquals(1, lHits);
+  finally
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestPostResult.PostResultNamedMixedInlineAndDroppedMailboxReportsInline;
+const
+  cName = 'postresult.named.mixed.mailbox.drop';
+var
+  lBus: ImaxBus;
+  lHits: Integer;
+  lMailbox: ImaxMailbox;
+  lPolicy: TmaxMailboxPolicy;
+  lPostResult: TmaxPostResult;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lPolicy := BuildMailboxPolicy(1, MailboxDropNewest, 0);
+  lMailbox := TmaxMailbox.Create(lPolicy);
+  lHits := 0;
+  try
+    maxBusObj(lBus).SubscribeNamedIn(cName, lMailbox,
+      procedure
+      begin
+        Inc(lHits, 100);
+      end);
+    lBus.SubscribeNamed(cName,
+      procedure
+      begin
+        Inc(lHits);
+      end,
+      TmaxDelivery.Posting);
+
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(maxBusObj(lBus).PostResultNamed(cName)));
+
+    lPostResult := maxBusObj(lBus).PostResultNamed(cName);
+
+    CheckEquals(Integer(TmaxPostResult.DispatchedInline), Integer(lPostResult));
+    CheckEquals(2, lHits);
+    CheckEquals(1, lMailbox.PendingCount);
+    CheckEquals(1, lMailbox.PumpAll);
+    CheckEquals(102, lHits);
   finally
     lBus.Clear;
   end;
@@ -8217,6 +8540,128 @@ begin
     maxSetMainThreadPolicy(TmaxMainThreadPolicy.DegradeToPosting);
     maxSetAsyncScheduler(lPrevScheduler);
     maxBus.Clear;
+  end;
+end;
+
+procedure TTestPostResult.PostResultTypedMixedInlineAndDroppedMailboxReportsInline;
+var
+  lBus: ImaxBus;
+  lHits: Integer;
+  lMailbox: ImaxMailbox;
+  lPolicy: TmaxMailboxPolicy;
+  lPostResult: TmaxPostResult;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lPolicy := BuildMailboxPolicy(1, MailboxDropNewest, 0);
+  lMailbox := TmaxMailbox.Create(lPolicy);
+  lHits := 0;
+  try
+    maxBusObj(lBus).SubscribeIn<Integer>(lMailbox,
+      procedure(const aValue: Integer)
+      begin
+        Inc(lHits, 100);
+      end);
+    maxBusObj(lBus).Subscribe<Integer>(
+      procedure(const aValue: Integer)
+      begin
+        Inc(lHits);
+      end,
+      TmaxDelivery.Posting);
+
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(maxBusObj(lBus).PostResult<Integer>(1)));
+
+    lPostResult := maxBusObj(lBus).PostResult<Integer>(2);
+
+    CheckEquals(Integer(TmaxPostResult.DispatchedInline), Integer(lPostResult));
+    CheckEquals(2, lHits);
+    CheckEquals(1, lMailbox.PendingCount);
+    CheckEquals(1, lMailbox.PumpAll);
+    CheckEquals(102, lHits);
+  finally
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestPostResult.PostResultNamedOfMixedInlineAndDroppedMailboxReportsInline;
+const
+  cName = 'postresult.namedof.mixed.mailbox.drop';
+var
+  lBus: ImaxBus;
+  lHits: Integer;
+  lMailbox: ImaxMailbox;
+  lPolicy: TmaxMailboxPolicy;
+  lPostResult: TmaxPostResult;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lPolicy := BuildMailboxPolicy(1, MailboxDropNewest, 0);
+  lMailbox := TmaxMailbox.Create(lPolicy);
+  lHits := 0;
+  try
+    maxBusObj(lBus).SubscribeNamedOfIn<Integer>(cName, lMailbox,
+      procedure(const aValue: Integer)
+      begin
+        Inc(lHits, 100);
+      end);
+    maxBusObj(lBus).SubscribeNamedOf<Integer>(cName,
+      procedure(const aValue: Integer)
+      begin
+        Inc(lHits);
+      end,
+      TmaxDelivery.Posting);
+
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(maxBusObj(lBus).PostResultNamedOf<Integer>(cName, 1)));
+
+    lPostResult := maxBusObj(lBus).PostResultNamedOf<Integer>(cName, 2);
+
+    CheckEquals(Integer(TmaxPostResult.DispatchedInline), Integer(lPostResult));
+    CheckEquals(2, lHits);
+    CheckEquals(1, lMailbox.PendingCount);
+    CheckEquals(1, lMailbox.PumpAll);
+    CheckEquals(102, lHits);
+  finally
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestPostResult.PostResultGuidOfMixedInlineAndDroppedMailboxReportsInline;
+var
+  lBus: ImaxBus;
+  lHits: Integer;
+  lMailbox: ImaxMailbox;
+  lPolicy: TmaxMailboxPolicy;
+  lPostResult: TmaxPostResult;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lPolicy := BuildMailboxPolicy(1, MailboxDropNewest, 0);
+  lMailbox := TmaxMailbox.Create(lPolicy);
+  lHits := 0;
+  try
+    maxBusObj(lBus).SubscribeGuidOfIn<IIntEvent>(lMailbox,
+      procedure(const aValue: IIntEvent)
+      begin
+        Inc(lHits, 100);
+      end);
+    maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
+      procedure(const aValue: IIntEvent)
+      begin
+        Inc(lHits);
+      end,
+      TmaxDelivery.Posting);
+
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(maxBusObj(lBus).PostResultGuidOf<IIntEvent>(TIntEvent.Create(1))));
+
+    lPostResult := maxBusObj(lBus).PostResultGuidOf<IIntEvent>(TIntEvent.Create(2));
+
+    CheckEquals(Integer(TmaxPostResult.DispatchedInline), Integer(lPostResult));
+    CheckEquals(2, lHits);
+    CheckEquals(1, lMailbox.PendingCount);
+    CheckEquals(1, lMailbox.PumpAll);
+    CheckEquals(102, lHits);
+  finally
+    lBus.Clear;
   end;
 end;
 

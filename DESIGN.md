@@ -167,7 +167,7 @@ Every topic has `TmaxQueuePolicy`:
 
 Presets are configured globally by topic category (`State`, `Action`, `ControlPlane`) and only applied when topic policy is not explicit.
 
-Mailbox-owned capacity intentionally uses the same overflow vocabulary (`DropNewest`, `DropOldest`, `Block`, `Deadline`) so the naming stays familiar, but mailbox policy is never inherited from topic policy or presets. It is configured on the mailbox itself and governs final receiver handoff only.
+Mailbox-owned capacity intentionally mirrors the same overflow vocabulary (`MailboxDropNewest`, `MailboxDropOldest`, `MailboxBlock`, `MailboxDeadline`) so the naming stays familiar, but mailbox policy is never inherited from topic policy or presets. It is configured on the mailbox itself and governs final receiver handoff only.
 
 ## Metrics and warnings
 

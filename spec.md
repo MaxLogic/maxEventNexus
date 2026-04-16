@@ -160,7 +160,7 @@ type
 
   TmaxMailboxPolicy = record
     MaxDepth: Integer;
-    Overflow: TmaxOverflow;
+    Overflow: TmaxMailboxOverflow;
     DeadlineUs: Int64;
   end;
 ```
@@ -430,7 +430,7 @@ Mailbox capacity is a separate receiver-owned control plane.
 
 - Mailbox-owned policy is configured on the mailbox itself and is not silently inherited from topic queue policy, topic queue presets, or delivery mode.
 - The default mailbox policy remains unbounded so existing code keeps current behavior until a mailbox is configured explicitly.
-- `TmaxMailboxPolicy` intentionally reuses `TmaxOverflow` / `DeadlineUs` vocabulary so topic and mailbox overflow names stay aligned, but the two policies remain independent.
+- `TmaxMailboxPolicy` intentionally mirrors the topic overflow vocabulary through `TmaxMailboxOverflow` / `DeadlineUs` so topic and mailbox overflow names stay aligned, but the two policies remain independent.
 
 Policy shape:
 
@@ -438,7 +438,7 @@ Policy shape:
 type
   TmaxMailboxPolicy = record
     MaxDepth: Integer;
-    Overflow: TmaxOverflow;
+    Overflow: TmaxMailboxOverflow;
     DeadlineUs: Int64;
   end;
 ```
@@ -454,17 +454,17 @@ Contract:
 
 Overflow modes:
 
-- `DropNewest`: reject the new pending item immediately.
-- `DropOldest`: evict the oldest pending mailbox entry, remove any mailbox coalescing index state attached to that entry, then admit the new item.
-- `Block`: wait until pending capacity becomes available or the mailbox closes.
-- `Deadline`: wait until pending capacity becomes available, the deadline expires, or the mailbox closes.
+- `MailboxDropNewest`: reject the new pending item immediately.
+- `MailboxDropOldest`: evict the oldest pending mailbox entry, remove any mailbox coalescing index state attached to that entry, then admit the new item.
+- `MailboxBlock`: wait until pending capacity becomes available or the mailbox closes.
+- `MailboxDeadline`: wait until pending capacity becomes available, the deadline expires, or the mailbox closes.
 
 Direct `ImaxMailbox.TryPost` semantics:
 
 - `TryPost` returns `True` when the item is admitted into the mailbox queue.
-- `TryPost` returns `False` when `aProc` is unassigned, when the mailbox is closed, when `DropNewest` rejects, or when `Deadline` expires before capacity becomes available.
-- Under `DropOldest`, `TryPost` returns `True` for the newly admitted item even though an older pending item was discarded.
-- Under `Block` or `Deadline`, `TryPost` may wait on the calling thread. Callers are responsible for avoiding self-deadlock if the mailbox owner thread is also the only thread that can pump the mailbox.
+- `TryPost` returns `False` when `aProc` is unassigned, when the mailbox is closed, when `MailboxDropNewest` rejects, or when `MailboxDeadline` expires before capacity becomes available.
+- Under `MailboxDropOldest`, `TryPost` returns `True` for the newly admitted item even though an older pending item was discarded.
+- Under `MailboxBlock` or `MailboxDeadline`, `TryPost` may wait on the calling thread. Callers are responsible for avoiding self-deadlock if the mailbox owner thread is also the only thread that can pump the mailbox.
 - `Close(True)` / `Close(False)` wake blocked posters so they do not wait forever on a terminal mailbox.
 
 Mailbox-bound EventNexus delivery semantics:
