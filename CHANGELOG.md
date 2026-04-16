@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- Added mailbox-owned capacity and overflow policy on `TmaxMailbox` through `TmaxMailboxPolicy`, including `MailboxDropNewest`, `MailboxDropOldest`, `MailboxBlock`, and `MailboxDeadline`, while keeping the default mailbox path unbounded. Added regressions for direct mailbox posting, mailbox-bound bus delivery, coalescing replacement under bounded capacity, and the temporary-overflow contract. (T-1139, T-1140)
 - Added `MailboxLatestWinsSample` as the maintained mailbox coalescing demo, showing same-key latest-pending replacement while unrelated keys keep their original queue slots under receiver-side mailbox pumping. (T-1137)
 - Added mailbox-level coalescing for payload-carrying mailbox-bound subscriptions, using subscription-scoped latest-pending replacement while preserving FIFO order for unrelated keys and keeping in-flight work immutable. Added named-of and GUID parity plus shared-mailbox isolation regressions for the receiver-side coalescing layer. (T-1135, T-1136)
 - Added GUID mailbox delivery through `SubscribeGuidOfIn<T>`, preserving interface-keyed GUID routing, sticky replay, and preset handling while expanding regression coverage for receiver affinity, sticky replay, FIFO ordering, unsubscribe or `Clear`, and `PostResultGuidOf<T>` mailbox handoff classification. (T-1132, T-1133)
@@ -33,6 +34,7 @@
 - Scheduler benchmark project search paths now include `reference/` so iPub/EventHorizon comparison units build in CLI workflows. (T-1082)
 
 ### Fixed
+- `TryPost<T>`, `TryPostNamedOf<T>`, and `TryPostGuidOf<T>` no longer report success when mailbox-bound direct dispatch accepts no receiver, mailbox-bound temporary overflow no longer auto-unsubscribes live subscribers, and `PostResult<T>` now classifies accepted live mailbox handoff as `Queued`. (T-1139, T-1140)
 - Deferred async batch handoff now uses an atomic continuation path, and the strong typed object-method overload family no longer applies weak-target AV/IP auto-prune heuristics in the generic deferred/sticky paths. Together these changes make the published `framework=strong` `10000`-event benchmark profile drain reliably again. (T-1146)
 - `Clear` now preserves durable per-topic coalescing configuration and explicit queue policies while still dropping queued/runtime state at the clear boundary. (T-1100, T-1101)
 - Named-of queue presets now resolve as explicit named policy, then name preset, then type preset, then `Unspecified`, and preset changes reapply that fallback to existing implicit named-of topics. (T-1108)
