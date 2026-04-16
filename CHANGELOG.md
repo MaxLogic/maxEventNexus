@@ -28,6 +28,7 @@
 - Scheduler benchmark project search paths now include `reference/` so iPub/EventHorizon comparison units build in CLI workflows. (T-1082)
 
 ### Fixed
+- Deferred async batch handoff now uses an atomic continuation path, and the strong typed object-method overload family no longer applies weak-target AV/IP auto-prune heuristics in the generic deferred/sticky paths. Together these changes make the published `framework=strong` `10000`-event benchmark profile drain reliably again. (T-1146)
 - `Clear` now preserves durable per-topic coalescing configuration and explicit queue policies while still dropping queued/runtime state at the clear boundary. (T-1100, T-1101)
 - Named-of queue presets now resolve as explicit named policy, then name preset, then type preset, then `Unspecified`, and preset changes reapply that fallback to existing implicit named-of topics. (T-1108)
 - `PostResult<T>`, `PostResultNamedOf<T>`, and `PostResultGuidOf<T>` no longer return `NoTopic` when live `AutoSubscribe` handlers are the effective receivers. (T-1102)
