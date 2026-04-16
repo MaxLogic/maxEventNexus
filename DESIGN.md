@@ -99,9 +99,10 @@ Receiver-affine delivery is handled through a mailbox owned by exactly one threa
 The mailbox contract is cooperative by design.
 
 - `PumpOne` and `PumpAll` are owner-thread operations and must fail fast on the wrong thread.
-- `TryPost(const aProc: TmaxProc)` is the direct mailbox enqueue primitive used both by demos and by bus integration.
-- The baseline mailbox is FIFO and unbounded.
+- `TryPost(const aProc: TmaxProc)` is the direct mailbox enqueue primitive used both by demos and by bus integration. It never waits for handler execution after admission, but mailbox-owned `Block` / `Deadline` policy may still make the caller wait for pending capacity.
+- The default mailbox is FIFO and unbounded, but a mailbox may be created with an explicit mailbox-owned capacity policy.
 - The portable baseline uses RTL synchronization primitives and stays cross-platform across Delphi-supported desktop targets.
+- Mailbox capacity is mailbox-wide and shared by direct mailbox posts plus mailbox-bound bus delivery. It is not per-topic and not per-subscription.
 
 This is intentionally different from `Main`/`Async`/`Background` delivery:
 
@@ -132,6 +133,7 @@ Mailbox-level coalescing:
 - Replacing a pending mailbox item keeps its queue slot instead of moving it to the tail, so unrelated keys keep FIFO order.
 - The dequeue boundary is the pending-to-in-flight transition. In-flight mailbox work is never rewritten.
 - Topic-level coalescing and mailbox-level coalescing may both be enabled: topic-level collapse happens before routing, mailbox-level collapse happens after routing inside one receiver mailbox.
+- Mailbox capacity counts pending queue slots only. Replacing an existing pending coalesced entry consumes no new capacity.
 
 ## Clear reset model
 
@@ -150,7 +152,10 @@ Mailbox lifecycle rules:
 - `Close(aDiscardPending = True)` discards queued mailbox items, wakes waiters, and rejects future enqueue.
 - `Close(False)` keeps pending mailbox items and mailbox-level coalescing index state intact, but future enqueue or replacement still fails because the mailbox is closed.
 - `IsClosed` reports that close boundary.
-- Future roadmap items are mailbox-owned overflow policy and any later direct-mailbox coalescing helper if a real use case appears.
+- Mailbox-owned overflow is mailbox-local durable configuration. `Clear` purges only bus-owned queued mailbox work; it does not reset mailbox capacity policy.
+- Temporary mailbox overflow is not receiver death and must not auto-unsubscribe mailbox-bound subscriptions.
+- Closed mailbox rejection is terminal and may retire mailbox-bound subscriptions lazily after detection.
+- Future roadmap items are benchmark-guided specialization and any later direct-mailbox helper if a real use case appears.
 
 ## Queue policy and presets
 
@@ -161,6 +166,8 @@ Every topic has `TmaxQueuePolicy`:
 - `DeadlineUs` for `Deadline` mode.
 
 Presets are configured globally by topic category (`State`, `Action`, `ControlPlane`) and only applied when topic policy is not explicit.
+
+Mailbox-owned capacity intentionally uses the same overflow vocabulary (`DropNewest`, `DropOldest`, `Block`, `Deadline`) so the naming stays familiar, but mailbox policy is never inherited from topic policy or presets. It is configured on the mailbox itself and governs final receiver handoff only.
 
 ## Metrics and warnings
 

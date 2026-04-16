@@ -157,6 +157,19 @@ type
     procedure Close(aDiscardPending: Boolean = True);
     function IsClosed: Boolean;
   end;
+
+  TmaxMailboxPolicy = record
+    MaxDepth: Integer;
+    Overflow: TmaxOverflow;
+    DeadlineUs: Int64;
+  end;
+```
+
+`TmaxMailbox` remains the default portable implementation and adds class-only configuration:
+
+```pascal
+constructor Create; overload;
+constructor Create(const aPolicy: TmaxMailboxPolicy); overload;
 ```
 
 Typed mailbox-bound subscribe is additive on `TmaxBus`:
@@ -179,10 +192,11 @@ Mailbox contract:
 
 - Each mailbox has one owner thread captured at creation time.
 - `PumpOne` and `PumpAll` are owner-thread operations. Pumping from any other thread must fail fast.
-- `TryPost` is asynchronous with respect to the posting thread. It enqueues mailbox work and returns without waiting for the receiver to handle it.
+- `TryPost` never waits for the receiver to handle the item after admission. Under mailbox `Block` or `Deadline` overflow modes it may still wait for pending capacity to become available before admission succeeds or fails.
 - Mailbox pumping is cooperative. EventNexus does not inject work into a foreign thread automatically.
-- The baseline mailbox queue is FIFO and unbounded in the first implementation slice.
+- The default mailbox queue is FIFO and unbounded unless an explicit mailbox-owned policy is configured.
 - The default mailbox implementation must stay cross-platform within Delphi-supported desktop targets and must not depend on Windows messages.
+- Mailbox capacity is mailbox-wide and shared by direct mailbox `TryPost` calls plus mailbox-bound EventNexus delivery. It is not per-topic and not per-subscription.
 
 Supported owner-thread pumping patterns:
 
@@ -201,11 +215,12 @@ Mailbox delivery extends the existing hard-reset model.
 - Already-dequeued mailbox work may still finish if it crossed the dequeue boundary before the `Clear` purge started.
 - `Close(aDiscardPending = True)` prevents future enqueue, discards queued-but-not-dequeued mailbox items, wakes waiting pump loops, and still allows already-dequeued work to finish.
 - `IsClosed` reports whether the mailbox has crossed that close boundary.
+- Mailbox-owned overflow policy is durable mailbox configuration and is not reset by `Clear`.
 
 The mailbox roadmap is staged:
 
-- current slice: `ImaxMailbox`, typed `SubscribeIn<T>`, exact named `SubscribeNamedIn`, named typed `SubscribeNamedOfIn<T>`, GUID typed `SubscribeGuidOfIn<T>`, mailbox-level coalescing for payload-carrying mailbox-bound subscriptions, owner-thread pumping, `Clear` purge, and close semantics
-- later slices: mailbox-owned overflow policy
+- current slice: `ImaxMailbox`, typed `SubscribeIn<T>`, exact named `SubscribeNamedIn`, named typed `SubscribeNamedOfIn<T>`, GUID typed `SubscribeGuidOfIn<T>`, mailbox-level coalescing for payload-carrying mailbox-bound subscriptions, mailbox-owned overflow policy, owner-thread pumping, `Clear` purge, and close semantics
+- later slices: benchmark-guided specialization and any later direct-mailbox helper APIs that prove necessary
 
 ## 4. Delivery semantics
 
@@ -232,21 +247,31 @@ maxSetMainThreadPolicy(TmaxMainThreadPolicy.DegradeToPosting);
 
 - `Post*` follows normal dispatch semantics and may raise `EmaxDispatchError` on synchronous aggregate failures.
 - `TryPost*` is non-raising for queue admission failure paths and returns:
-  - `False` when bounded-queue policy rejects admission (`DropNewest`, `Deadline` timeout/expiry).
+  - `False` when topic admission is rejected, or when mailbox handoff is attempted during the posting call and every effective receiver rejects before the call returns.
   - `True` when admission succeeds or when the call is a no-op because a topic is not instantiated and not configured sticky.
 - `TryPost*` can still raise for synchronous handler failures on accepted posting paths (same aggregate semantics as `Post*`).
+- Mailbox-owned overflow is receiver-local. It is not silently inherited from topic queue policy or queue presets.
+- If mailbox handoff is attempted during the posting call and every effective receiver rejects before the call returns, `TryPost*` returns `False`.
+- Once a post has been accepted onto a later async/deferred topic path, later mailbox overflow for one receiver does not retroactively change the original `TryPost*` result.
 
 ### 4.3 PostResult contract
 
 `PostResult*` APIs are additive status-returning variants:
 
 - `NoTopic`: no matching topic instance exists and no sticky/wildcard config causes implicit creation.
-- `Dropped`: bounded queue policy rejected admission.
+- `Dropped`: topic admission was rejected, or mailbox handoff was attempted during the posting call and every effective receiver rejected before the call returned.
 - `Coalesced`: event accepted on a coalescing path.
 - `Queued`: accepted while topic processing was already active or because delivery was handed off to a receiver-owned mailbox.
 - `DispatchedInline`: accepted and not queued/coalesced.
 
 `PostResult*` preserves normal exception behavior: synchronous aggregate failures still raise `EmaxDispatchError`.
+
+Mailbox-aware reporting limits:
+
+- `PostResult*` is a post-time summary, not a per-receiver acknowledgement.
+- Mailbox-owned overflow may reject one receiver while another receiver still accepts the same post.
+- If mailbox handoff is attempted during the posting call and every effective receiver rejects before the call returns, `PostResult*` returns `Dropped`.
+- If the post is accepted onto a later async/deferred topic path, later mailbox overflow does not retroactively change the already-returned `PostResult*`. Those later drops are observed through normal drop metrics or future receiver-specific diagnostics, not through a rewritten post result.
 
 ### 4.4 Bulk post contract
 
@@ -399,7 +424,58 @@ Override rules:
 - Preset applies only when topic policy is not explicit.
 - Preset updates re-apply to already-created topics only if those topics still use implicit policy, including existing `PostNamedOf<T>` topics still inheriting name/type presets.
 
-### 8.2 High-water warning integration
+### 8.2 Mailbox-owned capacity and overflow
+
+Mailbox capacity is a separate receiver-owned control plane.
+
+- Mailbox-owned policy is configured on the mailbox itself and is not silently inherited from topic queue policy, topic queue presets, or delivery mode.
+- The default mailbox policy remains unbounded so existing code keeps current behavior until a mailbox is configured explicitly.
+- `TmaxMailboxPolicy` intentionally reuses `TmaxOverflow` / `DeadlineUs` vocabulary so topic and mailbox overflow names stay aligned, but the two policies remain independent.
+
+Policy shape:
+
+```pascal
+type
+  TmaxMailboxPolicy = record
+    MaxDepth: Integer;
+    Overflow: TmaxOverflow;
+    DeadlineUs: Int64;
+  end;
+```
+
+Contract:
+
+- `MaxDepth = 0` means unbounded pending capacity.
+- Capacity counts pending queue entries only. Already-dequeued in-flight mailbox work does not consume pending capacity.
+- Mailbox-level coalescing replacement does not consume a new queue slot. Replacing an existing pending item must still succeed when the mailbox is full, but never after the mailbox has been closed.
+- `Close(False)` preserves already-pending entries and their mailbox coalescing index state, but future enqueue and future replacement still fail because the mailbox is closed.
+- `Clear` does not reset mailbox policy. `Clear` only purges bus-owned queued mailbox work for that bus.
+- Direct mailbox posts and mailbox-bound EventNexus delivery share the same mailbox capacity.
+
+Overflow modes:
+
+- `DropNewest`: reject the new pending item immediately.
+- `DropOldest`: evict the oldest pending mailbox entry, remove any mailbox coalescing index state attached to that entry, then admit the new item.
+- `Block`: wait until pending capacity becomes available or the mailbox closes.
+- `Deadline`: wait until pending capacity becomes available, the deadline expires, or the mailbox closes.
+
+Direct `ImaxMailbox.TryPost` semantics:
+
+- `TryPost` returns `True` when the item is admitted into the mailbox queue.
+- `TryPost` returns `False` when `aProc` is unassigned, when the mailbox is closed, when `DropNewest` rejects, or when `Deadline` expires before capacity becomes available.
+- Under `DropOldest`, `TryPost` returns `True` for the newly admitted item even though an older pending item was discarded.
+- Under `Block` or `Deadline`, `TryPost` may wait on the calling thread. Callers are responsible for avoiding self-deadlock if the mailbox owner thread is also the only thread that can pump the mailbox.
+- `Close(True)` / `Close(False)` wake blocked posters so they do not wait forever on a terminal mailbox.
+
+Mailbox-bound EventNexus delivery semantics:
+
+- Topic policy decides whether a post reaches dispatch. Mailbox policy decides whether one mailbox-bound receiver admits the already-routed work.
+- Temporary mailbox overflow is not receiver death and must never auto-unsubscribe the mailbox-bound subscription.
+- Closed mailbox rejection is terminal receiver shutdown. EventNexus may lazily retire that mailbox-bound subscription after detecting the closed-mailbox rejection.
+- Mailbox rejection drops delivery for that receiver only. The same post may still be accepted by other subscribers or other mailboxes.
+- Topic drop metrics must count mailbox-bound delivery rejection because the routed delivery failed to enter the receiver mailbox.
+
+### 8.3 High-water warning integration
 
 Queue depth warning state is tracked in topic metrics for **unbounded queues only** (`MaxDepth = 0`):
 
