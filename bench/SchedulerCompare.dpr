@@ -29,6 +29,8 @@ type
     property Value: Integer read GetValue;
   end;
 
+  TFrameworkRunState = class;
+
   TBenchmarkEvent = class(TInterfacedObject, IBenchmarkEvent)
   private
     fValue: Integer;
@@ -37,11 +39,9 @@ type
     function GetValue: Integer;
   end;
 
-  TFrameworkCallback = reference to procedure(const aEvent: IBenchmarkEvent);
-
   IFrameworkBus = interface
     ['{DF69FB99-703B-4A3A-BDA0-D2B3E13CB0EA}']
-    procedure Subscribe(const aCallback: TFrameworkCallback);
+    procedure Subscribe(const aState: TFrameworkRunState);
     procedure Post(const aEvent: IBenchmarkEvent);
     procedure Clear;
   end;
@@ -51,14 +51,6 @@ type
   TFrameworkEntry = record
     Name: string;
     Factory: TFrameworkFactory;
-  end;
-
-  TFrameworkConsumer = class
-  private
-    fCallback: TFrameworkCallback;
-  public
-    constructor Create(const aCallback: TFrameworkCallback);
-    procedure Handle(const aEvent: IBenchmarkEvent);
   end;
 
   TFrameworkRunState = class
@@ -72,6 +64,14 @@ type
     function Remaining: Integer;
   end;
 
+  TFrameworkConsumer = class
+  private
+    fState: TFrameworkRunState;
+  public
+    constructor Create(const aState: TFrameworkRunState);
+    procedure Handle(const aEvent: IBenchmarkEvent);
+  end;
+
   TEventNexusFrameworkBus = class(TInterfacedObject, IFrameworkBus)
   private
     fBus: TmaxBus;
@@ -82,7 +82,7 @@ type
   public
     constructor Create(aDelivery: TmaxDelivery; aUseStrongSubscriptions: Boolean);
     destructor Destroy; override;
-    procedure Subscribe(const aCallback: TFrameworkCallback);
+    procedure Subscribe(const aState: TFrameworkRunState);
     procedure Post(const aEvent: IBenchmarkEvent);
     procedure Clear;
   end;
@@ -95,7 +95,7 @@ type
   public
     constructor Create(aDelivery: TmaxDelivery);
     destructor Destroy; override;
-    procedure Subscribe(const aCallback: TFrameworkCallback);
+    procedure Subscribe(const aState: TFrameworkRunState);
     procedure Post(const aEvent: IBenchmarkEvent);
     procedure Clear;
   end;
@@ -109,7 +109,7 @@ type
   public
     constructor Create(aDelivery: TmaxDelivery);
     destructor Destroy; override;
-    procedure Subscribe(const aCallback: TFrameworkCallback);
+    procedure Subscribe(const aState: TFrameworkRunState);
     procedure Post(const aEvent: IBenchmarkEvent);
     procedure Clear;
   end;
@@ -135,9 +135,24 @@ type
     MetricReadsPerSec: Int64;
   end;
 
+  TFrameworkAsyncKeepAlive = class
+  private
+    fBus: IFrameworkBus;
+    fDone: TEvent;
+    fRemainingLock: TCriticalSection;
+    fState: TFrameworkRunState;
+  public
+    constructor Create(const aBus: IFrameworkBus; aDone: TEvent; aRemainingLock: TCriticalSection;
+      aState: TFrameworkRunState);
+    destructor Destroy; override;
+  end;
+
 const
   cClockName = 'TStopwatch.GetTimeStamp';
   cPercentileMethod = 'nearest-rank';
+
+var
+  gFrameworkAsyncKeepAlive: TObjectList<TFrameworkAsyncKeepAlive>;
 
 function CreateRawThreadScheduler: IEventNexusScheduler;
 begin
@@ -155,17 +170,17 @@ begin
   Result := fValue;
 end;
 
-constructor TFrameworkConsumer.Create(const aCallback: TFrameworkCallback);
+constructor TFrameworkConsumer.Create(const aState: TFrameworkRunState);
 begin
   inherited Create;
-  fCallback := aCallback;
+  fState := aState;
 end;
 
 procedure TFrameworkConsumer.Handle(const aEvent: IBenchmarkEvent);
 begin
-  if Assigned(fCallback) then
+  if fState <> nil then
   begin
-    fCallback(aEvent);
+    fState.Handle(aEvent);
   end;
 end;
 
@@ -206,6 +221,25 @@ begin
   end;
 end;
 
+constructor TFrameworkAsyncKeepAlive.Create(const aBus: IFrameworkBus; aDone: TEvent;
+  aRemainingLock: TCriticalSection; aState: TFrameworkRunState);
+begin
+  inherited Create;
+  fBus := aBus;
+  fDone := aDone;
+  fRemainingLock := aRemainingLock;
+  fState := aState;
+end;
+
+destructor TFrameworkAsyncKeepAlive.Destroy;
+begin
+  fState.Free;
+  fRemainingLock.Free;
+  fDone.Free;
+  fBus := nil;
+  inherited;
+end;
+
 function DeliveryToIpub(aDelivery: TmaxDelivery): TipMessagingThread;
 begin
   case aDelivery of
@@ -236,10 +270,8 @@ begin
   fDelivery := aDelivery;
   fUseStrongSubscriptions := aUseStrongSubscriptions;
   fBus := TmaxBus.Create(CreateTTaskScheduler);
+  fConsumers := TObjectList<TFrameworkConsumer>.Create(True);
   fSubscriptions := TList<ImaxSubscription>.Create;
-  // Framework benchmark runs are process-scoped; keeping consumer objects alive
-  // until process exit avoids async teardown races against late worker callbacks.
-  fConsumers := TObjectList<TFrameworkConsumer>.Create(False);
 end;
 
 destructor TEventNexusFrameworkBus.Destroy;
@@ -251,12 +283,12 @@ begin
   inherited;
 end;
 
-procedure TEventNexusFrameworkBus.Subscribe(const aCallback: TFrameworkCallback);
+procedure TEventNexusFrameworkBus.Subscribe(const aState: TFrameworkRunState);
 var
   lConsumer: TFrameworkConsumer;
   lSubscription: ImaxSubscription;
 begin
-  lConsumer := TFrameworkConsumer.Create(aCallback);
+  lConsumer := TFrameworkConsumer.Create(aState);
   fConsumers.Add(lConsumer);
   if fUseStrongSubscriptions then
   begin
@@ -303,11 +335,11 @@ begin
   inherited;
 end;
 
-procedure TiPubFrameworkBus.Subscribe(const aCallback: TFrameworkCallback);
+procedure TiPubFrameworkBus.Subscribe(const aState: TFrameworkRunState);
 var
   lConsumer: TFrameworkConsumer;
 begin
-  lConsumer := TFrameworkConsumer.Create(aCallback);
+  lConsumer := TFrameworkConsumer.Create(aState);
   fConsumers.Add(lConsumer);
   fManager.SubscribeMethod<IBenchmarkEvent>('', lConsumer.Handle, fDelivery);
 end;
@@ -332,9 +364,9 @@ constructor TEventHorizonFrameworkBus.Create(aDelivery: TmaxDelivery);
 begin
   inherited Create;
   fDelivery := DeliveryToEventHorizon(aDelivery);
+  fConsumers := TObjectList<TFrameworkConsumer>.Create(True);
   fHorizon := TNxHorizon.Create;
   fSubscriptions := TList<INxEventSubscription>.Create;
-  fConsumers := TObjectList<TFrameworkConsumer>.Create(True);
 end;
 
 destructor TEventHorizonFrameworkBus.Destroy;
@@ -346,12 +378,12 @@ begin
   inherited;
 end;
 
-procedure TEventHorizonFrameworkBus.Subscribe(const aCallback: TFrameworkCallback);
+procedure TEventHorizonFrameworkBus.Subscribe(const aState: TFrameworkRunState);
 var
   lConsumer: TFrameworkConsumer;
   lSubscription: INxEventSubscription;
 begin
-  lConsumer := TFrameworkConsumer.Create(aCallback);
+  lConsumer := TFrameworkConsumer.Create(aState);
   fConsumers.Add(lConsumer);
   lSubscription := fHorizon.Subscribe<IBenchmarkEvent>(fDelivery, lConsumer.Handle);
   fSubscriptions.Add(lSubscription);
@@ -371,8 +403,8 @@ begin
     fHorizon.Unsubscribe(lSubscription);
     lSubscription.WaitFor;
   end;
-  fSubscriptions.Clear;
   fConsumers.Clear;
+  fSubscriptions.Clear;
 end;
 
 function CreateEventNexusFrameworkBusWeak(aDelivery: TmaxDelivery): IFrameworkBus;
@@ -806,7 +838,7 @@ begin
         lPhase := 'subscribe';
         for lI := 1 to aCfg.Consumers do
         begin
-          lBus.Subscribe(lState.Handle);
+          lBus.Subscribe(lState);
         end;
 
         lPhase := 'post';
@@ -833,7 +865,8 @@ begin
         lPhase := 'wait-drain';
         if (lState.Remaining > 0) and (not WaitForSignal(lDone, 180000)) then
         begin
-          raise Exception.CreateFmt('%s failed to drain queue on run %d', [aEntry.Name, lRun + 1]);
+          raise Exception.CreateFmt('%s failed to drain queue on run %d (remaining=%d)',
+            [aEntry.Name, lRun + 1, lState.Remaining]);
         end;
 
         lWatch.Stop;
@@ -851,16 +884,31 @@ begin
         end;
       end;
     finally
-      if lBus <> nil then
-      begin
-        lBus.Clear;
-      end;
-      lBus := nil;
       if aCfg.Delivery = TmaxDelivery.Posting then
       begin
+        if lBus <> nil then
+        begin
+          lBus.Clear;
+        end;
+        lBus := nil;
         lState.Free;
         lRemainingLock.Free;
         lDone.Free;
+      end else begin
+        if lBus <> nil then
+        begin
+          if gFrameworkAsyncKeepAlive = nil then
+          begin
+            gFrameworkAsyncKeepAlive := TObjectList<TFrameworkAsyncKeepAlive>.Create(True);
+          end;
+          // Async framework rows are process-scoped. Keep the whole row context
+          // alive until process exit so late callback unwind cannot race teardown.
+          gFrameworkAsyncKeepAlive.Add(TFrameworkAsyncKeepAlive.Create(lBus, lDone, lRemainingLock, lState));
+        end;
+        lBus := nil;
+        lState := nil;
+        lRemainingLock := nil;
+        lDone := nil;
       end;
     end;
   end;
