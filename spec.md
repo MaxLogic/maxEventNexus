@@ -163,6 +163,9 @@ Typed mailbox-bound subscribe is additive on `TmaxBus`:
 ```pascal
 function SubscribeIn<T>(const aMailbox: ImaxMailbox;
   const aHandler: TmaxProcOf<T>): ImaxSubscription;
+
+function SubscribeNamedIn(const aName: TmaxString;
+  const aMailbox: ImaxMailbox; const aHandler: TmaxProc): ImaxSubscription;
 ```
 
 Mailbox contract:
@@ -194,8 +197,8 @@ Mailbox delivery extends the existing hard-reset model.
 
 The mailbox roadmap is staged:
 
-- first slice: `ImaxMailbox`, typed `SubscribeIn<T>`, owner-thread pumping, `Clear` purge, close semantics
-- later slices: named mailbox subscribe APIs, GUID mailbox subscribe APIs, mailbox coalescing, and mailbox-owned overflow policy
+- current slice: `ImaxMailbox`, typed `SubscribeIn<T>`, exact named `SubscribeNamedIn`, owner-thread pumping, `Clear` purge, and close semantics
+- later slices: named typed mailbox subscribe APIs, GUID mailbox subscribe APIs, mailbox coalescing, and mailbox-owned overflow policy
 
 ## 4. Delivery semantics
 
@@ -233,7 +236,7 @@ maxSetMainThreadPolicy(TmaxMainThreadPolicy.DegradeToPosting);
 - `NoTopic`: no matching topic instance exists and no sticky/wildcard config causes implicit creation.
 - `Dropped`: bounded queue policy rejected admission.
 - `Coalesced`: event accepted on a coalescing path.
-- `Queued`: accepted while topic processing was already active.
+- `Queued`: accepted while topic processing was already active or because delivery was handed off to a receiver-owned mailbox.
 - `DispatchedInline`: accepted and not queued/coalesced.
 
 `PostResult*` preserves normal exception behavior: synchronous aggregate failures still raise `EmaxDispatchError`.

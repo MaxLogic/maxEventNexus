@@ -610,6 +610,7 @@ type
     function PostDelayed<t>(const aEvent: t; aDelayMs: Cardinal): ImaxDelayedPost;
 
 	    function SubscribeNamed(const aName: TmaxString; const aHandler: TmaxProc; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
+    function SubscribeNamedIn(const aName: TmaxString; const aMailbox: ImaxMailbox; const aHandler: TmaxProc): ImaxSubscription;
     function SubscribeNamedWildcard(const aPattern: TmaxString; const aHandler: TmaxProc; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
     procedure PostNamed(const aName: TmaxString);
     function TryPostNamed(const aName: TmaxString): boolean;
@@ -664,6 +665,8 @@ type
 type
   TNamedSubscriber = record
     Handler: TmaxProc;
+    Mailbox: ImaxMailbox;
+    MailboxInternal: ImaxBusMailbox;
     Mode: TmaxDelivery;
     Token: TmaxSubscriptionToken;
     Target: TmaxWeakTarget;
@@ -681,7 +684,8 @@ type
     fNextToken: TmaxSubscriptionToken;
     procedure PruneDeadLocked;
   public
-    function Add(const aHandler: TmaxProc; aMode: TmaxDelivery; out aState: ImaxSubscriptionState): TmaxSubscriptionToken;
+    function Add(const aHandler: TmaxProc; aMode: TmaxDelivery; out aState: ImaxSubscriptionState;
+      const aMailbox: ImaxMailbox = nil; const aMailboxInternal: ImaxBusMailbox = nil): TmaxSubscriptionToken;
     procedure RemoveByToken(aToken: TmaxSubscriptionToken);
     function Snapshot: TArray<TNamedSubscriber>;
     procedure RemoveByTarget(const aTarget: TObject); override;
@@ -689,6 +693,21 @@ type
     procedure ResetTopic; override;
     procedure Cache;
     function HasCached: boolean;
+  end;
+
+  TMailboxNamedDispatchItem = class(TInterfacedObject, ImaxMailboxWorkItem)
+  private
+    fGeneration: Int64;
+    fHandler: TmaxProc;
+    fOwner: TObject;
+    fState: ImaxSubscriptionState;
+    fToken: TmaxSubscriptionToken;
+    fTopic: TNamedTopic;
+  public
+    constructor Create(const aOwner: TObject; aGeneration: Int64; const aTopic: TNamedTopic;
+      const aHandler: TmaxProc; aToken: TmaxSubscriptionToken; const aState: ImaxSubscriptionState);
+    function ShouldPurge(const aOwner: TObject; aGeneration: Int64): Boolean;
+    function Invoke: Boolean;
   end;
 
   TmaxSubscriptionBase = class(TInterfacedObject, ImaxSubscription)
@@ -2818,7 +2837,8 @@ end;
 
 { TNamedTopic }
 
-function TNamedTopic.Add(const aHandler: TmaxProc; aMode: TmaxDelivery; out aState: ImaxSubscriptionState): TmaxSubscriptionToken;
+function TNamedTopic.Add(const aHandler: TmaxProc; aMode: TmaxDelivery; out aState: ImaxSubscriptionState;
+  const aMailbox: ImaxMailbox = nil; const aMailboxInternal: ImaxBusMailbox = nil): TmaxSubscriptionToken;
 var
   lSub: TNamedSubscriber;
   lNew: TArray<TNamedSubscriber>;
@@ -2830,6 +2850,8 @@ begin
     if fNextToken = 0 then
       fNextToken := 1;
     lSub.Handler := aHandler;
+    lSub.Mailbox := aMailbox;
+    lSub.MailboxInternal := aMailboxInternal;
     lSub.Mode := aMode;
     lSub.Token := fNextToken;
     lSub.Target := TmaxWeakTarget.Create(nil); // cannot derive target from an anonymous method; treat as always-alive
@@ -3491,6 +3513,54 @@ begin
   finally
     if fStateObj <> nil then
       fStateObj.Leave;
+  end;
+end;
+
+{ TMailboxNamedDispatchItem }
+
+constructor TMailboxNamedDispatchItem.Create(const aOwner: TObject; aGeneration: Int64; const aTopic: TNamedTopic;
+  const aHandler: TmaxProc; aToken: TmaxSubscriptionToken; const aState: ImaxSubscriptionState);
+begin
+  inherited Create;
+  fGeneration := aGeneration;
+  fHandler := aHandler;
+  fOwner := aOwner;
+  fState := aState;
+  fToken := aToken;
+  fTopic := aTopic;
+end;
+
+function TMailboxNamedDispatchItem.ShouldPurge(const aOwner: TObject; aGeneration: Int64): Boolean;
+begin
+  Result := (fOwner = aOwner) and (fGeneration < aGeneration);
+end;
+
+function TMailboxNamedDispatchItem.Invoke: Boolean;
+begin
+  Result := False;
+  if (fState <> nil) and (not fState.TryEnter) then
+    Exit;
+
+  try
+    try
+      fHandler();
+      fTopic.AddDelivered(1);
+      Result := True;
+    except
+      on e: Exception do
+      begin
+        fTopic.AddException;
+        if (e is EAccessViolation) or (e is EInvalidPointer) then
+        begin
+          fTopic.RemoveByToken(fToken);
+          Exit(False);
+        end;
+        raise;
+      end;
+    end;
+  finally
+    if fState <> nil then
+      fState.Leave;
   end;
 end;
 
@@ -5806,6 +5876,84 @@ begin
   Result := TmaxNamedSubscription.Create(lTopic, lToken, lState);
 end;
 
+function TmaxBus.SubscribeNamedIn(const aName: TmaxString; const aMailbox: ImaxMailbox; const aHandler: TmaxProc): ImaxSubscription;
+var
+  lInternalMailbox: ImaxBusMailbox;
+  lObj: TmaxTopicBase;
+  lTopic: TNamedTopic;
+  lToken: TmaxSubscriptionToken;
+  lNameKey: TmaxString;
+  lMetric: TmaxString;
+  lState: ImaxSubscriptionState;
+  lSend: Boolean;
+  lMailboxGeneration: Int64;
+  lSticky: Boolean;
+  lPreset: TmaxQueuePreset;
+  lCreated: Boolean;
+begin
+  if aMailbox = nil then
+    raise EmaxInvalidSubscription.Create('Mailbox subscription requires a mailbox');
+  if not Supports(aMailbox, ImaxBusMailbox, lInternalMailbox) then
+    raise EmaxInvalidSubscription.Create('Mailbox does not support EventNexus bus delivery');
+
+  RegisterMailbox(lInternalMailbox);
+  lNameKey := aName;
+  lMetric := NamedMetricName(lNameKey);
+  fConfigLock.BeginWrite;
+  try
+    lSticky := fStickyNames.ContainsKey(lNameKey);
+    lPreset := TmaxQueuePreset.Unspecified;
+    fPresetNames.TryGetValue(lNameKey, lPreset);
+  finally
+    fConfigLock.EndWrite;
+  end;
+
+  lCreated := False;
+  TMonitor.Enter(fNamedLock);
+  try
+    if not fNamed.TryGetValue(lNameKey, lObj) then
+    begin
+      lTopic := TNamedTopic.Create;
+      lTopic.SetMetricName(lMetric);
+      if lPreset <> TmaxQueuePreset.Unspecified then
+        lTopic.SetPolicyImplicit(PolicyForPreset(lPreset));
+      if lSticky then
+        lTopic.SetSticky(True);
+      fNamed.Add(lNameKey, lTopic);
+      lCreated := True;
+      lObj := lTopic;
+    end;
+    lTopic := TNamedTopic(lObj);
+    lTopic.SetMetricName(lMetric);
+    lToken := lTopic.Add(aHandler, TmaxDelivery.Posting, lState, aMailbox, lInternalMailbox);
+  finally
+    TMonitor.Exit(fNamedLock);
+  end;
+
+  if lCreated then
+    PublishMetricNamedTopic(lNameKey, lTopic);
+
+  lSend := lTopic.HasCached;
+  if lSend then
+  begin
+    lMailboxGeneration := CurrentMailboxGeneration;
+    if TInterlocked.CompareExchange(fMailboxClearActive, 0, 0) = 0 then
+    begin
+      if not lInternalMailbox.TryPostItem(
+        TMailboxNamedDispatchItem.Create(Self, lMailboxGeneration, lTopic, aHandler, lToken, lState)) then
+      begin
+        lTopic.RemoveByToken(lToken);
+        lTopic.AddDropped;
+      end
+      else if (TInterlocked.CompareExchange(fMailboxClearActive, 0, 0) <> 0) or
+        (CurrentMailboxGeneration <> lMailboxGeneration) then
+        lInternalMailbox.PurgeOwner(Self, CurrentMailboxGeneration);
+    end;
+  end;
+
+  Result := TmaxNamedSubscription.Create(lTopic, lToken, lState);
+end;
+
 function TmaxBus.SubscribeNamedWildcard(const aPattern: TmaxString; const aHandler: TmaxProc; aMode: TmaxDelivery): ImaxSubscription;
 var
   lPrefix: TmaxString;
@@ -5910,6 +6058,7 @@ begin
       i: Integer;
       lWildIdx: Integer;
       lHandler: TmaxProc;
+      lMailboxGeneration: Int64;
       lMode: TmaxDelivery;
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
@@ -5924,6 +6073,36 @@ begin
         lMode := lSubs[i].Mode;
         lToken := lSubs[i].Token;
         lState := lSubs[i].State;
+
+        if lSubs[i].MailboxInternal <> nil then
+        begin
+          lMailboxGeneration := CurrentMailboxGeneration;
+
+          if TInterlocked.CompareExchange(fMailboxClearActive, 0, 0) <> 0 then
+          begin
+            lTopic.AddDropped;
+            Continue;
+          end;
+
+          if not lSubs[i].Target.IsAlive then
+          begin
+            lTopic.RemoveByToken(lToken);
+            Continue;
+          end;
+
+          if not lSubs[i].MailboxInternal.TryPostItem(
+            TMailboxNamedDispatchItem.Create(Self, lMailboxGeneration, lTopic, lHandler, lToken, lState)) then
+          begin
+            lTopic.RemoveByToken(lToken);
+            lTopic.AddDropped;
+            Continue;
+          end;
+
+          if (TInterlocked.CompareExchange(fMailboxClearActive, 0, 0) <> 0) or
+            (CurrentMailboxGeneration <> lMailboxGeneration) then
+            lSubs[i].MailboxInternal.PurgeOwner(Self, CurrentMailboxGeneration);
+          Continue;
+        end;
 
         if (lState <> nil) and not lState.TryEnter then
           continue;
@@ -6135,6 +6314,7 @@ begin
       i: Integer;
       lWildIdx: Integer;
       lHandler: TmaxProc;
+      lMailboxGeneration: Int64;
       lMode: TmaxDelivery;
       lToken: TmaxSubscriptionToken;
       lState: ImaxSubscriptionState;
@@ -6149,6 +6329,36 @@ begin
         lMode := lSubs[i].Mode;
         lToken := lSubs[i].Token;
         lState := lSubs[i].State;
+
+        if lSubs[i].MailboxInternal <> nil then
+        begin
+          lMailboxGeneration := CurrentMailboxGeneration;
+
+          if TInterlocked.CompareExchange(fMailboxClearActive, 0, 0) <> 0 then
+          begin
+            lTopic.AddDropped;
+            Continue;
+          end;
+
+          if not lSubs[i].Target.IsAlive then
+          begin
+            lTopic.RemoveByToken(lToken);
+            Continue;
+          end;
+
+          if not lSubs[i].MailboxInternal.TryPostItem(
+            TMailboxNamedDispatchItem.Create(Self, lMailboxGeneration, lTopic, lHandler, lToken, lState)) then
+          begin
+            lTopic.RemoveByToken(lToken);
+            lTopic.AddDropped;
+            Continue;
+          end;
+
+          if (TInterlocked.CompareExchange(fMailboxClearActive, 0, 0) <> 0) or
+            (CurrentMailboxGeneration <> lMailboxGeneration) then
+            lSubs[i].MailboxInternal.PurgeOwner(Self, CurrentMailboxGeneration);
+          Continue;
+        end;
 
         if (lState <> nil) and not lState.TryEnter then
           continue;
@@ -6264,6 +6474,9 @@ end;
 function TmaxBus.PostResultNamed(const aName: TmaxString): TmaxPostResult;
 var
   lObj: TmaxTopicBase;
+  lIdx: Integer;
+  lHasMailbox: Boolean;
+  lSubs: TArray<TNamedSubscriber>;
   lTopic: TNamedTopic;
   lWildcardSubs: TArray<TNamedWildcardSubscriber>;
   lNameKey: TmaxString;
@@ -6273,6 +6486,8 @@ var
   lWasProcessing: boolean;
 begin
   lNameKey := aName;
+  lHasMailbox := False;
+  lSubs := nil;
   lWildcardSubs := SnapshotNamedWildcardMatches(lNameKey);
   lTopic := nil;
   lQueueDepth := 0;
@@ -6300,13 +6515,21 @@ begin
   else
   begin
     lQueueDepth := lTopic.GetStats.CurrentQueueDepth;
+    lSubs := lTopic.Snapshot;
+    for lIdx := 0 to High(lSubs) do
+      if (lSubs[lIdx].MailboxInternal <> nil) and lSubs[lIdx].Target.IsAlive and
+        ((lSubs[lIdx].State = nil) or lSubs[lIdx].State.IsActive) then
+      begin
+        lHasMailbox := True;
+        Break;
+      end;
     lWasProcessing := lTopic.IsProcessing;
   end;
 
   lAccepted := TryPostNamed(aName);
   if not lAccepted then
     Exit(TmaxPostResult.Dropped);
-  if (lQueueDepth > 0) or lWasProcessing then
+  if lHasMailbox or (lQueueDepth > 0) or lWasProcessing then
     Exit(TmaxPostResult.Queued);
   Result := TmaxPostResult.DispatchedInline;
 end;
