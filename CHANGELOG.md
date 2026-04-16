@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Changed
+- Added `MailboxOverflowSample` as the maintained bounded-mailbox overflow demo, showing `MailboxDropNewest` dropping later arrivals until the receiver pumps the mailbox. (T-1141)
+- Added maintained mailbox benchmark modes plus CSV contract/docs for raw mailbox and mailbox-bound receiver handoff, and recorded that current evidence keeps the portable mailbox as the only shipped implementation because specialized mailbox thresholds were not met. (T-1142, T-1143)
+- Published the full mailbox feature family and migration guidance in `README.md` / `MIGRATION.md`, covering typed, exact named, named-of, GUID, mailbox coalescing, mailbox overflow, and when to choose mailbox delivery over `Main`, `Async`, and `Background`. (T-1144, T-1042)
 - Added mailbox-owned capacity and overflow policy on `TmaxMailbox` through `TmaxMailboxPolicy`, including `MailboxDropNewest`, `MailboxDropOldest`, `MailboxBlock`, and `MailboxDeadline`, while keeping the default mailbox path unbounded. Added regressions for direct mailbox posting, mailbox-bound bus delivery, coalescing replacement under bounded capacity, and the temporary-overflow contract. (T-1139, T-1140)
 - Added `MailboxLatestWinsSample` as the maintained mailbox coalescing demo, showing same-key latest-pending replacement while unrelated keys keep their original queue slots under receiver-side mailbox pumping. (T-1137)
 - Added mailbox-level coalescing for payload-carrying mailbox-bound subscriptions, using subscription-scoped latest-pending replacement while preserving FIFO order for unrelated keys and keeping in-flight work immutable. Added named-of and GUID parity plus shared-mailbox isolation regressions for the receiver-side coalescing layer. (T-1135, T-1136)

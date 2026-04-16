@@ -221,6 +221,7 @@ The mailbox roadmap is staged:
 
 - current slice: `ImaxMailbox`, typed `SubscribeIn<T>`, exact named `SubscribeNamedIn`, named typed `SubscribeNamedOfIn<T>`, GUID typed `SubscribeGuidOfIn<T>`, mailbox-level coalescing for payload-carrying mailbox-bound subscriptions, mailbox-owned overflow policy, owner-thread pumping, `Clear` purge, and close semantics
 - later slices: benchmark-guided specialization and any later direct-mailbox helper APIs that prove necessary
+- current status: no specialized mailbox implementation ships today; the portable mailbox remains the only maintained implementation until benchmark thresholds justify an opt-in platform-specific variant
 
 ## 4. Delivery semantics
 

@@ -91,7 +91,7 @@ The shipped scheduler adapters are intentionally different:
 Receiver-affine delivery is handled through a mailbox owned by exactly one thread.
 
 - The receiver thread creates an `ImaxMailbox`.
-- The receiver subscribes through `TmaxBus.SubscribeIn<T>(...)`.
+- The receiver subscribes through the mailbox-bound `TmaxBus` family: `SubscribeIn<T>(...)`, `SubscribeNamedIn(...)`, `SubscribeNamedOfIn<T>(...)`, or `SubscribeGuidOfIn<T>(...)`.
 - A post from another thread does not execute the handler directly on that posting thread.
 - EventNexus enqueues a bus-owned work item into the receiver mailbox.
 - The receiver thread pumps the mailbox and executes the handler on itself.
@@ -156,6 +156,7 @@ Mailbox lifecycle rules:
 - Temporary mailbox overflow is not receiver death and must not auto-unsubscribe mailbox-bound subscriptions.
 - Closed mailbox rejection is terminal and may retire mailbox-bound subscriptions lazily after detection.
 - Future roadmap items are benchmark-guided specialization and any later direct-mailbox helper if a real use case appears.
+- Current runtime stays portable-only: no specialized mailbox implementation is active until benchmark evidence justifies one behind the same contract.
 
 ## Queue policy and presets
 

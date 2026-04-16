@@ -13,6 +13,7 @@ Purpose:
 
 - stress post/dispatch throughput with configurable producers, subscribers, and payload size,
 - exercise sticky and coalescing options.
+- provide a maintained mailbox benchmark path for raw `ImaxMailbox.TryPost` handoff and mailbox-bound `SubscribeIn<T>` delivery.
 
 Example runs:
 
@@ -20,6 +21,8 @@ Example runs:
 ./build-delphi.sh bench/BenchHarness.dproj -config Release -enforce-diagnostics-policy -diagnostics-policy build/diagnostics-policy.regex
 ./bench/BenchHarness --producers=4 --consumers=4 --events=100000 --payload=256 --sticky --coalesce
 ./bench/BenchHarness --producers=4 --consumers=1000 --events=20000 --payload=64
+./bench/BenchHarness --mode=mailbox-direct --producers=4 --events=50000 --csv=build/analysis/mailbox-direct.csv
+./bench/BenchHarness --mode=mailbox-bus --producers=4 --events=50000 --csv=build/analysis/mailbox-bus.csv
 ```
 
 Implementation note:
@@ -33,6 +36,34 @@ Reported fields:
 - `Time ms`
 - `Throughput evt/s`
 - `Posted/Delivered`
+
+Mailbox benchmark modes:
+
+- `--mode=mailbox-direct`: measures end-to-end raw `ImaxMailbox.TryPost` handoff into one owner-thread mailbox that pumps continuously until all work is drained.
+- `--mode=mailbox-bus`: measures end-to-end `SubscribeIn<Integer>(mailbox, ...)` receiver handoff through EventNexus into one owner-thread mailbox that pumps continuously until all work is drained.
+- Mailbox benchmark rows can emit CSV through `--csv=<path>` with the contract documented in `docs/benchmarks/benchmark-output-contract.md`.
+- Mailbox modes use one receiver mailbox and one receiver thread only, so `--consumers=1` is required.
+- Mailbox modes treat `--events` as events per producer, so total work is `producers * events`.
+
+Convenience runner:
+
+```batch
+build\run-mailbox-benchmark.bat
+```
+
+This writes:
+
+- `build\analysis\mailbox-direct.csv`
+- `build\analysis\mailbox-bus.csv`
+
+Specialization trigger criteria:
+
+- treat the portable mailbox as the default baseline for all supported targets
+- only consider a specialized mailbox implementation after at least 5 isolated samples per maintained profile
+- require at least 25% median throughput improvement on `mailbox-direct`
+- require at least 15% median throughput improvement on `mailbox-bus`
+- reject any specialization that regresses the other maintained mailbox profile by more than 5% or changes semantics
+- current evidence does not justify a specialized mailbox implementation, so the portable mailbox remains the only shipped path
 
 ## Scheduler and cross-library comparison (`SchedulerCompare.dpr`)
 

@@ -40,6 +40,33 @@ This guide maps common iPub/NX Horizon usage into current EventNexus APIs and ru
 | Coalescing | `EnableCoalesceOf<T>(...)` |
 | Queue throttling | `SetPolicy*` and `maxSetQueuePreset*` |
 
+## Mailbox delivery migration
+
+Use mailbox delivery when a receiver must execute on its own thread or cooperative loop instead of on the posting thread, main thread, or shared async scheduler.
+
+- Choose `Main` when we specifically need the UI/main thread.
+- Choose `Async` when any worker thread is acceptable and the scheduler owns execution.
+- Choose `Background` when we want main-thread callers to hop to async but non-main callers to stay inline.
+- Choose mailbox delivery when the receiver owns its own thread affinity and is prepared to pump that mailbox itself.
+
+Mailbox API mapping:
+
+| Need | EventNexus mailbox API |
+|---|---|
+| Typed receiver-owned delivery | `SubscribeIn<T>(aMailbox, ...)` |
+| Exact named receiver-owned delivery | `SubscribeNamedIn(aName, aMailbox, ...)` |
+| Named typed receiver-owned delivery | `SubscribeNamedOfIn<T>(aName, aMailbox, ...)` |
+| GUID typed receiver-owned delivery | `SubscribeGuidOfIn<T>(aMailbox, ...)` |
+
+Mailbox migration rules:
+
+- Create `TmaxMailbox` on the receiver thread and keep pumping it from that same thread.
+- Mailbox overflow is receiver-local final handoff policy on `TmaxMailboxPolicy`; it is not inherited from topic `SetPolicy*` or `maxSetQueuePreset*`.
+- Mailbox coalescing is a receiver-side option on payload-carrying mailbox subscriptions and is separate from topic-level coalescing.
+- `Clear` purges bus-owned queued mailbox work, while mailbox policy and mailbox ownership remain intact.
+- `Close(True)` rejects future enqueue and discards pending mailbox items; `Close(False)` preserves pending items but still rejects future enqueue.
+- The current implementation is portable-only; no specialized mailbox implementation is enabled today because benchmark evidence has not justified it.
+
 ## Main delivery policy migration
 
 If old code assumes UI-thread marshaling always exists, set explicit policy for console/service workloads:
