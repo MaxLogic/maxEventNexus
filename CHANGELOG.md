@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- Added mailbox-level coalescing for payload-carrying mailbox-bound subscriptions, using subscription-scoped latest-pending replacement while preserving FIFO order for unrelated keys and keeping in-flight work immutable. Added named-of and GUID parity plus shared-mailbox isolation regressions for the receiver-side coalescing layer. (T-1135, T-1136)
 - Added GUID mailbox delivery through `SubscribeGuidOfIn<T>`, preserving interface-keyed GUID routing, sticky replay, and preset handling while expanding regression coverage for receiver affinity, sticky replay, FIFO ordering, unsubscribe or `Clear`, and `PostResultGuidOf<T>` mailbox handoff classification. (T-1132, T-1133)
 - Added named typed mailbox delivery through `SubscribeNamedOfIn<T>`, preserving name-plus-type routing and preset inheritance while expanding regression coverage for receiver affinity, mixed-case routing, sticky replay, FIFO ordering, shared-name multi-type behavior, per-type preset fallback, and `PostResultNamedOf<T>` mailbox handoff classification. (T-1130, T-1131)
 - Added exact named mailbox delivery through `SubscribeNamedIn`, updated the mailbox spec, and expanded regression coverage for receiver affinity, case-insensitive routing, sticky replay, FIFO ordering, unsubscribe or `Clear`, and `PostResultNamed` mailbox handoff classification. (T-1128, T-1129)

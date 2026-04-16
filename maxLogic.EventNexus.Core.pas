@@ -331,6 +331,7 @@ type
   TTypedSubscriber<t> = record
     Handler: TmaxProcOf<t>;
     Mailbox: ImaxMailbox;
+    MailboxCoalesceKeyOf: TmaxKeyFunc<t>;
     MailboxInternal: ImaxBusMailbox;
     Mode: TmaxDelivery;
     Token: TmaxSubscriptionToken;
@@ -394,7 +395,7 @@ type
     constructor Create;
     function Add(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery; out aState: ImaxSubscriptionState;
       const aTarget: TObject = nil; aTrackWeakTarget: boolean = True; const aMailbox: ImaxMailbox = nil;
-      const aMailboxInternal: ImaxBusMailbox = nil): TmaxSubscriptionToken;
+      const aMailboxInternal: ImaxBusMailbox = nil; const aMailboxCoalesceKeyOf: TmaxKeyFunc<t> = nil): TmaxSubscriptionToken;
     procedure RemoveByToken(aToken: TmaxSubscriptionToken);
     function Snapshot: TArray<TTypedSubscriber<t>>;
     function SnapshotAndTryBeginDirectDispatch(out aSubs: TArray<TTypedSubscriber<t>>): boolean;
@@ -577,6 +578,9 @@ type
             const aEvent: t);
           procedure DispatchTypedSubscribers<t>(const aTopicName: TmaxString; const aTopic: TTypedTopic<t>;
             const aSubs: TArray<TTypedSubscriber<t>>; const aValue: t; aRaiseMainThreadRequired: boolean);
+          function TryPostMailboxTypedDispatchItem<t>(const aMailbox: ImaxBusMailbox; aTopic: TTypedTopic<t>;
+            const aHandler: TmaxProcOf<t>; const aValue: t; aToken: TmaxSubscriptionToken;
+            const aState: ImaxSubscriptionState; const aMailboxCoalesceKeyOf: TmaxKeyFunc<t>): Boolean;
           function SubscribeTypedObjInternal<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery;
             aTrackWeakTarget: boolean): ImaxSubscription;
           function SubscribeNamedOfObjInternal<t>(const aName: TmaxString; const aHandler: TmaxObjProcOf<t>;
@@ -602,7 +606,9 @@ type
 	    procedure SetQueuePresetGuid(const aGuid: TGuid; aPreset: TmaxQueuePreset);
     function Subscribe<t>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
     function Subscribe<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
-    function SubscribeIn<t>(const aMailbox: ImaxMailbox; const aHandler: TmaxProcOf<t>): ImaxSubscription;
+    function SubscribeIn<t>(const aMailbox: ImaxMailbox; const aHandler: TmaxProcOf<t>): ImaxSubscription; overload;
+    function SubscribeIn<t>(const aMailbox: ImaxMailbox; const aHandler: TmaxProcOf<t>;
+      const aMailboxCoalesceKeyOf: TmaxKeyFunc<t>): ImaxSubscription; overload;
     function SubscribeStrong<t>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
 	    procedure Post<t>(const aEvent: t);
 	    function TryPost<t>(const aEvent: t): boolean; overload;
@@ -619,7 +625,9 @@ type
 
     function SubscribeNamedOf<t>(const aName: TmaxString; const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
     function SubscribeNamedOfIn<t>(const aName: TmaxString; const aMailbox: ImaxMailbox;
-      const aHandler: TmaxProcOf<t>): ImaxSubscription;
+      const aHandler: TmaxProcOf<t>): ImaxSubscription; overload;
+    function SubscribeNamedOfIn<t>(const aName: TmaxString; const aMailbox: ImaxMailbox;
+      const aHandler: TmaxProcOf<t>; const aMailboxCoalesceKeyOf: TmaxKeyFunc<t>): ImaxSubscription; overload;
     function SubscribeNamedOf<t>(const aName: TmaxString; const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
     function SubscribeNamedOfStrong<t>(const aName: TmaxString; const aHandler: TmaxObjProcOf<t>;
       aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription;
@@ -631,7 +639,9 @@ type
     procedure PostManyNamedOf<t>(const aName: TmaxString; const aEvents: array of t);
 
     function SubscribeGuidOfIn<t: IInterface>(const aMailbox: ImaxMailbox;
-      const aHandler: TmaxProcOf<t>): ImaxSubscription;
+      const aHandler: TmaxProcOf<t>): ImaxSubscription; overload;
+    function SubscribeGuidOfIn<t: IInterface>(const aMailbox: ImaxMailbox;
+      const aHandler: TmaxProcOf<t>; const aMailboxCoalesceKeyOf: TmaxKeyFunc<t>): ImaxSubscription; overload;
     function SubscribeGuidOf<t: IInterface>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
     function SubscribeGuidOf<t: IInterface>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
     function SubscribeGuidOfStrong<t: IInterface>(const aHandler: TmaxObjProcOf<t>;
@@ -2350,7 +2360,7 @@ end;
 
 function TTypedTopic<t>.Add(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery; out aState: ImaxSubscriptionState;
   const aTarget: TObject = nil; aTrackWeakTarget: boolean = True; const aMailbox: ImaxMailbox = nil;
-  const aMailboxInternal: ImaxBusMailbox = nil): TmaxSubscriptionToken;
+  const aMailboxInternal: ImaxBusMailbox = nil; const aMailboxCoalesceKeyOf: TmaxKeyFunc<t> = nil): TmaxSubscriptionToken;
 var
   lNew: TArray<TTypedSubscriber<t>>;
   lSub: TTypedSubscriber<t>;
@@ -2369,6 +2379,7 @@ begin
     else
       lSub.Target := TmaxWeakTarget.CreateStrong(aTarget);
     lSub.Mailbox := aMailbox;
+    lSub.MailboxCoalesceKeyOf := aMailboxCoalesceKeyOf;
     lSub.MailboxInternal := aMailboxInternal;
     lStateObj := TmaxSubscriptionState.Create;
     lSub.State := lStateObj;
@@ -4231,6 +4242,45 @@ end;
 
 { TmaxBus }
 
+function TmaxBus.TryPostMailboxTypedDispatchItem<t>(const aMailbox: ImaxBusMailbox; aTopic: TTypedTopic<t>;
+  const aHandler: TmaxProcOf<t>; const aValue: t; aToken: TmaxSubscriptionToken; const aState: ImaxSubscriptionState;
+  const aMailboxCoalesceKeyOf: TmaxKeyFunc<t>): Boolean;
+var
+  lCoalesceIdentity: TmaxString;
+  lCoalesceKey: TmaxString;
+  lMailboxGeneration: Int64;
+begin
+  Result := False;
+  lMailboxGeneration := CurrentMailboxGeneration;
+  if TInterlocked.CompareExchange(fMailboxClearActive, 0, 0) <> 0 then
+  begin
+    aTopic.AddDropped;
+    Exit;
+  end;
+
+  if Assigned(aMailboxCoalesceKeyOf) then
+  begin
+    lCoalesceKey := aMailboxCoalesceKeyOf(aValue);
+    lCoalesceIdentity := aTopic.MetricName + #2 + UIntToStr(UInt64(aToken)) + #1 + lCoalesceKey;
+    Result := aMailbox.TryPostCoalescedItem(lCoalesceIdentity,
+      TMailboxTypedDispatchItem<t>.Create(Self, lMailboxGeneration, aTopic, aHandler, aValue, aToken, aState));
+  end
+  else
+    Result := aMailbox.TryPostItem(
+      TMailboxTypedDispatchItem<t>.Create(Self, lMailboxGeneration, aTopic, aHandler, aValue, aToken, aState));
+
+  if not Result then
+  begin
+    aTopic.RemoveByToken(aToken);
+    aTopic.AddDropped;
+    Exit;
+  end;
+
+  if (TInterlocked.CompareExchange(fMailboxClearActive, 0, 0) <> 0) or
+    (CurrentMailboxGeneration <> lMailboxGeneration) then
+    aMailbox.PurgeOwner(Self, CurrentMailboxGeneration);
+end;
+
 procedure TmaxBus.DispatchTypedSubscribers<t>(const aTopicName: TmaxString; const aTopic: TTypedTopic<t>;
   const aSubs: TArray<TTypedSubscriber<t>>; const aValue: t; aRaiseMainThreadRequired: boolean);
 var
@@ -4249,7 +4299,6 @@ var
   lBox: TInvokeBox<t>;
   lDeliveredCount: integer;
   lHasDeferred: boolean;
-  lMailboxGeneration: Int64;
 begin
   lErrs := nil;
   lErrDetails := nil;
@@ -4379,13 +4428,6 @@ begin
       begin
         lHandler := aSubs[i].Handler;
         lToken := aSubs[i].Token;
-        lMailboxGeneration := CurrentMailboxGeneration;
-
-        if TInterlocked.CompareExchange(fMailboxClearActive, 0, 0) <> 0 then
-        begin
-          aTopic.AddDropped;
-          Continue;
-        end;
 
         if not aSubs[i].Target.IsAlive then
         begin
@@ -4393,18 +4435,8 @@ begin
           Continue;
         end;
 
-        if not aSubs[i].MailboxInternal.TryPostItem(
-          TMailboxTypedDispatchItem<t>.Create(Self, lMailboxGeneration, aTopic, lHandler, aValue, lToken,
-            aSubs[i].StateObj)) then
-        begin
-          aTopic.RemoveByToken(lToken);
-          aTopic.AddDropped;
-          Continue;
-        end;
-
-        if (TInterlocked.CompareExchange(fMailboxClearActive, 0, 0) <> 0) or
-          (CurrentMailboxGeneration <> lMailboxGeneration) then
-          aSubs[i].MailboxInternal.PurgeOwner(Self, CurrentMailboxGeneration);
+        TryPostMailboxTypedDispatchItem<t>(aSubs[i].MailboxInternal, aTopic, lHandler, aValue, lToken,
+          aSubs[i].StateObj, aSubs[i].MailboxCoalesceKeyOf);
         Continue;
       end;
 
@@ -5207,6 +5239,12 @@ begin
 end;
 
 function TmaxBus.SubscribeIn<t>(const aMailbox: ImaxMailbox; const aHandler: TmaxProcOf<t>): ImaxSubscription;
+begin
+  Result := SubscribeIn<t>(aMailbox, aHandler, nil);
+end;
+
+function TmaxBus.SubscribeIn<t>(const aMailbox: ImaxMailbox; const aHandler: TmaxProcOf<t>;
+  const aMailboxCoalesceKeyOf: TmaxKeyFunc<t>): ImaxSubscription;
 var
   lInternalMailbox: ImaxBusMailbox;
   lKey: PTypeInfo;
@@ -5253,7 +5291,8 @@ begin
     end;
     lTopic := TTypedTopic<t>(lObj);
     lTopic.SetMetricName(lMetricName);
-    lToken := lTopic.Add(aHandler, TmaxDelivery.Posting, lState, nil, True, aMailbox, lInternalMailbox);
+    lToken := lTopic.Add(aHandler, TmaxDelivery.Posting, lState, nil, True, aMailbox, lInternalMailbox,
+      aMailboxCoalesceKeyOf);
   finally
     TMonitor.Exit(fTypedLock);
   end;
@@ -6682,6 +6721,12 @@ end;
 
 function TmaxBus.SubscribeNamedOfIn<t>(const aName: TmaxString; const aMailbox: ImaxMailbox;
   const aHandler: TmaxProcOf<t>): ImaxSubscription;
+begin
+  Result := SubscribeNamedOfIn<t>(aName, aMailbox, aHandler, nil);
+end;
+
+function TmaxBus.SubscribeNamedOfIn<t>(const aName: TmaxString; const aMailbox: ImaxMailbox;
+  const aHandler: TmaxProcOf<t>; const aMailboxCoalesceKeyOf: TmaxKeyFunc<t>): ImaxSubscription;
 var
   lInternalMailbox: ImaxBusMailbox;
   lTypeDict: TmaxTypeTopicDict;
@@ -6700,7 +6745,6 @@ var
   lBasePolicy: TmaxQueuePolicy;
   lHasBasePolicy: Boolean;
   lCreated: Boolean;
-  lMailboxGeneration: Int64;
 begin
   if aMailbox = nil then
     raise EmaxInvalidSubscription.Create('Mailbox subscription requires a mailbox');
@@ -6759,7 +6803,8 @@ begin
     end;
     lTopic := TTypedTopic<t>(lObj);
     lTopic.SetMetricName(lMetric);
-    lToken := lTopic.Add(aHandler, TmaxDelivery.Posting, lState, nil, True, aMailbox, lInternalMailbox);
+    lToken := lTopic.Add(aHandler, TmaxDelivery.Posting, lState, nil, True, aMailbox, lInternalMailbox,
+      aMailboxCoalesceKeyOf);
   finally
     TMonitor.Exit(fNamedTypedLock);
   end;
@@ -6770,19 +6815,9 @@ begin
   lSend := lTopic.TryGetCached(lLast);
   if lSend then
   begin
-    lMailboxGeneration := CurrentMailboxGeneration;
     if TInterlocked.CompareExchange(fMailboxClearActive, 0, 0) = 0 then
-    begin
-      if not lInternalMailbox.TryPostItem(
-        TMailboxTypedDispatchItem<t>.Create(Self, lMailboxGeneration, lTopic, aHandler, lLast, lToken, lState)) then
-      begin
-        lTopic.RemoveByToken(lToken);
-        lTopic.AddDropped;
-      end
-      else if (TInterlocked.CompareExchange(fMailboxClearActive, 0, 0) <> 0) or
-        (CurrentMailboxGeneration <> lMailboxGeneration) then
-        lInternalMailbox.PurgeOwner(Self, CurrentMailboxGeneration);
-    end;
+      TryPostMailboxTypedDispatchItem<t>(lInternalMailbox, lTopic, aHandler, lLast, lToken, lState,
+        aMailboxCoalesceKeyOf);
   end;
 
   Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
@@ -7390,12 +7425,17 @@ begin
 end;
 
 function TmaxBus.SubscribeGuidOfIn<t>(const aMailbox: ImaxMailbox; const aHandler: TmaxProcOf<t>): ImaxSubscription;
+begin
+  Result := SubscribeGuidOfIn<t>(aMailbox, aHandler, nil);
+end;
+
+function TmaxBus.SubscribeGuidOfIn<t>(const aMailbox: ImaxMailbox; const aHandler: TmaxProcOf<t>;
+  const aMailboxCoalesceKeyOf: TmaxKeyFunc<t>): ImaxSubscription;
 var
   lCreated: Boolean;
   lInternalMailbox: ImaxBusMailbox;
   lKey: TGuid;
   lLast: t;
-  lMailboxGeneration: Int64;
   lMetric: TmaxString;
   lObj: TmaxTopicBase;
   lPreset: TmaxQueuePreset;
@@ -7441,7 +7481,8 @@ begin
     end;
     lTopic := TTypedTopic<t>(lObj);
     lTopic.SetMetricName(lMetric);
-    lToken := lTopic.Add(aHandler, TmaxDelivery.Posting, lState, nil, True, aMailbox, lInternalMailbox);
+    lToken := lTopic.Add(aHandler, TmaxDelivery.Posting, lState, nil, True, aMailbox, lInternalMailbox,
+      aMailboxCoalesceKeyOf);
   finally
     TMonitor.Exit(fGuidLock);
   end;
@@ -7452,19 +7493,9 @@ begin
   lSend := lTopic.TryGetCached(lLast);
   if lSend then
   begin
-    lMailboxGeneration := CurrentMailboxGeneration;
     if TInterlocked.CompareExchange(fMailboxClearActive, 0, 0) = 0 then
-    begin
-      if not lInternalMailbox.TryPostItem(
-        TMailboxTypedDispatchItem<t>.Create(Self, lMailboxGeneration, lTopic, aHandler, lLast, lToken, lState)) then
-      begin
-        lTopic.RemoveByToken(lToken);
-        lTopic.AddDropped;
-      end
-      else if (TInterlocked.CompareExchange(fMailboxClearActive, 0, 0) <> 0) or
-        (CurrentMailboxGeneration <> lMailboxGeneration) then
-        lInternalMailbox.PurgeOwner(Self, CurrentMailboxGeneration);
-    end;
+      TryPostMailboxTypedDispatchItem<t>(lInternalMailbox, lTopic, aHandler, lLast, lToken, lState,
+        aMailboxCoalesceKeyOf);
   end;
 
   Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);

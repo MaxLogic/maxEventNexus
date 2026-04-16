@@ -435,6 +435,12 @@ type
     procedure MailboxGuidFIFOOrder;
     procedure MailboxGuidUnsubscribeSkipsQueuedWork;
     procedure MailboxGuidClearPurgesQueuedWork;
+    procedure MailboxCoalescingLatestPendingWins;
+    procedure MailboxCoalescingKeepsOriginalSlotForUnrelatedKeys;
+    procedure MailboxCoalescingDoesNotRewriteInFlightWork;
+    procedure MailboxCoalescingDoesNotCollapseDifferentSubscriptions;
+    procedure MailboxNamedOfCoalescingLatestPendingWins;
+    procedure MailboxGuidCoalescingLatestPendingWins;
     procedure MailboxUnsubscribeSkipsQueuedWork;
     procedure MailboxClearPurgesQueuedWork;
     procedure MailboxCloseDiscardPending;
@@ -1088,6 +1094,25 @@ begin
     aThread.Free;
     aThread := nil;
   end;
+end;
+
+function StartMailboxCoalescingPostThread(const aStarted, aRelease: TEvent; const aBus: ImaxBus;
+  const aEvent: TKeyed): TThread;
+var
+  lEvent: TKeyed;
+begin
+  lEvent := aEvent;
+  Result := TThread.CreateAnonymousThread(
+    procedure
+    begin
+      if aStarted.WaitFor(2000) = wrSignaled then
+      begin
+        maxBusObj(aBus).Post<TKeyed>(lEvent);
+        aRelease.SetEvent;
+      end;
+    end);
+  Result.FreeOnTerminate := False;
+  Result.Start;
 end;
 
 function PostGuidResultOffMain(const aBus: ImaxBus; const aValue: IIntEvent): TmaxPostResult;
@@ -7132,6 +7157,261 @@ begin
     CheckEquals(0, lMailbox.PumpAll);
     CheckEquals(0, lHits);
   finally
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestMailbox.MailboxCoalescingLatestPendingWins;
+var
+  lBus: ImaxBus;
+  lEvt: TKeyed;
+  lMailbox: ImaxMailbox;
+  lValues: TList<Integer>;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lValues := TList<Integer>.Create;
+  try
+    maxBusObj(lBus).SubscribeIn<TKeyed>(lMailbox,
+      procedure(const aValue: TKeyed)
+      begin
+        lValues.Add(aValue.Value);
+      end,
+      function(const aValue: TKeyed): string
+      begin
+        Result := aValue.Key;
+      end);
+
+    lEvt.Key := 'progress';
+    lEvt.Value := 1;
+    maxBusObj(lBus).Post<TKeyed>(lEvt);
+    lEvt.Value := 2;
+    maxBusObj(lBus).Post<TKeyed>(lEvt);
+    lEvt.Value := 3;
+    maxBusObj(lBus).Post<TKeyed>(lEvt);
+
+    CheckEquals(1, lMailbox.PumpAll);
+    CheckEquals(1, lValues.Count);
+    CheckEquals(3, lValues[0]);
+  finally
+    lValues.Free;
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestMailbox.MailboxCoalescingKeepsOriginalSlotForUnrelatedKeys;
+var
+  lA: TKeyed;
+  lB: TKeyed;
+  lBus: ImaxBus;
+  lMailbox: ImaxMailbox;
+  lValues: TList<string>;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lValues := TList<string>.Create;
+  try
+    maxBusObj(lBus).SubscribeIn<TKeyed>(lMailbox,
+      procedure(const aValue: TKeyed)
+      begin
+        lValues.Add(aValue.Key + ':' + IntToStr(aValue.Value));
+      end,
+      function(const aValue: TKeyed): string
+      begin
+        Result := aValue.Key;
+      end);
+
+    lA.Key := 'A';
+    lA.Value := 1;
+    maxBusObj(lBus).Post<TKeyed>(lA);
+
+    lB.Key := 'B';
+    lB.Value := 10;
+    maxBusObj(lBus).Post<TKeyed>(lB);
+
+    lA.Value := 2;
+    maxBusObj(lBus).Post<TKeyed>(lA);
+
+    CheckEquals(2, lMailbox.PumpAll);
+    CheckEquals(2, lValues.Count);
+    CheckEquals('A:2', lValues[0]);
+    CheckEquals('B:10', lValues[1]);
+  finally
+    lValues.Free;
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestMailbox.MailboxCoalescingDoesNotRewriteInFlightWork;
+var
+  lBus: ImaxBus;
+  lEvt: TKeyed;
+  lMailbox: ImaxMailbox;
+  lRelease: TEvent;
+  lStarted: TEvent;
+  lThread: TThread;
+  lValues: TList<Integer>;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lStarted := TEvent.Create(nil, True, False, '');
+  lRelease := TEvent.Create(nil, True, False, '');
+  lThread := nil;
+  lValues := TList<Integer>.Create;
+  try
+    maxBusObj(lBus).SubscribeIn<TKeyed>(lMailbox,
+      procedure(const aValue: TKeyed)
+      begin
+        lValues.Add(aValue.Value);
+        if aValue.Value = 1 then
+        begin
+          lStarted.SetEvent;
+          lRelease.WaitFor(5000);
+        end;
+      end,
+      function(const aValue: TKeyed): string
+      begin
+        Result := aValue.Key;
+      end);
+    lEvt.Key := 'progress';
+    lEvt.Value := 1;
+    maxBusObj(lBus).Post<TKeyed>(lEvt);
+    lEvt.Value := 2;
+    lThread := StartMailboxCoalescingPostThread(lStarted, lRelease, lBus, lEvt);
+    Check(lMailbox.PumpOne(2000), 'First mailbox item did not become in-flight');
+    CheckEquals(1, lValues.Count);
+    CheckEquals(1, lMailbox.PendingCount);
+    lThread.WaitFor;
+    CheckEquals(1, lMailbox.PumpAll);
+    CheckEquals(2, lValues.Count);
+    CheckEquals(1, lValues[0]);
+    CheckEquals(2, lValues[1]);
+  finally
+    lRelease.SetEvent;
+    if lThread <> nil then
+      lThread.Free;
+    lValues.Free;
+    lRelease.Free;
+    lStarted.Free;
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestMailbox.MailboxCoalescingDoesNotCollapseDifferentSubscriptions;
+var
+  lBus: ImaxBus;
+  lEvt: TKeyed;
+  lInts: TList<Integer>;
+  lKeys: TList<string>;
+  lMailbox: ImaxMailbox;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lInts := TList<Integer>.Create;
+  lKeys := TList<string>.Create;
+  try
+    maxBusObj(lBus).SubscribeIn<TKeyed>(lMailbox,
+      procedure(const aValue: TKeyed)
+      begin
+        lKeys.Add(aValue.Key + ':' + IntToStr(aValue.Value));
+      end,
+      function(const aValue: TKeyed): string
+      begin
+        Result := 'progress';
+      end);
+    maxBusObj(lBus).SubscribeNamedOfIn<Integer>('mailbox.namedof.coalescing.sharedmailbox', lMailbox,
+      procedure(const aValue: Integer)
+      begin
+        lInts.Add(aValue);
+      end,
+      function(const aValue: Integer): string
+      begin
+        Result := 'progress';
+      end);
+
+    lEvt.Key := 'typed';
+    lEvt.Value := 1;
+    maxBusObj(lBus).Post<TKeyed>(lEvt);
+    maxBusObj(lBus).PostNamedOf<Integer>('mailbox.namedof.coalescing.sharedmailbox', 2);
+
+    CheckEquals(2, lMailbox.PumpAll);
+    CheckEquals(1, lKeys.Count);
+    CheckEquals('typed:1', lKeys[0]);
+    CheckEquals(1, lInts.Count);
+    CheckEquals(2, lInts[0]);
+  finally
+    lKeys.Free;
+    lInts.Free;
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestMailbox.MailboxNamedOfCoalescingLatestPendingWins;
+var
+  lBus: ImaxBus;
+  lMailbox: ImaxMailbox;
+  lValues: TList<Integer>;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lValues := TList<Integer>.Create;
+  try
+    maxBusObj(lBus).SubscribeNamedOfIn<Integer>('mailbox.namedof.coalescing', lMailbox,
+      procedure(const aValue: Integer)
+      begin
+        lValues.Add(aValue);
+      end,
+      function(const aValue: Integer): string
+      begin
+        Result := 'progress';
+      end);
+
+    maxBusObj(lBus).PostNamedOf<Integer>('mailbox.namedof.coalescing', 1);
+    maxBusObj(lBus).PostNamedOf<Integer>('mailbox.namedof.coalescing', 2);
+
+    CheckEquals(1, lMailbox.PumpAll);
+    CheckEquals(1, lValues.Count);
+    CheckEquals(2, lValues[0]);
+  finally
+    lValues.Free;
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestMailbox.MailboxGuidCoalescingLatestPendingWins;
+var
+  lBus: ImaxBus;
+  lMailbox: ImaxMailbox;
+  lValues: TList<Integer>;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lValues := TList<Integer>.Create;
+  try
+    maxBusObj(lBus).SubscribeGuidOfIn<IIntEvent>(lMailbox,
+      procedure(const aValue: IIntEvent)
+      begin
+        lValues.Add(aValue.GetValue);
+      end,
+      function(const aValue: IIntEvent): string
+      begin
+        Result := 'progress';
+      end);
+
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(1));
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(2));
+
+    CheckEquals(1, lMailbox.PumpAll);
+    CheckEquals(1, lValues.Count);
+    CheckEquals(2, lValues[0]);
+  finally
+    lValues.Free;
     lBus.Clear;
   end;
 end;
