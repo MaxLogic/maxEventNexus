@@ -14,6 +14,7 @@ Bridge rule for samples:
 - `MailboxWorkerSample.dpr`: thread A owns a mailbox, thread B posts, and thread A pumps the mailbox and handles on its own thread.
 - `MailboxClearShutdownSample.dpr`: shows `Clear` purging queued mailbox work and `Close(True)` discarding queued items while already-dequeued work may still finish.
 - `MailboxLatestWinsSample.dpr`: shows mailbox coalescing collapsing repeated progress updates per key while unrelated keys keep their original queue order.
+- `MailboxOverflowSample.dpr`: shows a bounded mailbox in `MailboxDropNewest` mode dropping later arrivals until the receiver pumps the mailbox.
 - `UISample.dpr`: VCL UI sample demonstrating `Main` delivery behavior.
 - `UISampleConsole.pas`: console sample for scheduler and coalescing flow.
 

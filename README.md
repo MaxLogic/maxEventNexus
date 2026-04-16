@@ -20,7 +20,7 @@
 - Hardened delayed-posting edge coverage: zero-delay dispatch/metrics/cancel semantics and deterministic long-delay pending/cancel behavior.
 - Added optional strong object-method subscriptions (`SubscribeStrong<T>`, `SubscribeNamedOfStrong<T>`, `SubscribeGuidOfStrong<T>`) for callers that guarantee subscriber lifetime and want to skip weak-liveness tracking overhead.
 
-EventNexus is a type-safe event bus for Delphi 12+ with typed, named, and GUID topic routing, delivery-mode control, sticky cache, coalescing, and queue policies.
+EventNexus is a type-safe event bus for Delphi 12+ with typed, named, and GUID topic routing, delivery-mode control, sticky cache, topic and mailbox coalescing, queue policies, and receiver-owned mailbox delivery.
 
 ## Performance and Scope Snapshot (2026-03-21)
 
@@ -241,6 +241,7 @@ That means a type preset now acts as the fallback default for named-of topics wh
 
 - Sticky: `EnableSticky<T>(True)` / `EnableStickyNamed(...)` caches latest event.
 - Coalescing: `EnableCoalesceOf<T>(...)`, `EnableCoalesceNamedOf<T>(...)`, `EnableCoalesceGuidOf<T>(...)` keeps latest value per key per window.
+- Mailbox coalescing is a separate receiver-side layer on payload-carrying mailbox subscriptions: it keeps the latest pending item per `(subscription, mailbox key)` while unrelated keys keep FIFO order.
 
 `Clear` stays a runtime reset, not a durable-config wipe:
 
@@ -252,7 +253,7 @@ That means a type preset now acts as the fallback default for named-of topics wh
 Mailbox delivery adds a receiver-owned execution context without introducing a platform-specific message loop.
 
 - Create `ImaxMailbox` / `TmaxMailbox` on the receiver thread.
-- Subscribe through `TmaxBus.SubscribeIn<T>(...)`.
+- Subscribe through `TmaxBus.SubscribeIn<T>(...)`, `SubscribeNamedIn(...)`, `SubscribeNamedOfIn<T>(...)`, or `SubscribeGuidOfIn<T>(...)`.
 - Post from any other thread as usual.
 - Pump the mailbox on the receiver thread so queued handlers execute there.
 
@@ -261,9 +262,12 @@ Baseline mailbox semantics:
 - Cooperative pumping: the receiver thread must call `PumpOne(...)` or `PumpAll`.
 - Owner-thread enforcement: `PumpOne` and `PumpAll` fail fast on the wrong thread.
 - FIFO per mailbox.
-- Unbounded queue in the first slice.
+- Default mailbox policy is unbounded, but mailbox overflow is configurable per mailbox through `TmaxMailboxPolicy` with `MailboxDropNewest`, `MailboxDropOldest`, `MailboxBlock`, and `MailboxDeadline`.
+- Mailbox overflow is receiver-local final handoff policy; it is not inherited from topic queue policies or queue presets.
+- Mailbox coalescing is receiver-side and distinct from topic coalescing.
 - `Clear` purges queued mailbox work owned by the bus.
 - `Close(True)` rejects future enqueue and discards queued-but-not-dequeued items.
+- No specialized mailbox implementation ships today; the portable mailbox remains the only maintained path until benchmark thresholds justify a platform-specific version.
 
 Typical patterns:
 
@@ -285,7 +289,7 @@ begin
 end;
 ```
 
-See `samples/MailboxWorkerSample.dpr` for the basic worker-thread pattern and `samples/MailboxClearShutdownSample.dpr` for the `Clear` / close boundary.
+See `samples/MailboxWorkerSample.dpr` for the basic worker-thread pattern, `samples/MailboxClearShutdownSample.dpr` for the `Clear` / close boundary, `samples/MailboxLatestWinsSample.dpr` for mailbox coalescing, and `samples/MailboxOverflowSample.dpr` for mailbox overflow.
 
 ## Scheduling adapters
 
