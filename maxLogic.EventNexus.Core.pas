@@ -630,6 +630,8 @@ type
     procedure PostMany<t>(const aEvents: array of t);
     procedure PostManyNamedOf<t>(const aName: TmaxString; const aEvents: array of t);
 
+    function SubscribeGuidOfIn<t: IInterface>(const aMailbox: ImaxMailbox;
+      const aHandler: TmaxProcOf<t>): ImaxSubscription;
     function SubscribeGuidOf<t: IInterface>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
     function SubscribeGuidOf<t: IInterface>(const aHandler: TmaxObjProcOf<t>; aMode: TmaxDelivery = TmaxDelivery.Posting): ImaxSubscription; overload;
     function SubscribeGuidOfStrong<t: IInterface>(const aHandler: TmaxObjProcOf<t>;
@@ -7387,6 +7389,87 @@ begin
     raise EmaxDispatchError.Create(lErrors, lDetails);
 end;
 
+function TmaxBus.SubscribeGuidOfIn<t>(const aMailbox: ImaxMailbox; const aHandler: TmaxProcOf<t>): ImaxSubscription;
+var
+  lCreated: Boolean;
+  lInternalMailbox: ImaxBusMailbox;
+  lKey: TGuid;
+  lLast: t;
+  lMailboxGeneration: Int64;
+  lMetric: TmaxString;
+  lObj: TmaxTopicBase;
+  lPreset: TmaxQueuePreset;
+  lSend: Boolean;
+  lState: ImaxSubscriptionState;
+  lSticky: Boolean;
+  lToken: TmaxSubscriptionToken;
+  lTopic: TTypedTopic<t>;
+  lTypeKey: PTypeInfo;
+begin
+  if aMailbox = nil then
+    raise EmaxInvalidSubscription.Create('Mailbox subscription requires a mailbox');
+  if not Supports(aMailbox, ImaxBusMailbox, lInternalMailbox) then
+    raise EmaxInvalidSubscription.Create('Mailbox does not support EventNexus bus delivery');
+
+  RegisterMailbox(lInternalMailbox);
+  lTypeKey := TypeInfo(t);
+  lKey := GuidForType(lTypeKey);
+  lMetric := GuidMetricName(lKey);
+  fConfigLock.BeginWrite;
+  try
+    lSticky := fStickyTypes.ContainsKey(lTypeKey);
+    lPreset := TmaxQueuePreset.Unspecified;
+    fPresetGuids.TryGetValue(lKey, lPreset);
+  finally
+    fConfigLock.EndWrite;
+  end;
+
+  lCreated := False;
+  TMonitor.Enter(fGuidLock);
+  try
+    if not fGuid.TryGetValue(lKey, lObj) then
+    begin
+      lTopic := TTypedTopic<t>.Create;
+      lTopic.SetMetricName(lMetric);
+      if lPreset <> TmaxQueuePreset.Unspecified then
+        lTopic.SetPolicyImplicit(PolicyForPreset(lPreset));
+      if lSticky then
+        lTopic.SetSticky(True);
+      fGuid.Add(lKey, lTopic);
+      lCreated := True;
+      lObj := lTopic;
+    end;
+    lTopic := TTypedTopic<t>(lObj);
+    lTopic.SetMetricName(lMetric);
+    lToken := lTopic.Add(aHandler, TmaxDelivery.Posting, lState, nil, True, aMailbox, lInternalMailbox);
+  finally
+    TMonitor.Exit(fGuidLock);
+  end;
+
+  if lCreated then
+    PublishMetricGuidTopic(lKey, lTopic);
+
+  lSend := lTopic.TryGetCached(lLast);
+  if lSend then
+  begin
+    lMailboxGeneration := CurrentMailboxGeneration;
+    if TInterlocked.CompareExchange(fMailboxClearActive, 0, 0) = 0 then
+    begin
+      if not lInternalMailbox.TryPostItem(
+        TMailboxTypedDispatchItem<t>.Create(Self, lMailboxGeneration, lTopic, aHandler, lLast, lToken, lState)) then
+      begin
+        lTopic.RemoveByToken(lToken);
+        lTopic.AddDropped;
+      end
+      else if (TInterlocked.CompareExchange(fMailboxClearActive, 0, 0) <> 0) or
+        (CurrentMailboxGeneration <> lMailboxGeneration) then
+        lInternalMailbox.PurgeOwner(Self, CurrentMailboxGeneration);
+    end;
+  end;
+
+  Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
+end;
+
 function TmaxBus.SubscribeGuidOf<t>(const aHandler: TmaxProcOf<t>; aMode: TmaxDelivery): ImaxSubscription;
 var
   lKey: TGuid;
@@ -7923,9 +8006,12 @@ var
   lAutoSubs: TArray<TmaxAutoBridgeSnapshot>;
   lHasDeferredAutoSubs: boolean;
   lHasInlineAutoSubs: boolean;
+  lHasMailboxSubscribers: Boolean;
   lHasLiveSubscribers: boolean;
+  lIdx: Integer;
   lKey: TGuid;
   lObj: TmaxTopicBase;
+  lSubs: TArray<TTypedSubscriber<t>>;
   lTopic: TTypedTopic<t>;
   lTypeKey: PTypeInfo;
   lSticky: boolean;
@@ -7938,6 +8024,7 @@ begin
   lTopic := nil;
   lAutoSubs := SnapshotAutoBridgeGuid(lKey);
   DescribeAutoBridgeDispatch(lAutoSubs, lHasInlineAutoSubs, lHasDeferredAutoSubs);
+  lHasMailboxSubscribers := False;
   lHasLiveSubscribers := False;
   lQueueDepth := 0;
   lWasProcessing := False;
@@ -7964,6 +8051,14 @@ begin
   else
   begin
     lHasLiveSubscribers := HasLiveTypedSubscribers<t>(lTopic);
+    lSubs := lTopic.Snapshot;
+    for lIdx := 0 to High(lSubs) do
+      if (lSubs[lIdx].MailboxInternal <> nil) and lSubs[lIdx].Target.IsAlive and
+        ((lSubs[lIdx].State = nil) or lSubs[lIdx].State.IsActive) then
+      begin
+        lHasMailboxSubscribers := True;
+        Break;
+      end;
     lQueueDepth := lTopic.GetStats.CurrentQueueDepth;
     lWasProcessing := lTopic.IsProcessing;
   end;
@@ -7979,7 +8074,7 @@ begin
   lAccepted := TryPostGuidOf<t>(aEvent);
   if not lAccepted then
     Exit(TmaxPostResult.Dropped);
-  if (lQueueDepth > 0) or lWasProcessing then
+  if lHasMailboxSubscribers or (lQueueDepth > 0) or lWasProcessing then
     Exit(TmaxPostResult.Queued);
   if (not lHasLiveSubscribers) and (not lHasInlineAutoSubs) and lHasDeferredAutoSubs then
     Exit(TmaxPostResult.Queued);
