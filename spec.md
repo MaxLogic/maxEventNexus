@@ -204,8 +204,8 @@ Mailbox delivery extends the existing hard-reset model.
 
 The mailbox roadmap is staged:
 
-- current slice: `ImaxMailbox`, typed `SubscribeIn<T>`, exact named `SubscribeNamedIn`, named typed `SubscribeNamedOfIn<T>`, GUID typed `SubscribeGuidOfIn<T>`, owner-thread pumping, `Clear` purge, and close semantics
-- later slices: mailbox coalescing and mailbox-owned overflow policy
+- current slice: `ImaxMailbox`, typed `SubscribeIn<T>`, exact named `SubscribeNamedIn`, named typed `SubscribeNamedOfIn<T>`, GUID typed `SubscribeGuidOfIn<T>`, mailbox-level coalescing for payload-carrying mailbox-bound subscriptions, owner-thread pumping, `Clear` purge, and close semantics
+- later slices: mailbox-owned overflow policy
 
 ## 4. Delivery semantics
 
@@ -317,7 +317,7 @@ Mailbox-level coalescing is a separate receiver-side layer.
 - Mailbox-level coalescing happens after topic routing, inside one receiver mailbox, and never changes the existing topic-level coalescing contract.
 - The public trigger is additive overloads on payload-carrying mailbox-bound subscribe APIs, not a direct mailbox API in this phase.
 
-Planned overload shape:
+Overload shape:
 
 ```pascal
 function SubscribeIn<T>(const aMailbox: ImaxMailbox;
@@ -339,9 +339,9 @@ Contract:
 - The mailbox coalescing key type is `TmaxString` and uses ordinal string equality.
 - An empty mailbox coalescing key is valid and means one shared latest-pending bucket for that mailbox-bound subscription.
 - Mailbox-level coalescing scope is per mailbox-bound subscription, not cross-subscription even when multiple subscriptions share one mailbox.
-- The effective replacement identity is `(subscription token, mailbox coalescing key)`.
-- If a matching pending item already exists for that identity, the newer item replaces the pending item while keeping the original queue position.
-- At most one pending item exists per `(subscription token, mailbox coalescing key)`.
+- The effective replacement identity is one stable receiver-subscription discriminator plus the mailbox coalescing key.
+- If a matching pending item already exists for that receiver-subscription identity, the newer item replaces the pending item while keeping the original queue position.
+- At most one pending item exists per receiver-subscription identity plus mailbox coalescing key.
 - Only pending mailbox work can be replaced. Already-dequeued work is in-flight and is never rewritten.
 - The dequeue boundary is the pending-to-in-flight transition for mailbox-level coalescing.
 - If the previous item for a key is already in-flight, the next post creates a new pending item for that key.
@@ -351,7 +351,7 @@ Interaction with existing behavior:
 
 - Topic-level coalescing may still collapse events before mailbox enqueue. Mailbox-level coalescing may then replace already-routed pending mailbox work for one receiver.
 - Topic-level `PostResult* = Coalesced` remains unchanged. Accepted mailbox enqueue, including mailbox-level replacement, remains `Queued`.
-- `Unsubscribe` makes queued mailbox work inert and must also remove its mailbox coalescing index entries.
+- `Unsubscribe` makes queued mailbox work inert. Mailbox coalescing index entries for that work may be cleaned lazily when the queued item is dequeued or purged.
 - `Clear` must purge queued mailbox work and mailbox coalescing index state owned by that bus before returning.
 - `Close(True)` discards pending mailbox items and mailbox coalescing index state together.
 - `Close(False)` preserves queued mailbox items and their mailbox coalescing index state, but future enqueue and future replacement attempts must still fail because the mailbox is closed.
