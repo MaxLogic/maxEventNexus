@@ -115,12 +115,23 @@ Sticky:
 - Topic stores last payload/state.
 - Late subscribers are fed cached value according to subscriber delivery mode.
 
-Coalescing:
+Topic-level coalescing:
 
 - Optional key selector maps event to coalesce key.
 - Pending dictionary stores latest event per key.
 - Flush is scheduled by scheduler (`RunDelayed`) to avoid blocking waits.
 - Scheduler delay requests are best-effort; positive sub-millisecond values may round up to backend timer resolution, but they must not collapse into immediate execution.
+
+Mailbox-level coalescing:
+
+- Mailbox-level coalescing is a separate receiver-side layer that runs after topic routing.
+- The trigger is planned as additive mailbox-bound subscribe overloads with a mailbox coalescing selector, not a direct mailbox API in this phase.
+- The effective mailbox coalescing identity is `(subscription token, mailbox coalescing key)`, so two subscriptions sharing one mailbox do not collapse each other accidentally.
+- The mailbox coalescing key uses `TmaxString` ordinal equality; an empty key is valid and means one latest-pending bucket for that subscription.
+- Queue plus side index remains the preferred runtime shape: queue owns order, side index finds the current pending node for a mailbox coalescing identity.
+- Replacing a pending mailbox item keeps its queue slot instead of moving it to the tail, so unrelated keys keep FIFO order.
+- The dequeue boundary is the pending-to-in-flight transition. In-flight mailbox work is never rewritten.
+- Topic-level coalescing and mailbox-level coalescing may both be enabled: topic-level collapse happens before routing, mailbox-level collapse happens after routing inside one receiver mailbox.
 
 ## Clear reset model
 
@@ -135,9 +146,11 @@ Coalescing:
 Mailbox lifecycle rules:
 
 - `Unsubscribe` makes queued mailbox work inert at pump time.
+- Mailbox-level coalescing index entries for an unsubscribed receiver must be removed together with queued work for that receiver.
 - `Close(aDiscardPending = True)` discards queued mailbox items, wakes waiters, and rejects future enqueue.
+- `Close(False)` keeps pending mailbox items and mailbox-level coalescing index state intact, but future enqueue or replacement still fails because the mailbox is closed.
 - `IsClosed` reports that close boundary.
-- Future roadmap items are mailbox-bound named/GUID subscribe APIs, mailbox coalescing, and mailbox-owned overflow policy.
+- Future roadmap items are mailbox-level coalescing implementation, mailbox-owned overflow policy, and any later direct-mailbox coalescing helper if a real use case appears.
 
 ## Queue policy and presets
 

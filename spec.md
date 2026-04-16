@@ -294,12 +294,12 @@ Named wildcard subscriptions:
 
 ## 7. Sticky and coalescing
 
-Sticky:
+### 7.1 Sticky
 
 - If enabled, topic caches latest payload/state.
 - Late subscribers receive cached value according to their delivery mode.
 
-Coalescing:
+### 7.2 Topic-level coalescing
 
 - Optional key selector picks coalesce key per event.
 - Pending dictionary keeps latest value per key.
@@ -308,6 +308,54 @@ Coalescing:
 - Positive coalesce windows must stay delayed; adapters may round up to the nearest supported timer resolution instead of promising exact microsecond wake-up precision.
 - Coalesced flush runs on scheduler-delayed path; `Post*`/`TryPost*` do not synchronously raise coalesced handler exceptions.
 - If scheduler delayed submission fails, implementation executes scheduled flush work inline as a progress fallback.
+- Topic-level coalescing happens before receiver routing and may report `PostResult* = Coalesced`.
+
+### 7.3 Mailbox-level coalescing
+
+Mailbox-level coalescing is a separate receiver-side layer.
+
+- Mailbox-level coalescing happens after topic routing, inside one receiver mailbox, and never changes the existing topic-level coalescing contract.
+- The public trigger is additive overloads on payload-carrying mailbox-bound subscribe APIs, not a direct mailbox API in this phase.
+
+Planned overload shape:
+
+```pascal
+function SubscribeIn<T>(const aMailbox: ImaxMailbox;
+  const aHandler: TmaxProcOf<T>;
+  const aMailboxCoalesceKeyOf: TmaxKeyFunc<T>): ImaxSubscription; overload;
+
+function SubscribeNamedOfIn<T>(const aName: TmaxString;
+  const aMailbox: ImaxMailbox; const aHandler: TmaxProcOf<T>;
+  const aMailboxCoalesceKeyOf: TmaxKeyFunc<T>): ImaxSubscription; overload;
+
+function SubscribeGuidOfIn<T: IInterface>(const aMailbox: ImaxMailbox;
+  const aHandler: TmaxProcOf<T>;
+  const aMailboxCoalesceKeyOf: TmaxKeyFunc<T>): ImaxSubscription; overload;
+```
+
+Contract:
+
+- Without a mailbox coalescing selector, mailbox delivery remains strict FIFO.
+- The mailbox coalescing key type is `TmaxString` and uses ordinal string equality.
+- An empty mailbox coalescing key is valid and means one shared latest-pending bucket for that mailbox-bound subscription.
+- Mailbox-level coalescing scope is per mailbox-bound subscription, not cross-subscription even when multiple subscriptions share one mailbox.
+- The effective replacement identity is `(subscription token, mailbox coalescing key)`.
+- If a matching pending item already exists for that identity, the newer item replaces the pending item while keeping the original queue position.
+- At most one pending item exists per `(subscription token, mailbox coalescing key)`.
+- Only pending mailbox work can be replaced. Already-dequeued work is in-flight and is never rewritten.
+- The dequeue boundary is the pending-to-in-flight transition for mailbox-level coalescing.
+- If the previous item for a key is already in-flight, the next post creates a new pending item for that key.
+- Replacing a pending item does not move unrelated queued work and therefore preserves FIFO order for unrelated keys.
+
+Interaction with existing behavior:
+
+- Topic-level coalescing may still collapse events before mailbox enqueue. Mailbox-level coalescing may then replace already-routed pending mailbox work for one receiver.
+- Topic-level `PostResult* = Coalesced` remains unchanged. Accepted mailbox enqueue, including mailbox-level replacement, remains `Queued`.
+- `Unsubscribe` makes queued mailbox work inert and must also remove its mailbox coalescing index entries.
+- `Clear` must purge queued mailbox work and mailbox coalescing index state owned by that bus before returning.
+- `Close(True)` discards pending mailbox items and mailbox coalescing index state together.
+- `Close(False)` preserves queued mailbox items and their mailbox coalescing index state, but future enqueue and future replacement attempts must still fail because the mailbox is closed.
+- Direct mailbox `TryPostCoalesced(...)` is intentionally out of scope for this phase and may be considered later if we find a real non-bus use case.
 
 ## 8. Queue policy and back-pressure
 
