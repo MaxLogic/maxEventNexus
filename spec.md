@@ -331,6 +331,7 @@ Named wildcard subscriptions:
 - Pending dictionary keeps latest value per key.
 - Flushing uses scheduler `RunDelayed` (`aWindowUs`), not blocking sleeps.
 - Negative coalesce window values are clamped to `0`.
+- Zero coalesce windows still stay on the delayed path and must not collapse into an inline flush before the current posting burst returns. Implementations may request the smallest positive scheduler delay needed to preserve that boundary.
 - Positive coalesce windows must stay delayed; adapters may round up to the nearest supported timer resolution instead of promising exact microsecond wake-up precision.
 - Coalesced flush runs on scheduler-delayed path; `Post*`/`TryPost*` do not synchronously raise coalesced handler exceptions.
 - If scheduler delayed submission fails, implementation executes scheduled flush work inline as a progress fallback.

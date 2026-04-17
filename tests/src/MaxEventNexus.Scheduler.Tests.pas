@@ -8,7 +8,7 @@ uses
   // RTL
   System.Classes, System.Diagnostics, System.SyncObjs, System.SysUtils, System.Threading,
   // Third-party
-  MaxEventNexus.Testing,
+  DUnitX.TestFramework, MaxEventNexus.Testing,
   // Project
   maxLogic.EventNexus.Core, maxLogic.EventNexus.Threading.Adapter,
   maxLogic.EventNexus.Threading.MaxAsync, maxLogic.EventNexus.Threading.RawThread,
@@ -317,5 +317,8 @@ begin
   CheckEquals(2, TTestableTTaskScheduler.DelayUsToDelayMsForTest(1001));
   CheckEquals(2, TTestableRawThreadScheduler.DelayUsToDelayMsForTest(1001));
 end;
+
+initialization
+  TDUnitX.RegisterTestFixture(TTestSchedulerContracts);
 
 end.
