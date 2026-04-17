@@ -5299,16 +5299,18 @@ end;
 function TmaxBus.SubscribeIn<t>(const aMailbox: ImaxMailbox; const aHandler: TmaxProcOf<t>;
   const aMailboxCoalesceKeyOf: TmaxKeyFunc<t>): ImaxSubscription;
 var
+  lCreated: Boolean;
   lInternalMailbox: ImaxBusMailbox;
   lKey: PTypeInfo;
+  lLast: t;
   lObj: TmaxTopicBase;
   lMetricName: TmaxString;
   lPreset: TmaxQueuePreset;
+  lSend: Boolean;
   lState: ImaxSubscriptionState;
   lSticky: Boolean;
   lToken: TmaxSubscriptionToken;
   lTopic: TTypedTopic<t>;
-  lCreated: Boolean;
 begin
   if aMailbox = nil then
     raise EmaxInvalidSubscription.Create('Mailbox subscription requires a mailbox');
@@ -5351,6 +5353,15 @@ begin
   end;
   if lCreated then
     PublishMetricTypedTopic(lKey, lTopic);
+
+  lSend := lTopic.TryGetCached(lLast);
+  if lSend then
+  begin
+    if TInterlocked.CompareExchange(fMailboxClearActive, 0, 0) = 0 then
+      TryPostMailboxTypedDispatchItem<t>(lInternalMailbox, lTopic, aHandler, lLast, lToken, lState,
+        aMailboxCoalesceKeyOf);
+  end;
+
   Result := TmaxTypedSubscription<t>.Create(lTopic, lToken, lState);
 end;
 
