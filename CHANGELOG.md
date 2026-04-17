@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- Polished the mailbox docs and maintained sample suite: added a mixed topic-family mailbox sample, extended the shutdown sample to cover `Close(False)`, refreshed the README mailbox landing sections, and added clearer sample guidance in the migration/sample docs. (T-1147)
 - Added `MailboxOverflowSample` as the maintained bounded-mailbox overflow demo, showing `MailboxDropNewest` dropping later arrivals until the receiver pumps the mailbox. (T-1141)
 - Added maintained mailbox benchmark modes plus CSV contract/docs for raw mailbox and mailbox-bound receiver handoff, and recorded that current evidence keeps the portable mailbox as the only shipped implementation because specialized mailbox thresholds were not met. (T-1142, T-1143)
 - Published the full mailbox feature family and migration guidance in `README.md` / `MIGRATION.md`, covering typed, exact named, named-of, GUID, mailbox coalescing, mailbox overflow, and when to choose mailbox delivery over `Main`, `Async`, and `Background`. (T-1144, T-1042)

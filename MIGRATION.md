@@ -67,6 +67,13 @@ Mailbox migration rules:
 - `Close(True)` rejects future enqueue and discards pending mailbox items; `Close(False)` preserves pending items but still rejects future enqueue.
 - The current implementation is portable-only; no specialized mailbox implementation is enabled today because benchmark evidence has not justified it.
 
+Recommended samples:
+
+- `samples/MailboxWorkerSample.dpr` for the basic worker-loop pattern.
+- `samples/MailboxTopicFamiliesSample.dpr` for the full mailbox subscribe family.
+- `samples/MailboxClearShutdownSample.dpr` for `Clear`, `Close(True)`, and `Close(False)`.
+- `samples/MailboxLatestWinsSample.dpr` and `samples/MailboxOverflowSample.dpr` for queue-shaping behavior.
+
 ## Main delivery policy migration
 
 If old code assumes UI-thread marshaling always exists, set explicit policy for console/service workloads:
