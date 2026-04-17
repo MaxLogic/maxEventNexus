@@ -6,7 +6,7 @@ interface
 
 uses
   // RTL
-  System.Classes, System.Diagnostics, System.SyncObjs, System.SysUtils, System.Threading,
+  System.Classes, System.Diagnostics, System.Generics.Collections, System.SyncObjs, System.SysUtils, System.Threading,
   // Third-party
   DUnitX.TestFramework, MaxEventNexus.Testing,
   // Project
@@ -25,6 +25,7 @@ type
     procedure RuntimeDelayContractAcrossSchedulers;
     procedure PositiveSubMillisecondDelaysRoundUpAcrossSchedulers;
     procedure ZeroWindowCoalesceRequestsPositiveDelayAcrossShippedSchedulers;
+    procedure RawThreadZeroWindowClearKeepsStaleFlushInert;
   end;
   {$M-}
 
@@ -65,6 +66,21 @@ type
     class function CreatedThreadCount: Integer; static;
     class function LastDelayMs: Integer; static;
     class procedure ResetCreatedThreadCount; static;
+  end;
+
+  TGatedRawThreadScheduler = class(TTestableRawThreadScheduler)
+  private
+    fNextSlot: Integer;
+    fRelease: TArray<TEvent>;
+    fStarted: TArray<TEvent>;
+  protected
+    function CreateProcThread(const aProc: TmaxProc; aDelayMs: Integer): TThread; override;
+  public
+    constructor Create(aSlotCount: Integer);
+    destructor Destroy; override;
+    procedure ReleaseAll;
+    procedure ReleaseSlot(aSlot: Integer);
+    function WaitUntilStarted(aSlot: Integer; aTimeoutMs: Cardinal): Boolean;
   end;
 
   TFaultingMaxAsyncScheduler = class(TTestableMaxAsyncScheduler)
@@ -160,6 +176,77 @@ class procedure TTestableRawThreadScheduler.ResetCreatedThreadCount;
 begin
   TInterlocked.Exchange(fCreatedThreadCount, 0);
   TInterlocked.Exchange(fLastDelayMs, -1);
+end;
+
+constructor TGatedRawThreadScheduler.Create(aSlotCount: Integer);
+var
+  i: Integer;
+begin
+  inherited Create;
+  if aSlotCount < 1 then
+    aSlotCount := 1;
+  SetLength(fStarted, aSlotCount);
+  SetLength(fRelease, aSlotCount);
+  for i := 0 to Pred(aSlotCount) do
+  begin
+    fStarted[i] := TEvent.Create(nil, True, False, '');
+    fRelease[i] := TEvent.Create(nil, True, False, '');
+  end;
+  fNextSlot := 0;
+end;
+
+destructor TGatedRawThreadScheduler.Destroy;
+var
+  i: Integer;
+begin
+  ReleaseAll;
+  for i := 0 to High(fRelease) do
+  begin
+    fRelease[i].Free;
+    fStarted[i].Free;
+  end;
+  inherited Destroy;
+end;
+
+function TGatedRawThreadScheduler.CreateProcThread(const aProc: TmaxProc; aDelayMs: Integer): TThread;
+var
+  lSlot: Integer;
+begin
+  lSlot := TInterlocked.Increment(fNextSlot) - 1;
+  if (lSlot < 0) or (lSlot >= Length(fStarted)) then
+    raise Exception.CreateFmt('Unexpected gated raw-thread slot %d', [lSlot]);
+
+  Result := inherited CreateProcThread(
+    procedure
+    begin
+      fStarted[lSlot].SetEvent;
+      fRelease[lSlot].WaitFor(5000);
+      if Assigned(aProc) then
+        aProc();
+    end,
+    aDelayMs);
+end;
+
+procedure TGatedRawThreadScheduler.ReleaseAll;
+var
+  i: Integer;
+begin
+  for i := 0 to High(fRelease) do
+    fRelease[i].SetEvent;
+end;
+
+procedure TGatedRawThreadScheduler.ReleaseSlot(aSlot: Integer);
+begin
+  if (aSlot < 0) or (aSlot >= Length(fRelease)) then
+    raise Exception.CreateFmt('Invalid gated raw-thread slot %d', [aSlot]);
+  fRelease[aSlot].SetEvent;
+end;
+
+function TGatedRawThreadScheduler.WaitUntilStarted(aSlot: Integer; aTimeoutMs: Cardinal): Boolean;
+begin
+  if (aSlot < 0) or (aSlot >= Length(fStarted)) then
+    raise Exception.CreateFmt('Invalid gated raw-thread slot %d', [aSlot]);
+  Result := fStarted[aSlot].WaitFor(aTimeoutMs) = wrSignaled;
 end;
 
 constructor TFaultingMaxAsyncScheduler.Create(aFailEnqueue: Boolean; aFailSubmit: Boolean);
@@ -437,6 +524,108 @@ begin
   AssertZeroWindowPositiveDelay('maxAsync', TTestableMaxAsyncScheduler.Create);
   AssertZeroWindowPositiveDelay('TTask', TTestableTTaskScheduler.Create);
   AssertZeroWindowPositiveDelay('raw-thread', TTestableRawThreadScheduler.Create);
+end;
+
+procedure TTestSchedulerContracts.RawThreadZeroWindowClearKeepsStaleFlushInert;
+const
+  cTopicName = 'scheduler.zero-window.clear.rawthread';
+var
+  lBus: ImaxBus;
+  lGate: TGatedRawThreadScheduler;
+  lLock: TCriticalSection;
+  lProbe: TRecordingScheduler;
+  lScheduler: IEventNexusScheduler;
+  lValues: TList<Integer>;
+  lWaitTimer: TStopwatch;
+begin
+  TTestableRawThreadScheduler.ResetCreatedThreadCount;
+  lGate := TGatedRawThreadScheduler.Create(2);
+  lProbe := TRecordingScheduler.Create(lGate);
+  lScheduler := lProbe;
+  lBus := TmaxBus.Create(lScheduler);
+  lLock := TCriticalSection.Create;
+  lValues := TList<Integer>.Create;
+  try
+    maxBusObj(lBus).EnableCoalesceNamedOf<Integer>(cTopicName,
+      function(const aValue: Integer): TmaxString
+      begin
+        Result := 'same';
+      end,
+      0);
+    maxBusObj(lBus).SubscribeNamedOf<Integer>(cTopicName,
+      procedure(const aValue: Integer)
+      begin
+        lLock.Enter;
+        try
+          lValues.Add(aValue);
+        finally
+          lLock.Leave;
+        end;
+      end);
+
+    maxBusObj(lBus).PostNamedOf<Integer>(cTopicName, 1);
+    maxBusObj(lBus).PostNamedOf<Integer>(cTopicName, 2);
+
+    CheckEquals(1, lProbe.DelayedCallCount, 'RawThread should schedule one zero-window flush for the first burst');
+    Check(lProbe.LastDelayUs > 0, 'RawThread should request a positive delay for zero-window coalescing');
+    Check(lGate.WaitUntilStarted(0, 2000), 'Stale raw-thread zero-window callback did not reach the gate');
+
+    lBus.Clear;
+
+    maxBusObj(lBus).SubscribeNamedOf<Integer>(cTopicName,
+      procedure(const aValue: Integer)
+      begin
+        lLock.Enter;
+        try
+          lValues.Add(aValue);
+        finally
+          lLock.Leave;
+        end;
+      end);
+
+    maxBusObj(lBus).PostNamedOf<Integer>(cTopicName, 3);
+    maxBusObj(lBus).PostNamedOf<Integer>(cTopicName, 4);
+
+    CheckEquals(2, lProbe.DelayedCallCount, 'RawThread should schedule a fresh zero-window flush after Clear');
+    Check(lGate.WaitUntilStarted(1, 2000), 'Fresh raw-thread zero-window callback did not reach the gate');
+
+    lGate.ReleaseSlot(0);
+    Sleep(150);
+    lLock.Enter;
+    try
+      CheckEquals(0, lValues.Count, 'Releasing the stale raw-thread callback after Clear must stay inert');
+    finally
+      lLock.Leave;
+    end;
+
+    lGate.ReleaseSlot(1);
+    lWaitTimer := TStopwatch.StartNew;
+    while lWaitTimer.ElapsedMilliseconds < 2000 do
+    begin
+      lLock.Enter;
+      try
+        if lValues.Count > 0 then
+          Break;
+      finally
+        lLock.Leave;
+      end;
+      Sleep(1);
+    end;
+
+    lLock.Enter;
+    try
+      CheckEquals(1, lValues.Count, 'Fresh raw-thread callback should deliver exactly one coalesced value');
+      CheckEquals(4, lValues[0], 'Fresh raw-thread callback should deliver only the new final value');
+    finally
+      lLock.Leave;
+    end;
+  finally
+    lGate.ReleaseAll;
+    maxBusObj(lBus).EnableCoalesceNamedOf<Integer>(cTopicName, nil);
+    lBus.Clear;
+    lValues.Free;
+    lLock.Free;
+  end;
 end;
 
 initialization
