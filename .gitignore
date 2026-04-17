@@ -88,3 +88,4 @@ build/analysis/*
 spec.md
 docs/decisions/ADR-0003-extension-scope-freeze.md
 TASKS.md
+TASKS.ARCHIVE.md
