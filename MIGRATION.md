@@ -70,6 +70,7 @@ Mailbox migration rules:
 Recommended samples:
 
 - `samples/MailboxWorkerSample.dpr` for the basic worker-loop pattern.
+- `samples/MailboxWorkerIntegrationSample.dpr` for the realistic worker/control/progress pattern where one side owns a mailbox for commands and the caller owns another mailbox for progress/results.
 - `samples/MailboxTopicFamiliesSample.dpr` for the full mailbox subscribe family.
 - `samples/MailboxClearShutdownSample.dpr` for `Clear`, `Close(True)`, and `Close(False)`.
 - `samples/MailboxLatestWinsSample.dpr` and `samples/MailboxOverflowSample.dpr` for queue-shaping behavior.
