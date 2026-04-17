@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Changed
-- Tightened zero-window topic coalescing so it still flushes on a deferred scheduler turn instead of racing an inline flush, and added native DUnitX regressions for typed, named, and GUID zero-window coalescing plus scheduler-fixture registration.
+- Tightened zero-window topic coalescing so it still flushes on a deferred scheduler turn instead of racing an inline flush, keeps one deferred turn even when delayed submission fails, and now has native DUnitX regressions for typed, named, and GUID zero-window plus delayed-submission fallback coverage.
 - Polished the top-level docs again with a clearer "Start Here" / docs map flow, and added `MailboxWorkerIntegrationSample` as the realistic mailbox worker/control/progress sample. (T-1148)
 - Polished the mailbox docs and maintained sample suite: added a mixed topic-family mailbox sample, extended the shutdown sample to cover `Close(False)`, refreshed the README mailbox landing sections, and added clearer sample guidance in the migration/sample docs. (T-1147)
 - Added `MailboxOverflowSample` as the maintained bounded-mailbox overflow demo, showing `MailboxDropNewest` dropping later arrivals until the receiver pumps the mailbox. (T-1141)

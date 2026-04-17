@@ -334,7 +334,7 @@ Named wildcard subscriptions:
 - Zero coalesce windows still stay on the delayed path and must not collapse into an inline flush before the current posting burst returns. Implementations may request the smallest positive scheduler delay needed to preserve that boundary.
 - Positive coalesce windows must stay delayed; adapters may round up to the nearest supported timer resolution instead of promising exact microsecond wake-up precision.
 - Coalesced flush runs on scheduler-delayed path; `Post*`/`TryPost*` do not synchronously raise coalesced handler exceptions.
-- If scheduler delayed submission fails, implementation executes scheduled flush work inline as a progress fallback.
+- If scheduler delayed submission fails, zero-window coalescing must still keep one deferred turn before flushing the latest value; implementations may use a dedicated deferred fallback before any final inline progress fallback.
 - Topic-level coalescing happens before receiver routing and may report `PostResult* = Coalesced`.
 
 ### 7.3 Mailbox-level coalescing
