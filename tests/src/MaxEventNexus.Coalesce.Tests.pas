@@ -1,9 +1,9 @@
-unit MaxEventNexus.Coalesce.Tests;
+﻿unit MaxEventNexus.Coalesce.Tests;
 
 interface
 
 uses
-  System.Classes, System.Generics.Collections, System.SysUtils,
+  System.Classes, System.Generics.Collections, System.SyncObjs, System.SysUtils,
   DUnitX.TestFramework,
   MaxEventNexus.Testing,
   maxLogic.EventNexus.Core, maxLogic.EventNexus.Threading.Adapter;
@@ -43,6 +43,18 @@ type
     function IsMainThread: Boolean;
   end;
 
+  TDelayedSubmitFailsScheduler = class(TInterfacedObject, IEventNexusScheduler)
+  private
+    fDelayedAttempts: Integer;
+  public
+    constructor Create;
+    function DelayedAttempts: Integer;
+    procedure RunAsync(const aProc: TmaxProc);
+    procedure RunOnMain(const aProc: TmaxProc);
+    procedure RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);
+    function IsMainThread: Boolean;
+  end;
+
   {$M+}
   [TestFixture]
   TTestZeroWindowCoalesce = class(TmaxTestCase)
@@ -52,6 +64,9 @@ type
     procedure TypedZeroWindowStaysDeferredAndKeepsLatest;
     procedure NamedZeroWindowStaysDeferredAndKeepsLatest;
     procedure GuidZeroWindowStaysDeferredAndKeepsLatest;
+    procedure TypedZeroWindowFallbackStaysDeferredAndKeepsLatest;
+    procedure NamedZeroWindowFallbackStaysDeferredAndKeepsLatest;
+    procedure GuidZeroWindowFallbackStaysDeferredAndKeepsLatest;
   end;
   {$M-}
 
@@ -130,6 +145,39 @@ begin
 end;
 
 function TZeroDelayInlineScheduler.IsMainThread: Boolean;
+begin
+  Result := True;
+end;
+
+constructor TDelayedSubmitFailsScheduler.Create;
+begin
+  inherited Create;
+  fDelayedAttempts := 0;
+end;
+
+function TDelayedSubmitFailsScheduler.DelayedAttempts: Integer;
+begin
+  Result := fDelayedAttempts;
+end;
+
+procedure TDelayedSubmitFailsScheduler.RunAsync(const aProc: TmaxProc);
+begin
+  if ProcAssigned(aProc) then
+    aProc();
+end;
+
+procedure TDelayedSubmitFailsScheduler.RunOnMain(const aProc: TmaxProc);
+begin
+  RunAsync(aProc);
+end;
+
+procedure TDelayedSubmitFailsScheduler.RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);
+begin
+  Inc(fDelayedAttempts);
+  raise Exception.Create('run-delayed submit failed');
+end;
+
+function TDelayedSubmitFailsScheduler.IsMainThread: Boolean;
 begin
   Result := True;
 end;
@@ -259,6 +307,176 @@ begin
     maxBusObj(lBus).EnableCoalesceGuidOf<ICoalesceGuidEvent>(nil);
     lBus.Clear;
     lValues.Free;
+  end;
+end;
+
+procedure TTestZeroWindowCoalesce.TypedZeroWindowFallbackStaysDeferredAndKeepsLatest;
+var
+  lBus: ImaxBus;
+  lCount: Integer;
+  lDone: TEvent;
+  lLock: TCriticalSection;
+  lValue: Integer;
+  lScheduler: TDelayedSubmitFailsScheduler;
+begin
+  lScheduler := TDelayedSubmitFailsScheduler.Create;
+  lBus := TmaxBus.Create(lScheduler);
+  lLock := TCriticalSection.Create;
+  lDone := TEvent.Create(nil, True, False, '');
+  lCount := 0;
+  lValue := 0;
+  try
+    maxBusObj(lBus).EnableCoalesceOf<TCoalesceEvent>(
+      function(const aValue: TCoalesceEvent): TmaxString
+      begin
+        Result := aValue.Key;
+      end,
+      0);
+    maxBusObj(lBus).Subscribe<TCoalesceEvent>(
+      procedure(const aValue: TCoalesceEvent)
+      begin
+        lLock.Enter;
+        try
+          Inc(lCount);
+          lValue := aValue.Value;
+          lDone.SetEvent;
+        finally
+          lLock.Leave;
+        end;
+      end);
+
+    maxBusObj(lBus).Post<TCoalesceEvent>(MakeEvent('A', 1));
+    maxBusObj(lBus).Post<TCoalesceEvent>(MakeEvent('A', 2));
+
+    CheckEquals(1, lScheduler.DelayedAttempts, 'Zero-window typed fallback should not reschedule the same burst');
+    CheckEquals(Integer(wrTimeout), Integer(lDone.WaitFor(0)), 'Zero-window typed fallback should not flush inline');
+    CheckEquals(Integer(wrSignaled), Integer(lDone.WaitFor(2000)), 'Zero-window typed fallback did not deliver');
+    lLock.Enter;
+    try
+      CheckEquals(1, lCount);
+      CheckEquals(2, lValue);
+    finally
+      lLock.Leave;
+    end;
+  finally
+    maxBusObj(lBus).EnableCoalesceOf<TCoalesceEvent>(nil);
+    lBus.Clear;
+    lDone.Free;
+    lLock.Free;
+  end;
+end;
+
+procedure TTestZeroWindowCoalesce.NamedZeroWindowFallbackStaysDeferredAndKeepsLatest;
+const
+  cName = 'zero.window.named.fallback';
+var
+  lBus: ImaxBus;
+  lCount: Integer;
+  lDone: TEvent;
+  lLock: TCriticalSection;
+  lValue: Integer;
+  lScheduler: TDelayedSubmitFailsScheduler;
+begin
+  lScheduler := TDelayedSubmitFailsScheduler.Create;
+  lBus := TmaxBus.Create(lScheduler);
+  lLock := TCriticalSection.Create;
+  lDone := TEvent.Create(nil, True, False, '');
+  lCount := 0;
+  lValue := 0;
+  try
+    maxBusObj(lBus).EnableCoalesceNamedOf<Integer>(cName,
+      function(const aValue: Integer): TmaxString
+      begin
+        Result := 'same';
+      end,
+      0);
+    maxBusObj(lBus).SubscribeNamedOf<Integer>(cName,
+      procedure(const aValue: Integer)
+      begin
+        lLock.Enter;
+        try
+          Inc(lCount);
+          lValue := aValue;
+          lDone.SetEvent;
+        finally
+          lLock.Leave;
+        end;
+      end);
+
+    maxBusObj(lBus).PostNamedOf<Integer>(cName, 1);
+    maxBusObj(lBus).PostNamedOf<Integer>(cName, 2);
+
+    CheckEquals(1, lScheduler.DelayedAttempts, 'Zero-window named fallback should not reschedule the same burst');
+    CheckEquals(Integer(wrTimeout), Integer(lDone.WaitFor(0)), 'Zero-window named fallback should not flush inline');
+    CheckEquals(Integer(wrSignaled), Integer(lDone.WaitFor(2000)), 'Zero-window named fallback did not deliver');
+    lLock.Enter;
+    try
+      CheckEquals(1, lCount);
+      CheckEquals(2, lValue);
+    finally
+      lLock.Leave;
+    end;
+  finally
+    maxBusObj(lBus).EnableCoalesceNamedOf<Integer>(cName, nil);
+    lBus.Clear;
+    lDone.Free;
+    lLock.Free;
+  end;
+end;
+
+procedure TTestZeroWindowCoalesce.GuidZeroWindowFallbackStaysDeferredAndKeepsLatest;
+var
+  lBus: ImaxBus;
+  lCount: Integer;
+  lDone: TEvent;
+  lLock: TCriticalSection;
+  lValue: Integer;
+  lScheduler: TDelayedSubmitFailsScheduler;
+begin
+  lScheduler := TDelayedSubmitFailsScheduler.Create;
+  lBus := TmaxBus.Create(lScheduler);
+  lLock := TCriticalSection.Create;
+  lDone := TEvent.Create(nil, True, False, '');
+  lCount := 0;
+  lValue := 0;
+  try
+    maxBusObj(lBus).EnableCoalesceGuidOf<ICoalesceGuidEvent>(
+      function(const aValue: ICoalesceGuidEvent): TmaxString
+      begin
+        Result := 'same';
+      end,
+      0);
+    maxBusObj(lBus).SubscribeGuidOf<ICoalesceGuidEvent>(
+      procedure(const aValue: ICoalesceGuidEvent)
+      begin
+        lLock.Enter;
+        try
+          Inc(lCount);
+          lValue := aValue.GetValue;
+          lDone.SetEvent;
+        finally
+          lLock.Leave;
+        end;
+      end);
+
+    maxBusObj(lBus).PostGuidOf<ICoalesceGuidEvent>(TCoalesceGuidEvent.Create(1));
+    maxBusObj(lBus).PostGuidOf<ICoalesceGuidEvent>(TCoalesceGuidEvent.Create(2));
+
+    CheckEquals(1, lScheduler.DelayedAttempts, 'Zero-window GUID fallback should not reschedule the same burst');
+    CheckEquals(Integer(wrTimeout), Integer(lDone.WaitFor(0)), 'Zero-window GUID fallback should not flush inline');
+    CheckEquals(Integer(wrSignaled), Integer(lDone.WaitFor(2000)), 'Zero-window GUID fallback did not deliver');
+    lLock.Enter;
+    try
+      CheckEquals(1, lCount);
+      CheckEquals(2, lValue);
+    finally
+      lLock.Leave;
+    end;
+  finally
+    maxBusObj(lBus).EnableCoalesceGuidOf<ICoalesceGuidEvent>(nil);
+    lBus.Clear;
+    lDone.Free;
+    lLock.Free;
   end;
 end;
 

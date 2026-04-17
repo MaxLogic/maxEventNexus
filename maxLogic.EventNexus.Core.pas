@@ -1,4 +1,4 @@
-unit maxLogic.EventNexus.Core;
+﻿unit maxLogic.EventNexus.Core;
 
 interface
 
@@ -4559,8 +4559,11 @@ var
   lEpoch: Int64;
   lSubsCopy: TArray<TTypedSubscriber<t>>;
   lScheduled: TmaxProc;
+  lFallbackThread: TThread;
+  lWindowUs: Integer;
 begin
   lEpoch := aTopic.CoalesceEpoch;
+  lWindowUs := aTopic.CoalesceWindow;
   lSubsCopy := Copy(aSubs);
   lScheduled :=
     procedure
@@ -4595,7 +4598,7 @@ begin
           end;
         end);
     end;
-  lDelayUs := aTopic.CoalesceWindow;
+  lDelayUs := lWindowUs;
   if lDelayUs <= 0 then
     lDelayUs := 1;
   try
@@ -4603,8 +4606,25 @@ begin
     // settle into the pending bucket before we flush the latest value.
     fAsync.RunDelayed(lScheduled, lDelayUs);
   except
-    // Keep progress even if delayed scheduling backend rejects the submission.
-    lScheduled();
+    if lWindowUs <= 0 then
+    begin
+      try
+        // Keep a deferred turn even if the scheduler rejects delayed submission.
+        lFallbackThread := TThread.CreateAnonymousThread(
+          procedure
+          begin
+            lScheduled();
+          end);
+        lFallbackThread.FreeOnTerminate := True;
+        lFallbackThread.Start;
+      except
+        // Keep progress even if the last-resort deferred worker cannot be created.
+        lScheduled();
+      end;
+    end else begin
+      // Keep progress even if delayed scheduling backend rejects the submission.
+      lScheduled();
+    end;
   end;
 end;
 
