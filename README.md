@@ -1,7 +1,10 @@
 # EventNexus
 
-## What's New (2026-03-21)
+## What's New (2026-04-17)
 
+- Added and documented the full mailbox delivery family: typed `SubscribeIn<T>`, exact named `SubscribeNamedIn`, named typed `SubscribeNamedOfIn<T>`, and GUID typed `SubscribeGuidOfIn<T>`.
+- Added maintained mailbox samples for mixed topic families, mailbox coalescing, mailbox overflow, and `Clear` / `Close(True)` / `Close(False)` lifecycle boundaries.
+- Added mailbox-owned overflow policy (`TmaxMailboxPolicy`) with `MailboxDropNewest`, `MailboxDropOldest`, `MailboxBlock`, and `MailboxDeadline`, plus benchmarked/documented portable-only specialization status.
 - Refreshed the published isolated-process benchmark snapshot for Win32/Win64 async and posting profiles, and stabilized the framework benchmark smoke path around the final `SchedulerCompare` contract.
 - `Clear` now stays a runtime reset: explicit queue policies and coalescing configuration survive, while queued/pending runtime state is still dropped.
 - `PostResult<T>`, `PostResultNamedOf<T>`, and `PostResultGuidOf<T>` now report live `AutoSubscribe` handlers as real receivers instead of returning `NoTopic`.
@@ -81,8 +84,8 @@ Interpretation:
 
 Feature scope beyond baseline pub/sub:
 
-- The benchmark surface is minimal (`subscribe/post`), but EventNexus currently ships at least 16 major runtime capabilities around it:
-  typed topics, named topics, GUID topics, 4 delivery modes, main-thread fallback policy, sticky cache, coalescing, queue overflow policies, queue presets, delayed posting with cancel/pending handle, `TryPost*` and `PostResult*`, metrics snapshots/callbacks, wildcard named subscriptions, bulk dispatch APIs, dispatch tracing hooks, and weak/strong object-method subscription modes.
+- The benchmark surface is minimal (`subscribe/post`), but the runtime surface is broader:
+  typed topics, named topics, GUID topics, 4 delivery modes, main-thread fallback policy, sticky cache, topic coalescing, mailbox delivery, mailbox coalescing, topic queue overflow policies, mailbox-owned overflow policies, queue presets, delayed posting with cancel/pending handle, `TryPost*` and `PostResult*`, metrics snapshots/callbacks, wildcard named subscriptions, bulk dispatch APIs, dispatch tracing hooks, and weak/strong object-method subscription modes.
 
 ## Core API shape on Delphi
 
@@ -289,7 +292,15 @@ begin
 end;
 ```
 
-See `samples/MailboxWorkerSample.dpr` for the basic worker-thread pattern, `samples/MailboxClearShutdownSample.dpr` for the `Clear` / close boundary, `samples/MailboxLatestWinsSample.dpr` for mailbox coalescing, and `samples/MailboxOverflowSample.dpr` for mailbox overflow.
+See `samples/MailboxWorkerSample.dpr` for the basic worker-thread pattern, `samples/MailboxTopicFamiliesSample.dpr` for the full mailbox subscribe family, `samples/MailboxClearShutdownSample.dpr` for `Clear` / `Close(True)` / `Close(False)`, `samples/MailboxLatestWinsSample.dpr` for mailbox coalescing, and `samples/MailboxOverflowSample.dpr` for mailbox overflow.
+
+Maintained mailbox sample guide:
+
+- `MailboxWorkerSample.dpr`: the minimal owner-thread worker pattern (`PumpOne(cMaxWaitInfinite)`).
+- `MailboxTopicFamiliesSample.dpr`: one mailbox handling typed, exact named, named-of, and GUID mailbox subscriptions together.
+- `MailboxLatestWinsSample.dpr`: receiver-side mailbox coalescing on payload-carrying subscriptions.
+- `MailboxOverflowSample.dpr`: bounded-mailbox overflow with `MailboxDropNewest`.
+- `MailboxClearShutdownSample.dpr`: `Clear`, `Close(True)`, and `Close(False)` lifecycle boundaries.
 
 ## Scheduling adapters
 
