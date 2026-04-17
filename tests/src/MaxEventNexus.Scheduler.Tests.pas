@@ -70,6 +70,7 @@ type
 
   TGatedRawThreadScheduler = class(TTestableRawThreadScheduler)
   private
+    fCompleted: TArray<TEvent>;
     fNextSlot: Integer;
     fRelease: TArray<TEvent>;
     fStarted: TArray<TEvent>;
@@ -80,6 +81,7 @@ type
     destructor Destroy; override;
     procedure ReleaseAll;
     procedure ReleaseSlot(aSlot: Integer);
+    function WaitUntilCompleted(aSlot: Integer; aTimeoutMs: Cardinal): Boolean;
     function WaitUntilStarted(aSlot: Integer; aTimeoutMs: Cardinal): Boolean;
   end;
 
@@ -185,10 +187,12 @@ begin
   inherited Create;
   if aSlotCount < 1 then
     aSlotCount := 1;
+  SetLength(fCompleted, aSlotCount);
   SetLength(fStarted, aSlotCount);
   SetLength(fRelease, aSlotCount);
   for i := 0 to Pred(aSlotCount) do
   begin
+    fCompleted[i] := TEvent.Create(nil, True, False, '');
     fStarted[i] := TEvent.Create(nil, True, False, '');
     fRelease[i] := TEvent.Create(nil, True, False, '');
   end;
@@ -202,6 +206,7 @@ begin
   ReleaseAll;
   for i := 0 to High(fRelease) do
   begin
+    fCompleted[i].Free;
     fRelease[i].Free;
     fStarted[i].Free;
   end;
@@ -221,8 +226,12 @@ begin
     begin
       fStarted[lSlot].SetEvent;
       fRelease[lSlot].WaitFor(5000);
-      if Assigned(aProc) then
-        aProc();
+      try
+        if Assigned(aProc) then
+          aProc();
+      finally
+        fCompleted[lSlot].SetEvent;
+      end;
     end,
     aDelayMs);
 end;
@@ -240,6 +249,13 @@ begin
   if (aSlot < 0) or (aSlot >= Length(fRelease)) then
     raise Exception.CreateFmt('Invalid gated raw-thread slot %d', [aSlot]);
   fRelease[aSlot].SetEvent;
+end;
+
+function TGatedRawThreadScheduler.WaitUntilCompleted(aSlot: Integer; aTimeoutMs: Cardinal): Boolean;
+begin
+  if (aSlot < 0) or (aSlot >= Length(fCompleted)) then
+    raise Exception.CreateFmt('Invalid gated raw-thread slot %d', [aSlot]);
+  Result := fCompleted[aSlot].WaitFor(aTimeoutMs) = wrSignaled;
 end;
 
 function TGatedRawThreadScheduler.WaitUntilStarted(aSlot: Integer; aTimeoutMs: Cardinal): Boolean;
@@ -531,18 +547,19 @@ const
   cTopicName = 'scheduler.zero-window.clear.rawthread';
 var
   lBus: ImaxBus;
+  lDelivered: TEvent;
   lGate: TGatedRawThreadScheduler;
   lLock: TCriticalSection;
   lProbe: TRecordingScheduler;
   lScheduler: IEventNexusScheduler;
   lValues: TList<Integer>;
-  lWaitTimer: TStopwatch;
 begin
   TTestableRawThreadScheduler.ResetCreatedThreadCount;
   lGate := TGatedRawThreadScheduler.Create(2);
   lProbe := TRecordingScheduler.Create(lGate);
   lScheduler := lProbe;
   lBus := TmaxBus.Create(lScheduler);
+  lDelivered := TEvent.Create(nil, True, False, '');
   lLock := TCriticalSection.Create;
   lValues := TList<Integer>.Create;
   try
@@ -558,6 +575,7 @@ begin
         lLock.Enter;
         try
           lValues.Add(aValue);
+          lDelivered.SetEvent;
         finally
           lLock.Leave;
         end;
@@ -578,6 +596,7 @@ begin
         lLock.Enter;
         try
           lValues.Add(aValue);
+          lDelivered.SetEvent;
         finally
           lLock.Leave;
         end;
@@ -590,7 +609,7 @@ begin
     Check(lGate.WaitUntilStarted(1, 2000), 'Fresh raw-thread zero-window callback did not reach the gate');
 
     lGate.ReleaseSlot(0);
-    Sleep(150);
+    Check(lGate.WaitUntilCompleted(0, 2000), 'Stale raw-thread zero-window callback did not finish after release');
     lLock.Enter;
     try
       CheckEquals(0, lValues.Count, 'Releasing the stale raw-thread callback after Clear must stay inert');
@@ -598,19 +617,10 @@ begin
       lLock.Leave;
     end;
 
+    lDelivered.ResetEvent;
     lGate.ReleaseSlot(1);
-    lWaitTimer := TStopwatch.StartNew;
-    while lWaitTimer.ElapsedMilliseconds < 2000 do
-    begin
-      lLock.Enter;
-      try
-        if lValues.Count > 0 then
-          Break;
-      finally
-        lLock.Leave;
-      end;
-      Sleep(1);
-    end;
+    Check(lGate.WaitUntilCompleted(1, 2000), 'Fresh raw-thread zero-window callback did not finish after release');
+    Check(lDelivered.WaitFor(2000) = wrSignaled, 'Fresh raw-thread callback did not deliver the coalesced value');
 
     lLock.Enter;
     try
@@ -625,6 +635,7 @@ begin
     lBus.Clear;
     lValues.Free;
     lLock.Free;
+    lDelivered.Free;
   end;
 end;
 

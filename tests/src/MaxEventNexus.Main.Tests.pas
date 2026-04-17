@@ -6,7 +6,7 @@ interface
 
 uses
   // RTL
-  Classes, SysUtils, SyncObjs, TypInfo, System.Generics.Collections,
+  Classes, SysUtils, SyncObjs, TypInfo, System.Diagnostics, System.Generics.Collections,
   // OS/API
   Winapi.Windows,
   // Third-party
@@ -247,6 +247,17 @@ type
     procedure Execute; override;
   end;
 
+  TMailboxPumpThread = class(TThread)
+  public
+    fCreated: TEvent;
+    fMailbox: ImaxMailbox;
+    fRelease: TEvent;
+    constructor Create;
+    destructor Destroy; override;
+  protected
+    procedure Execute; override;
+  end;
+
   TTestSticky = class(TmaxTestCase)
   published
     procedure LateSubscriberGetsLastEvent;
@@ -445,6 +456,7 @@ type
     procedure MailboxNamedOfSharedNamePerTypeRouting;
     procedure MailboxSubscribeGuidRunsOnOwnerThread;
     procedure MailboxGuidStickyReplayRunsOnOwnerThread;
+    procedure MailboxGuidStickyReplayToClosedMailboxDropsWithoutQueueing;
     procedure MailboxGuidFIFOOrder;
     procedure MailboxGuidUnsubscribeSkipsQueuedWork;
     procedure MailboxGuidClearPurgesQueuedWork;
@@ -497,6 +509,7 @@ type
     procedure PostResultTypedMixedInlineAndClosedMailboxReportsInline;
     procedure PostResultTypedMixedInlineAndDroppedMailboxReportsInline;
     procedure PostResultNamedOfMixedInlineAndDroppedMailboxReportsInline;
+    procedure PostResultGuidOfMixedInlineAndClosedMailboxReportsInline;
     procedure PostResultGuidOfMixedInlineAndDroppedMailboxReportsInline;
     procedure PostResultTypedAsyncSubscriberReportsInline;
     procedure PostResultNamedOfBackgroundSubscriberReportsInline;
@@ -6530,6 +6543,29 @@ begin
   fRelease.WaitFor(2000);
 end;
 
+constructor TMailboxPumpThread.Create;
+begin
+  inherited Create(True);
+  FreeOnTerminate := False;
+  fCreated := TEvent.Create(nil, True, False, '');
+  fRelease := TEvent.Create(nil, True, False, '');
+end;
+
+destructor TMailboxPumpThread.Destroy;
+begin
+  fRelease.Free;
+  fCreated.Free;
+  inherited Destroy;
+end;
+
+procedure TMailboxPumpThread.Execute;
+begin
+  fMailbox := TmaxMailbox.Create;
+  fCreated.SetEvent;
+  while fRelease.WaitFor(0) <> wrSignaled do
+    fMailbox.PumpOne(20);
+end;
+
 { TTestMailbox }
 
 procedure TTestMailbox.MailboxDirectPostRunsOnOwnerThread;
@@ -7214,6 +7250,36 @@ begin
     maxBusObj(lBus).EnableSticky<IIntEvent>(False);
     lBus.Clear;
     lDone.Free;
+  end;
+end;
+
+procedure TTestMailbox.MailboxGuidStickyReplayToClosedMailboxDropsWithoutQueueing;
+var
+  lBus: ImaxBus;
+  lMailbox: ImaxMailbox;
+  lStats: TmaxTopicStats;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  try
+    maxBusObj(lBus).EnableSticky<IIntEvent>(True);
+    maxBusObj(lBus).PostGuidOf<IIntEvent>(TIntEvent.Create(10));
+    lMailbox.Close(False);
+
+    maxBusObj(lBus).SubscribeGuidOfIn<IIntEvent>(lMailbox,
+      procedure(const aValue: IIntEvent)
+      begin
+        raise Exception.Create('Closed mailbox should not receive GUID sticky replay');
+      end);
+
+    CheckEquals(0, lMailbox.PendingCount, 'Closed mailbox should reject GUID sticky replay without queueing');
+    CheckEquals(0, lMailbox.PumpAll);
+    lStats := maxBusObj(lBus).GetStatsGuidOf<IIntEvent>;
+    CheckEquals(1, lStats.DroppedTotal, 'Rejected GUID sticky replay should count as one drop');
+  finally
+    maxBusObj(lBus).EnableSticky<IIntEvent>(False);
+    lBus.Clear;
   end;
 end;
 
@@ -7920,8 +7986,7 @@ begin
     lThread.FreeOnTerminate := False;
     lThread.Start;
 
-    Sleep(50);
-    Check(lDone.WaitFor(0) <> wrSignaled, 'Block overflow should wait until capacity is available');
+    Check(lDone.WaitFor(50) = wrTimeout, 'Block overflow should wait until capacity is available');
     Check(lMailbox.PumpOne(0), 'Expected the first pending item to run');
     CheckEquals(1, lHits.Count);
     CheckEquals(1, lHits[0]);
@@ -8148,62 +8213,82 @@ const
   cName = 'mailbox.overflow.delayed.dropoldest';
 var
   lBus: ImaxBus;
-  lHandle: ImaxDelayedPost;
+  lDelivered: TEvent;
   lPrimaryMailbox: ImaxMailbox;
   lPolicy: TmaxMailboxPolicy;
   lPrimaryValues: TList<Integer>;
-  lSecondaryMailbox: ImaxMailbox;
+  lSecondaryThread: TMailboxPumpThread;
   lSecondaryValues: TList<Integer>;
-  lStartedMs: UInt64;
+  lValuesLock: TCriticalSection;
+  lWait: Boolean;
+  lWaitTimer: TStopwatch;
 begin
   lBus := CreateIsolatedBus;
   lBus.Clear;
   lPolicy := BuildMailboxPolicy(1, MailboxDropOldest, 0);
   lPrimaryMailbox := TmaxMailbox.Create(lPolicy);
-  lSecondaryMailbox := TmaxMailbox.Create;
+  lSecondaryThread := TMailboxPumpThread.Create;
+  lDelivered := TEvent.Create(nil, True, False, '');
   lPrimaryValues := TList<Integer>.Create;
   lSecondaryValues := TList<Integer>.Create;
+  lValuesLock := TCriticalSection.Create;
   try
+    lSecondaryThread.Start;
+    Check(lSecondaryThread.fCreated.WaitFor(2000) = wrSignaled, 'Secondary mailbox pump thread did not start');
     maxBusObj(lBus).SubscribeNamedOfIn<Integer>(cName, lPrimaryMailbox,
       procedure(const aValue: Integer)
       begin
         lPrimaryValues.Add(aValue);
       end);
-    maxBusObj(lBus).SubscribeNamedOfIn<Integer>(cName, lSecondaryMailbox,
+    maxBusObj(lBus).SubscribeNamedOfIn<Integer>(cName, lSecondaryThread.fMailbox,
       procedure(const aValue: Integer)
       begin
-        lSecondaryValues.Add(aValue);
+        lValuesLock.Enter;
+        try
+          lSecondaryValues.Add(aValue);
+        finally
+          lValuesLock.Leave;
+        end;
+        lDelivered.SetEvent;
       end);
 
     CheckEquals(Integer(TmaxPostResult.Queued), Integer(maxBusObj(lBus).PostResultNamedOf<Integer>(cName, 1)));
     CheckEquals(1, lPrimaryMailbox.PendingCount);
-    CheckEquals(1, lSecondaryMailbox.PendingCount);
-    CheckEquals(1, lSecondaryMailbox.PumpAll);
-    CheckEquals(1, lSecondaryValues.Count);
-    CheckEquals(1, lSecondaryValues[0]);
-
-    lStartedMs := GetTickCount64;
-    lHandle := maxBusObj(lBus).PostDelayedNamedOf<Integer>(cName, 2, cDelayMs);
-    Check(lHandle <> nil);
-    while (lSecondaryMailbox.PendingCount = 0) and (GetTickCount64 - lStartedMs < 2000) do
-    begin
-      CheckSynchronize(0);
-      Sleep(1);
+    Check(lDelivered.WaitFor(2000) = wrSignaled, 'Secondary mailbox did not receive the preserved initial item');
+    lValuesLock.Enter;
+    try
+      CheckEquals(1, lSecondaryValues.Count);
+      CheckEquals(1, lSecondaryValues[0]);
+    finally
+      lValuesLock.Leave;
     end;
 
-    CheckEquals(1, lSecondaryMailbox.PendingCount,
-      'Delayed post should continue past the first mailbox once DropOldest makes room');
+    lDelivered.ResetEvent;
+    lWaitTimer := TStopwatch.StartNew;
+    Check(maxBusObj(lBus).PostDelayedNamedOf<Integer>(cName, 2, cDelayMs) <> nil);
+    lWait := lDelivered.WaitFor(2000) = wrSignaled;
+
+    Check(lWait, 'Delayed post should continue past the first mailbox once DropOldest makes room');
+    Check(lWaitTimer.ElapsedMilliseconds >= 40, 'Delayed DropOldest admission should not complete inline');
     CheckEquals(1, lPrimaryMailbox.PendingCount, 'DropOldest should keep only the delayed replacement pending');
-    Check(GetTickCount64 - lStartedMs >= 40, 'Delayed DropOldest admission should not complete inline');
     CheckEquals(1, lPrimaryMailbox.PumpAll);
-    CheckEquals(1, lSecondaryMailbox.PumpAll);
     CheckEquals(1, lPrimaryValues.Count);
     CheckEquals(2, lPrimaryValues[0]);
-    CheckEquals(2, lSecondaryValues.Count);
-    CheckEquals(2, lSecondaryValues[1]);
+    lValuesLock.Enter;
+    try
+      CheckEquals(2, lSecondaryValues.Count);
+      CheckEquals(2, lSecondaryValues[1]);
+    finally
+      lValuesLock.Leave;
+    end;
   finally
+    lSecondaryThread.fRelease.SetEvent;
+    lSecondaryThread.WaitFor;
+    lSecondaryThread.Free;
+    lValuesLock.Free;
     lSecondaryValues.Free;
     lPrimaryValues.Free;
+    lDelivered.Free;
     lBus.Clear;
   end;
 end;
@@ -8214,72 +8299,88 @@ const
   cName = 'mailbox.overflow.delayed.block';
 var
   lBus: ImaxBus;
-  lHandle: ImaxDelayedPost;
+  lDelivered: TEvent;
   lPrimaryMailbox: ImaxMailbox;
   lPolicy: TmaxMailboxPolicy;
   lPrimaryValues: TList<Integer>;
-  lSecondaryMailbox: ImaxMailbox;
+  lSecondaryThread: TMailboxPumpThread;
   lSecondaryValues: TList<Integer>;
-  lStartedMs: UInt64;
+  lValuesLock: TCriticalSection;
+  lWaitTimer: TStopwatch;
 begin
   lBus := CreateIsolatedBus;
   lBus.Clear;
   lPolicy := BuildMailboxPolicy(1, MailboxBlock, 0);
   lPrimaryMailbox := TmaxMailbox.Create(lPolicy);
-  lSecondaryMailbox := TmaxMailbox.Create;
+  lSecondaryThread := TMailboxPumpThread.Create;
+  lDelivered := TEvent.Create(nil, True, False, '');
   lPrimaryValues := TList<Integer>.Create;
   lSecondaryValues := TList<Integer>.Create;
+  lValuesLock := TCriticalSection.Create;
   try
+    lSecondaryThread.Start;
+    Check(lSecondaryThread.fCreated.WaitFor(2000) = wrSignaled, 'Secondary mailbox pump thread did not start');
     maxBusObj(lBus).SubscribeNamedOfIn<Integer>(cName, lPrimaryMailbox,
       procedure(const aValue: Integer)
       begin
         lPrimaryValues.Add(aValue);
       end);
-    maxBusObj(lBus).SubscribeNamedOfIn<Integer>(cName, lSecondaryMailbox,
+    maxBusObj(lBus).SubscribeNamedOfIn<Integer>(cName, lSecondaryThread.fMailbox,
       procedure(const aValue: Integer)
       begin
-        lSecondaryValues.Add(aValue);
+        lValuesLock.Enter;
+        try
+          lSecondaryValues.Add(aValue);
+        finally
+          lValuesLock.Leave;
+        end;
+        lDelivered.SetEvent;
       end);
 
     CheckEquals(Integer(TmaxPostResult.Queued), Integer(maxBusObj(lBus).PostResultNamedOf<Integer>(cName, 1)));
     CheckEquals(1, lPrimaryMailbox.PendingCount);
-    CheckEquals(1, lSecondaryMailbox.PendingCount);
-    CheckEquals(1, lSecondaryMailbox.PumpAll);
-    CheckEquals(1, lSecondaryValues.Count);
-    CheckEquals(1, lSecondaryValues[0]);
+    Check(lDelivered.WaitFor(2000) = wrSignaled, 'Secondary mailbox did not receive the preserved initial item');
+    lValuesLock.Enter;
+    try
+      CheckEquals(1, lSecondaryValues.Count);
+      CheckEquals(1, lSecondaryValues[0]);
+    finally
+      lValuesLock.Leave;
+    end;
 
-    lStartedMs := GetTickCount64;
-    lHandle := maxBusObj(lBus).PostDelayedNamedOf<Integer>(cName, 2, cDelayMs);
-    Check(lHandle <> nil);
-
-    Sleep(250);
-    CheckEquals(0, lSecondaryMailbox.PendingCount,
+    lDelivered.ResetEvent;
+    Check(maxBusObj(lBus).PostDelayedNamedOf<Integer>(cName, 2, cDelayMs) <> nil);
+    Check(lDelivered.WaitFor(250) = wrTimeout,
       'MailboxBlock should keep later pass-2 subscribers waiting while the first mailbox stays full');
     CheckEquals(1, lPrimaryMailbox.PendingCount,
       'Blocked delayed admission should not allocate another pending slot while the mailbox is full');
     Check(lPrimaryMailbox.PumpOne(0), 'Expected the preserved pending item to run first');
 
-    while (lSecondaryMailbox.PendingCount = 0) and (GetTickCount64 - lStartedMs < 3000) do
-    begin
-      CheckSynchronize(0);
-      Sleep(1);
-    end;
-
-    CheckEquals(1, lSecondaryMailbox.PendingCount, 'Delayed post should resume once mailbox capacity becomes available');
-    Check(GetTickCount64 - lStartedMs >= 250,
-      'Blocked delayed admission should stay pending until after the mailbox remains full past the delay boundary');
+    lWaitTimer := TStopwatch.StartNew;
+    Check(lDelivered.WaitFor(3000) = wrSignaled, 'Delayed post should resume once mailbox capacity becomes available');
+    Check(lWaitTimer.ElapsedMilliseconds < 3000, 'Blocked delayed admission should resume promptly after capacity returns');
+    Check(lDelivered.WaitFor(0) = wrSignaled, 'Delayed post completion event should stay signaled after resume');
     CheckEquals(1, lPrimaryMailbox.PendingCount,
       'Blocked delayed admission should leave the second item pending after the first pump');
     CheckEquals(1, lPrimaryMailbox.PumpAll);
-    CheckEquals(1, lSecondaryMailbox.PumpAll);
     CheckEquals(2, lPrimaryValues.Count);
     CheckEquals(1, lPrimaryValues[0]);
     CheckEquals(2, lPrimaryValues[1]);
-    CheckEquals(2, lSecondaryValues.Count);
-    CheckEquals(2, lSecondaryValues[1]);
+    lValuesLock.Enter;
+    try
+      CheckEquals(2, lSecondaryValues.Count);
+      CheckEquals(2, lSecondaryValues[1]);
+    finally
+      lValuesLock.Leave;
+    end;
   finally
+    lSecondaryThread.fRelease.SetEvent;
+    lSecondaryThread.WaitFor;
+    lSecondaryThread.Free;
+    lValuesLock.Free;
     lSecondaryValues.Free;
     lPrimaryValues.Free;
+    lDelivered.Free;
     lBus.Clear;
   end;
 end;
@@ -8291,65 +8392,83 @@ const
   cName = 'mailbox.overflow.delayed.deadline';
 var
   lBus: ImaxBus;
+  lDelivered: TEvent;
   lElapsedMs: UInt64;
-  lHandle: ImaxDelayedPost;
   lPrimaryMailbox: ImaxMailbox;
   lPolicy: TmaxMailboxPolicy;
   lPrimaryValues: TList<Integer>;
-  lSecondaryMailbox: ImaxMailbox;
+  lSecondaryThread: TMailboxPumpThread;
   lSecondaryValues: TList<Integer>;
-  lStartedMs: UInt64;
+  lValuesLock: TCriticalSection;
+  lWaitTimer: TStopwatch;
 begin
   lBus := CreateIsolatedBus;
   lBus.Clear;
   lPolicy := BuildMailboxPolicy(1, MailboxDeadline, cDeadlineUs);
   lPrimaryMailbox := TmaxMailbox.Create(lPolicy);
-  lSecondaryMailbox := TmaxMailbox.Create;
+  lSecondaryThread := TMailboxPumpThread.Create;
+  lDelivered := TEvent.Create(nil, True, False, '');
   lPrimaryValues := TList<Integer>.Create;
   lSecondaryValues := TList<Integer>.Create;
+  lValuesLock := TCriticalSection.Create;
   try
+    lSecondaryThread.Start;
+    Check(lSecondaryThread.fCreated.WaitFor(2000) = wrSignaled, 'Secondary mailbox pump thread did not start');
     maxBusObj(lBus).SubscribeNamedOfIn<Integer>(cName, lPrimaryMailbox,
       procedure(const aValue: Integer)
       begin
         lPrimaryValues.Add(aValue);
       end);
-    maxBusObj(lBus).SubscribeNamedOfIn<Integer>(cName, lSecondaryMailbox,
+    maxBusObj(lBus).SubscribeNamedOfIn<Integer>(cName, lSecondaryThread.fMailbox,
       procedure(const aValue: Integer)
       begin
-        lSecondaryValues.Add(aValue);
+        lValuesLock.Enter;
+        try
+          lSecondaryValues.Add(aValue);
+        finally
+          lValuesLock.Leave;
+        end;
+        lDelivered.SetEvent;
       end);
 
     CheckEquals(Integer(TmaxPostResult.Queued), Integer(maxBusObj(lBus).PostResultNamedOf<Integer>(cName, 1)));
     CheckEquals(1, lPrimaryMailbox.PendingCount);
-    CheckEquals(1, lSecondaryMailbox.PendingCount);
-    CheckEquals(1, lSecondaryMailbox.PumpAll);
-    CheckEquals(1, lSecondaryValues.Count);
-    CheckEquals(1, lSecondaryValues[0]);
-
-    lStartedMs := GetTickCount64;
-    lHandle := maxBusObj(lBus).PostDelayedNamedOf<Integer>(cName, 2, cDelayMs);
-    Check(lHandle <> nil);
-
-    while (lSecondaryMailbox.PendingCount = 0) and (GetTickCount64 - lStartedMs < 3000) do
-    begin
-      CheckSynchronize(0);
-      Sleep(1);
+    Check(lDelivered.WaitFor(2000) = wrSignaled, 'Secondary mailbox did not receive the preserved initial item');
+    lValuesLock.Enter;
+    try
+      CheckEquals(1, lSecondaryValues.Count);
+      CheckEquals(1, lSecondaryValues[0]);
+    finally
+      lValuesLock.Leave;
     end;
 
-    CheckEquals(1, lSecondaryMailbox.PendingCount,
+    lDelivered.ResetEvent;
+    Check(maxBusObj(lBus).PostDelayedNamedOf<Integer>(cName, 2, cDelayMs) <> nil);
+
+    lWaitTimer := TStopwatch.StartNew;
+    Check(lDelivered.WaitFor(3000) = wrSignaled,
       'Delayed post should continue to later subscribers once the deadline-based mailbox admission attempt resolves');
-    lElapsedMs := GetTickCount64 - lStartedMs;
+    lElapsedMs := lWaitTimer.ElapsedMilliseconds;
     Check(lElapsedMs >= 160, 'MailboxDeadline should wait through the configured timeout before rejecting delayed admission');
     CheckEquals(1, lPrimaryMailbox.PendingCount, 'MailboxDeadline should preserve the original pending item after timeout');
     CheckEquals(1, lPrimaryMailbox.PumpAll);
-    CheckEquals(1, lSecondaryMailbox.PumpAll);
     CheckEquals(1, lPrimaryValues.Count);
     CheckEquals(1, lPrimaryValues[0]);
-    CheckEquals(2, lSecondaryValues.Count);
-    CheckEquals(2, lSecondaryValues[1]);
+    lValuesLock.Enter;
+    try
+      CheckEquals(2, lSecondaryValues.Count);
+      CheckEquals(2, lSecondaryValues[1]);
+    finally
+      lValuesLock.Leave;
+    end;
   finally
+    lSecondaryThread.fRelease.SetEvent;
+    lSecondaryThread.WaitFor;
+    lSecondaryThread.Free;
+    lValuesLock.Free;
     lSecondaryValues.Free;
     lPrimaryValues.Free;
+    lDelivered.Free;
     lBus.Clear;
   end;
 end;
@@ -9405,6 +9524,42 @@ begin
       TmaxDelivery.Posting);
 
     lPostResult := maxBusObj(lBus).PostResult<Integer>(17);
+
+    CheckEquals(Integer(TmaxPostResult.DispatchedInline), Integer(lPostResult));
+    CheckEquals(1, lHits);
+    CheckEquals(0, lMailbox.PendingCount);
+    CheckEquals(0, lMailbox.PumpAll);
+  finally
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestPostResult.PostResultGuidOfMixedInlineAndClosedMailboxReportsInline;
+var
+  lBus: ImaxBus;
+  lHits: Integer;
+  lMailbox: ImaxMailbox;
+  lPostResult: TmaxPostResult;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lMailbox.Close(False);
+  lHits := 0;
+  try
+    maxBusObj(lBus).SubscribeGuidOfIn<IIntEvent>(lMailbox,
+      procedure(const aValue: IIntEvent)
+      begin
+        Inc(lHits, 100);
+      end);
+    maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
+      procedure(const aValue: IIntEvent)
+      begin
+        Inc(lHits);
+      end,
+      TmaxDelivery.Posting);
+
+    lPostResult := maxBusObj(lBus).PostResultGuidOf<IIntEvent>(TIntEvent.Create(17));
 
     CheckEquals(Integer(TmaxPostResult.DispatchedInline), Integer(lPostResult));
     CheckEquals(1, lHits);
