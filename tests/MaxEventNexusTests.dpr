@@ -18,6 +18,7 @@ uses
   maxLogic.EventNexus.Threading.MaxAsync in '..\maxLogic.EventNexus.Threading.MaxAsync.pas',
   maxLogic.EventNexus.Threading.RawThread in '..\maxLogic.EventNexus.Threading.RawThread.pas',
   maxLogic.EventNexus.Threading.TTask in '..\maxLogic.EventNexus.Threading.TTask.pas',
+  MaxEventNexus.Coalesce.Tests in 'src\MaxEventNexus.Coalesce.Tests.pas',
   MaxEventNexus.Main.Tests in 'src\MaxEventNexus.Main.Tests.pas',
   MaxEventNexus.Scheduler.Tests in 'src\MaxEventNexus.Scheduler.Tests.pas',
   MaxEventNexus.Testing in 'src\MaxEventNexus.Testing.pas';

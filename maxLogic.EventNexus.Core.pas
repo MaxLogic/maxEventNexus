@@ -4555,6 +4555,7 @@ end;
 procedure TmaxBus.ScheduleTypedCoalesce<t>(const aTopicName: TmaxString;
 		  aTopic: TTypedTopic<t>; const aSubs: TArray<TTypedSubscriber<t>>);
 var
+  lDelayUs: Integer;
   lEpoch: Int64;
   lSubsCopy: TArray<TTypedSubscriber<t>>;
   lScheduled: TmaxProc;
@@ -4594,8 +4595,13 @@ begin
           end;
         end);
     end;
+  lDelayUs := aTopic.CoalesceWindow;
+  if lDelayUs <= 0 then
+    lDelayUs := 1;
   try
-    fAsync.RunDelayed(lScheduled, aTopic.CoalesceWindow);
+    // Zero-window coalescing still needs one deferred scheduler turn so one burst can
+    // settle into the pending bucket before we flush the latest value.
+    fAsync.RunDelayed(lScheduled, lDelayUs);
   except
     // Keep progress even if delayed scheduling backend rejects the submission.
     lScheduled();

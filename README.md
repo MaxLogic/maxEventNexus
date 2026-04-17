@@ -261,6 +261,7 @@ That means a type preset now acts as the fallback default for named-of topics wh
 
 - Sticky: `EnableSticky<T>(True)` / `EnableStickyNamed(...)` caches latest event.
 - Coalescing: `EnableCoalesceOf<T>(...)`, `EnableCoalesceNamedOf<T>(...)`, `EnableCoalesceGuidOf<T>(...)` keeps latest value per key per window.
+- A `0` coalesce window still flushes on a deferred scheduler turn so one posting burst can settle to the latest value instead of racing an inline flush.
 - Mailbox coalescing is a separate receiver-side layer on payload-carrying mailbox subscriptions: it keeps the latest pending item per `(subscription, mailbox key)` while unrelated keys keep FIFO order.
 
 `Clear` stays a runtime reset, not a durable-config wipe:
