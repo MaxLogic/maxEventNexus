@@ -67,6 +67,7 @@ type
     procedure TypedZeroWindowFallbackStaysDeferredAndKeepsLatest;
     procedure NamedZeroWindowFallbackStaysDeferredAndKeepsLatest;
     procedure GuidZeroWindowFallbackStaysDeferredAndKeepsLatest;
+    procedure TypedZeroWindowClearPurgesPendingFlushAndKeepsFreshBurst;
   end;
   {$M-}
 
@@ -477,6 +478,62 @@ begin
     lBus.Clear;
     lDone.Free;
     lLock.Free;
+  end;
+end;
+
+procedure TTestZeroWindowCoalesce.TypedZeroWindowClearPurgesPendingFlushAndKeepsFreshBurst;
+var
+  lBus: ImaxBus;
+  lScheduler: TZeroDelayInlineScheduler;
+  lValues: TList<Integer>;
+begin
+  lScheduler := TZeroDelayInlineScheduler.Create;
+  lBus := TmaxBus.Create(lScheduler);
+  lValues := TList<Integer>.Create;
+  try
+    maxBusObj(lBus).EnableCoalesceOf<TCoalesceEvent>(
+      function(const aValue: TCoalesceEvent): TmaxString
+      begin
+        Result := aValue.Key;
+      end,
+      0);
+    maxBusObj(lBus).Subscribe<TCoalesceEvent>(
+      procedure(const aValue: TCoalesceEvent)
+      begin
+        lValues.Add(aValue.Value);
+      end);
+
+    maxBusObj(lBus).Post<TCoalesceEvent>(MakeEvent('A', 1));
+    maxBusObj(lBus).Post<TCoalesceEvent>(MakeEvent('A', 2));
+
+    CheckEquals(1, lScheduler.DelayedCount, 'Zero-window clear regression should start with one deferred flush');
+    CheckEquals(0, lValues.Count, 'Zero-window clear regression should not flush inline');
+
+    lBus.Clear;
+    lScheduler.DrainDelayed;
+
+    CheckEquals(0, lValues.Count, 'Clear should purge the pending zero-window flush');
+
+    maxBusObj(lBus).Subscribe<TCoalesceEvent>(
+      procedure(const aValue: TCoalesceEvent)
+      begin
+        lValues.Add(aValue.Value);
+      end);
+    maxBusObj(lBus).Post<TCoalesceEvent>(MakeEvent('A', 3));
+    maxBusObj(lBus).Post<TCoalesceEvent>(MakeEvent('A', 4));
+
+    CheckEquals(1, lScheduler.DelayedCount, 'Clear should preserve zero-window coalescing for the fresh burst');
+    Check(lScheduler.LastDelayUs > 0, 'Clear should preserve a positive zero-window delay request for the fresh burst');
+    CheckEquals(0, lValues.Count, 'Clear should preserve deferred zero-window flush behavior for the fresh burst');
+
+    lScheduler.DrainDelayed;
+
+    CheckEquals(1, lValues.Count);
+    CheckEquals(4, lValues[0]);
+  finally
+    maxBusObj(lBus).EnableCoalesceOf<TCoalesceEvent>(nil);
+    lBus.Clear;
+    lValues.Free;
   end;
 end;
 
