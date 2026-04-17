@@ -1,4 +1,4 @@
-unit MaxEventNexus.Scheduler.Tests;
+﻿unit MaxEventNexus.Scheduler.Tests;
 
 {$DEFINE max_DELPHI}
 
@@ -24,8 +24,24 @@ type
     procedure RawThreadRuntimeDelayConversionRoundsUpSubMillisecondWork;
     procedure RuntimeDelayContractAcrossSchedulers;
     procedure PositiveSubMillisecondDelaysRoundUpAcrossSchedulers;
+    procedure ZeroWindowCoalesceRequestsPositiveDelayAcrossShippedSchedulers;
   end;
   {$M-}
+
+  TRecordingScheduler = class(TInterfacedObject, IEventNexusScheduler)
+  private
+    fDelayedCallCount: Integer;
+    fInner: IEventNexusScheduler;
+    fLastDelayUs: Integer;
+  public
+    constructor Create(const aInner: IEventNexusScheduler);
+    function DelayedCallCount: Integer;
+    function LastDelayUs: Integer;
+    procedure RunAsync(const aProc: TmaxProc);
+    procedure RunOnMain(const aProc: TmaxProc);
+    procedure RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);
+    function IsMainThread: Boolean;
+  end;
 
   TTestableMaxAsyncScheduler = class(TmaxAsyncScheduler)
   public
@@ -63,6 +79,45 @@ type
   end;
 
 implementation
+
+constructor TRecordingScheduler.Create(const aInner: IEventNexusScheduler);
+begin
+  inherited Create;
+  fInner := aInner;
+  fLastDelayUs := -1;
+end;
+
+function TRecordingScheduler.DelayedCallCount: Integer;
+begin
+  Result := TInterlocked.CompareExchange(fDelayedCallCount, 0, 0);
+end;
+
+function TRecordingScheduler.LastDelayUs: Integer;
+begin
+  Result := TInterlocked.CompareExchange(fLastDelayUs, 0, 0);
+end;
+
+procedure TRecordingScheduler.RunAsync(const aProc: TmaxProc);
+begin
+  fInner.RunAsync(aProc);
+end;
+
+procedure TRecordingScheduler.RunOnMain(const aProc: TmaxProc);
+begin
+  fInner.RunOnMain(aProc);
+end;
+
+procedure TRecordingScheduler.RunDelayed(const aProc: TmaxProc; aDelayUs: Integer);
+begin
+  TInterlocked.Increment(fDelayedCallCount);
+  TInterlocked.Exchange(fLastDelayUs, aDelayUs);
+  fInner.RunDelayed(aProc, aDelayUs);
+end;
+
+function TRecordingScheduler.IsMainThread: Boolean;
+begin
+  Result := fInner.IsMainThread;
+end;
 
 class function TTestableMaxAsyncScheduler.DelayUsToDelayMsForTest(aDelayUs: Integer): Integer;
 begin
@@ -316,6 +371,72 @@ begin
   CheckEquals(2, TTestableMaxAsyncScheduler.DelayUsToDelayMsForTest(1001));
   CheckEquals(2, TTestableTTaskScheduler.DelayUsToDelayMsForTest(1001));
   CheckEquals(2, TTestableRawThreadScheduler.DelayUsToDelayMsForTest(1001));
+end;
+
+procedure TTestSchedulerContracts.ZeroWindowCoalesceRequestsPositiveDelayAcrossShippedSchedulers;
+  procedure AssertZeroWindowPositiveDelay(const aName: string; const aInner: IEventNexusScheduler);
+  const
+    cTopicName = 'scheduler.zero-window';
+  var
+    lBus: ImaxBus;
+    lCount: Integer;
+    lDone: TEvent;
+    lLock: TCriticalSection;
+    lProbe: TRecordingScheduler;
+    lScheduler: IEventNexusScheduler;
+    lValue: Integer;
+  begin
+    lDone := TEvent.Create(nil, True, False, '');
+    lLock := TCriticalSection.Create;
+    lProbe := TRecordingScheduler.Create(aInner);
+    lScheduler := lProbe;
+    lBus := TmaxBus.Create(lScheduler);
+    lCount := 0;
+    lValue := 0;
+    try
+      maxBusObj(lBus).EnableCoalesceNamedOf<Integer>(cTopicName,
+        function(const aValue: Integer): TmaxString
+        begin
+          Result := 'same';
+        end,
+        0);
+      maxBusObj(lBus).SubscribeNamedOf<Integer>(cTopicName,
+        procedure(const aValue: Integer)
+        begin
+          lLock.Enter;
+          try
+            Inc(lCount);
+            lValue := aValue;
+            lDone.SetEvent;
+          finally
+            lLock.Leave;
+          end;
+        end);
+
+      maxBusObj(lBus).PostNamedOf<Integer>(cTopicName, 1);
+      maxBusObj(lBus).PostNamedOf<Integer>(cTopicName, 2);
+
+      CheckEquals(1, lProbe.DelayedCallCount, aName + ' should schedule one zero-window delayed flush');
+      Check(lProbe.LastDelayUs > 0, aName + ' should request a positive zero-window delay');
+      CheckEquals(Integer(wrSignaled), Integer(lDone.WaitFor(2000)), aName + ' zero-window coalesced delivery timed out');
+      lLock.Enter;
+      try
+        CheckEquals(1, lCount, aName + ' should deliver one coalesced value');
+        CheckEquals(2, lValue, aName + ' should deliver the latest coalesced value');
+      finally
+        lLock.Leave;
+      end;
+    finally
+      maxBusObj(lBus).EnableCoalesceNamedOf<Integer>(cTopicName, nil);
+      lBus.Clear;
+      lDone.Free;
+      lLock.Free;
+    end;
+  end;
+begin
+  AssertZeroWindowPositiveDelay('maxAsync', TTestableMaxAsyncScheduler.Create);
+  AssertZeroWindowPositiveDelay('TTask', TTestableTTaskScheduler.Create);
+  AssertZeroWindowPositiveDelay('raw-thread', TTestableRawThreadScheduler.Create);
 end;
 
 initialization
