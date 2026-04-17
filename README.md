@@ -4,6 +4,7 @@
 
 - Added and documented the full mailbox delivery family: typed `SubscribeIn<T>`, exact named `SubscribeNamedIn`, named typed `SubscribeNamedOfIn<T>`, and GUID typed `SubscribeGuidOfIn<T>`.
 - Added maintained mailbox samples for mixed topic families, mailbox coalescing, mailbox overflow, and `Clear` / `Close(True)` / `Close(False)` lifecycle boundaries.
+- Added `MailboxWorkerIntegrationSample` as the realistic worker/control/progress mailbox sample: named job commands into a worker mailbox, typed progress/results back to the caller mailbox, and exact named shutdown.
 - Added mailbox-owned overflow policy (`TmaxMailboxPolicy`) with `MailboxDropNewest`, `MailboxDropOldest`, `MailboxBlock`, and `MailboxDeadline`, plus benchmarked/documented portable-only specialization status.
 - Refreshed the published isolated-process benchmark snapshot for Win32/Win64 async and posting profiles, and stabilized the framework benchmark smoke path around the final `SchedulerCompare` contract.
 - `Clear` now stays a runtime reset: explicit queue policies and coalescing configuration survive, while queued/pending runtime state is still dropped.
@@ -24,6 +25,22 @@
 - Added optional strong object-method subscriptions (`SubscribeStrong<T>`, `SubscribeNamedOfStrong<T>`, `SubscribeGuidOfStrong<T>`) for callers that guarantee subscriber lifetime and want to skip weak-liveness tracking overhead.
 
 EventNexus is a type-safe event bus for Delphi 12+ with typed, named, and GUID topic routing, delivery-mode control, sticky cache, topic and mailbox coalescing, queue policies, and receiver-owned mailbox delivery.
+
+## Start Here
+
+- New to the library: read `Core API shape on Delphi`, then `Delivery modes and main-thread policy`, then `Mailbox delivery`.
+- Migrating from older code: use `MIGRATION.md`.
+- Looking for runnable examples first: use `samples/readme.md`.
+- Looking for the full contract and internals: use `spec.md` and `DESIGN.md`.
+
+## Docs Map
+
+- `README.md`: the fastest product overview, current API shape, and maintained sample map.
+- `MIGRATION.md`: "old pattern to current EventNexus pattern" guidance.
+- `spec.md`: the public contract, semantics, and testing matrix.
+- `DESIGN.md`: the architecture sketch and runtime moving parts.
+- `samples/readme.md`: sample-by-sample guidance and suggested reading order.
+- `bench/readme.md`: benchmark entry points, profiles, and interpretation notes.
 
 ## Performance and Scope Snapshot (2026-03-21)
 
@@ -297,6 +314,7 @@ See `samples/MailboxWorkerSample.dpr` for the basic worker-thread pattern, `samp
 Maintained mailbox sample guide:
 
 - `MailboxWorkerSample.dpr`: the minimal owner-thread worker pattern (`PumpOne(cMaxWaitInfinite)`).
+- `MailboxWorkerIntegrationSample.dpr`: a realistic worker flow with named job commands into the worker mailbox, typed progress/results back to the caller mailbox, and an exact named stop command.
 - `MailboxTopicFamiliesSample.dpr`: one mailbox handling typed, exact named, named-of, and GUID mailbox subscriptions together.
 - `MailboxLatestWinsSample.dpr`: receiver-side mailbox coalescing on payload-carrying subscriptions.
 - `MailboxOverflowSample.dpr`: bounded-mailbox overflow with `MailboxDropNewest`.

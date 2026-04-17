@@ -12,6 +12,7 @@ Bridge rule for samples:
 - `ManualSubscribeSample.pas`: explicit subscribe/unsubscribe patterns.
 - `ConsoleSample.pas`: typed, named, and GUID topics with delivery modes, sticky events, coalescing, and queue policy.
 - `MailboxWorkerSample.dpr`: thread A owns a mailbox, thread B posts, and thread A pumps the mailbox and handles on its own thread.
+- `MailboxWorkerIntegrationSample.dpr`: a realistic two-mailbox worker flow with named job commands into the worker mailbox, typed progress/results back to the caller mailbox, and an exact named stop command.
 - `MailboxClearShutdownSample.dpr`: shows `Clear` purging queued mailbox work, `Close(True)` discarding queued items while already-dequeued work may still finish, and `Close(False)` retaining queued items while rejecting future enqueue.
 - `MailboxTopicFamiliesSample.dpr`: shows one mailbox hosting typed, exact named, named-of, and GUID mailbox subscriptions together while preserving FIFO order across the mixed queue.
 - `MailboxLatestWinsSample.dpr`: shows mailbox coalescing collapsing repeated progress updates per key while unrelated keys keep their original queue order.
@@ -28,6 +29,7 @@ Mailbox pumping rules for the samples:
 Suggested mailbox reading order:
 
 - Start with `MailboxWorkerSample.dpr` for the basic owner-thread pattern.
+- Use `MailboxWorkerIntegrationSample.dpr` once we want the practical command/progress/result shape most worker pipelines need.
 - Use `MailboxTopicFamiliesSample.dpr` to see how the full mailbox subscribe family maps onto one mailbox.
 - Use `MailboxLatestWinsSample.dpr` and `MailboxOverflowSample.dpr` for receiver-side queue behavior.
 - Use `MailboxClearShutdownSample.dpr` for `Clear`, `Close(True)`, and `Close(False)` lifecycle boundaries.
