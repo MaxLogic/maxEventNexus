@@ -68,6 +68,7 @@ type
     procedure NamedZeroWindowFallbackStaysDeferredAndKeepsLatest;
     procedure GuidZeroWindowFallbackStaysDeferredAndKeepsLatest;
     procedure TypedZeroWindowClearPurgesPendingFlushAndKeepsFreshBurst;
+    procedure TypedZeroWindowThreePostBurstKeepsFinalValue;
   end;
   {$M-}
 
@@ -530,6 +531,47 @@ begin
 
     CheckEquals(1, lValues.Count);
     CheckEquals(4, lValues[0]);
+  finally
+    maxBusObj(lBus).EnableCoalesceOf<TCoalesceEvent>(nil);
+    lBus.Clear;
+    lValues.Free;
+  end;
+end;
+
+procedure TTestZeroWindowCoalesce.TypedZeroWindowThreePostBurstKeepsFinalValue;
+var
+  lBus: ImaxBus;
+  lScheduler: TZeroDelayInlineScheduler;
+  lValues: TList<Integer>;
+begin
+  lScheduler := TZeroDelayInlineScheduler.Create;
+  lBus := TmaxBus.Create(lScheduler);
+  lValues := TList<Integer>.Create;
+  try
+    maxBusObj(lBus).EnableCoalesceOf<TCoalesceEvent>(
+      function(const aValue: TCoalesceEvent): TmaxString
+      begin
+        Result := aValue.Key;
+      end,
+      0);
+    maxBusObj(lBus).Subscribe<TCoalesceEvent>(
+      procedure(const aValue: TCoalesceEvent)
+      begin
+        lValues.Add(aValue.Value);
+      end);
+
+    maxBusObj(lBus).Post<TCoalesceEvent>(MakeEvent('A', 1));
+    maxBusObj(lBus).Post<TCoalesceEvent>(MakeEvent('A', 2));
+    maxBusObj(lBus).Post<TCoalesceEvent>(MakeEvent('A', 3));
+
+    CheckEquals(1, lScheduler.DelayedCount, 'Zero-window three-post burst should queue one deferred flush');
+    Check(lScheduler.LastDelayUs > 0, 'Zero-window three-post burst should request a positive delay');
+    CheckEquals(0, lValues.Count, 'Zero-window three-post burst should not flush inline');
+
+    lScheduler.DrainDelayed;
+
+    CheckEquals(1, lValues.Count);
+    CheckEquals(3, lValues[0]);
   finally
     maxBusObj(lBus).EnableCoalesceOf<TCoalesceEvent>(nil);
     lBus.Clear;
