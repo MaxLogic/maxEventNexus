@@ -40,6 +40,7 @@
 - Scheduler benchmark project search paths now include `reference/` so iPub/EventHorizon comparison units build in CLI workflows. (T-1082)
 
 ### Fixed
+- `Close(False)` now preserves already-queued mailbox work even when later closed-mailbox or delayed-overflow admissions fail, and the test suite now covers the close-boundary and delayed-overflow mailbox cases explicitly.
 - `TryPost<T>`, `TryPostNamedOf<T>`, and `TryPostGuidOf<T>` no longer report success when mailbox-bound direct dispatch accepts no receiver, mailbox-bound temporary overflow no longer auto-unsubscribes live subscribers, and `PostResult<T>` now classifies accepted live mailbox handoff as `Queued`. (T-1139, T-1140)
 - Deferred async batch handoff now uses an atomic continuation path, and the strong typed object-method overload family no longer applies weak-target AV/IP auto-prune heuristics in the generic deferred/sticky paths. Together these changes make the published `framework=strong` `10000`-event benchmark profile drain reliably again. (T-1146)
 - `Clear` now preserves durable per-topic coalescing configuration and explicit queue policies while still dropping queued/runtime state at the clear boundary. (T-1100, T-1101)

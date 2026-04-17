@@ -573,7 +573,6 @@ type
           procedure DescribeAutoBridgeDispatch(const aSnapshots: TArray<TmaxAutoBridgeSnapshot>;
             out aHasInline, aHasDeferred: boolean);
           function DeliveryRunsInline(aDelivery: TmaxDelivery): boolean;
-          class function MailboxIsClosed(const aMailbox: ImaxBusMailbox): Boolean; static;
           class function HasLiveTypedSubscribers<t>(const aTopic: TTypedTopic<t>): boolean; static;
           procedure DispatchAutoBridge<t>(const aTopic: TmaxString; const aSnapshots: TArray<TmaxAutoBridgeSnapshot>;
             const aEvent: t);
@@ -4251,13 +4250,6 @@ end;
 
 { TmaxBus }
 
-class function TmaxBus.MailboxIsClosed(const aMailbox: ImaxBusMailbox): Boolean;
-var
-  lPublicMailbox: ImaxMailbox;
-begin
-  Result := Supports(aMailbox, ImaxMailbox, lPublicMailbox) and lPublicMailbox.IsClosed;
-end;
-
 function TmaxBus.TryPostMailboxTypedDispatchItem<t>(const aMailbox: ImaxBusMailbox; aTopic: TTypedTopic<t>;
   const aHandler: TmaxProcOf<t>; const aValue: t; aToken: TmaxSubscriptionToken; const aState: ImaxSubscriptionState;
   const aMailboxCoalesceKeyOf: TmaxKeyFunc<t>): Boolean;
@@ -4287,8 +4279,6 @@ begin
 
   if not Result then
   begin
-    if MailboxIsClosed(aMailbox) then
-      aTopic.RemoveByToken(aToken);
     aTopic.AddDropped;
     Exit;
   end;
@@ -6059,8 +6049,6 @@ begin
       if not lInternalMailbox.TryPostItem(
         TMailboxNamedDispatchItem.Create(Self, lMailboxGeneration, lTopic, aHandler, lToken, lState)) then
       begin
-        if MailboxIsClosed(lInternalMailbox) then
-          lTopic.RemoveByToken(lToken);
         lTopic.AddDropped;
       end
       else if (TInterlocked.CompareExchange(fMailboxClearActive, 0, 0) <> 0) or
@@ -6211,8 +6199,6 @@ begin
           if not lSubs[i].MailboxInternal.TryPostItem(
             TMailboxNamedDispatchItem.Create(Self, lMailboxGeneration, lTopic, lHandler, lToken, lState)) then
           begin
-            if MailboxIsClosed(lSubs[i].MailboxInternal) then
-              lTopic.RemoveByToken(lToken);
             lTopic.AddDropped;
             Continue;
           end;
@@ -6474,8 +6460,6 @@ begin
           if not lSubs[i].MailboxInternal.TryPostItem(
             TMailboxNamedDispatchItem.Create(Self, lMailboxGeneration, lTopic, lHandler, lToken, lState)) then
           begin
-            if MailboxIsClosed(lSubs[i].MailboxInternal) then
-              lTopic.RemoveByToken(lToken);
             lTopic.AddDropped;
             Continue;
           end;
