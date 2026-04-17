@@ -420,6 +420,7 @@ type
     procedure MailboxOverflowCoalescingReplacementBypassesCapacity;
     procedure MailboxOverflowDropNewestDoesNotUnsubscribe;
     procedure MailboxOverflowDropNewestRejectsWhenFull;
+    procedure MailboxOverflowDropNewestRejectsDelayedAdmission;
     procedure MailboxOverflowDropOldestEvictsOldestPending;
     procedure MailboxWrongThreadPumpAllFailsFast;
     procedure MailboxWrongThreadPumpFailsFast;
@@ -450,6 +451,8 @@ type
     procedure MailboxUnsubscribeSkipsQueuedWork;
     procedure MailboxClearPurgesQueuedWork;
     procedure MailboxCloseDiscardPending;
+    procedure MailboxCloseKeepsPendingCoalescedWorkAndRejectsReplacement;
+    procedure MailboxCloseKeepsPendingWorkAndRejectsDelayedAdmission;
     procedure MailboxDeadlineTimesOutWhenStillFull;
     procedure MailboxTimeoutReturnsFalse;
   end;
@@ -7512,6 +7515,107 @@ begin
     end));
 end;
 
+procedure TTestMailbox.MailboxCloseKeepsPendingCoalescedWorkAndRejectsReplacement;
+const
+  cName = 'mailbox.close.keep.coalesced';
+var
+  lBus: ImaxBus;
+  lMailbox: ImaxMailbox;
+  lPostResult: TmaxPostResult;
+  lValues: TList<Integer>;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lValues := TList<Integer>.Create;
+  try
+    maxBusObj(lBus).SubscribeNamedOfIn<Integer>(cName, lMailbox,
+      procedure(const aValue: Integer)
+      begin
+        lValues.Add(aValue);
+      end,
+      function(const aValue: Integer): string
+      begin
+        Result := 'progress';
+      end);
+
+    lPostResult := maxBusObj(lBus).PostResultNamedOf<Integer>(cName, 1);
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(lPostResult));
+    CheckEquals(1, lMailbox.PendingCount);
+
+    lMailbox.Close(False);
+
+    Check(lMailbox.IsClosed);
+    CheckEquals(1, lMailbox.PendingCount, 'Close(False) should keep the already-pending coalesced mailbox item');
+
+    lPostResult := maxBusObj(lBus).PostResultNamedOf<Integer>(cName, 2);
+
+    CheckEquals(Integer(TmaxPostResult.Dropped), Integer(lPostResult));
+    CheckEquals(1, lMailbox.PendingCount, 'Close(False) should reject replacement attempts for a closed mailbox');
+    CheckEquals(1, lMailbox.PumpAll);
+    CheckEquals(1, lValues.Count);
+    CheckEquals(1, lValues[0]);
+  finally
+    lValues.Free;
+    lBus.Clear;
+  end;
+end;
+
+procedure TTestMailbox.MailboxCloseKeepsPendingWorkAndRejectsDelayedAdmission;
+const
+  cDelayMs = 80;
+  cName = 'mailbox.close.keep.delayed';
+var
+  lBus: ImaxBus;
+  lDelayedDone: TEvent;
+  lHandle: ImaxDelayedPost;
+  lMailbox: ImaxMailbox;
+  lValues: TList<Integer>;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lMailbox := TmaxMailbox.Create;
+  lValues := TList<Integer>.Create;
+  lDelayedDone := TEvent.Create(nil, True, False, '');
+  try
+    maxBusObj(lBus).SubscribeNamedOfIn<Integer>(cName, lMailbox,
+      procedure(const aValue: Integer)
+      begin
+        lValues.Add(aValue);
+      end);
+    maxBusObj(lBus).SubscribeNamedOf<Integer>(cName,
+      procedure(const aValue: Integer)
+      begin
+        if aValue = 2 then
+          lDelayedDone.SetEvent;
+      end,
+      TmaxDelivery.Posting);
+
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(maxBusObj(lBus).PostResultNamedOf<Integer>(cName, 1)));
+    CheckEquals(1, lMailbox.PendingCount);
+
+    lHandle := maxBusObj(lBus).PostDelayedNamedOf<Integer>(cName, 2, cDelayMs);
+    Check(lHandle <> nil);
+    Check(lHandle.IsPending);
+
+    lMailbox.Close(False);
+
+    Check(lMailbox.IsClosed);
+    CheckEquals(1, lMailbox.PendingCount, 'Close(False) should keep the already-pending mailbox item before delayed delivery runs');
+    CheckEquals(Integer(wrSignaled), Integer(lDelayedDone.WaitFor(2000)),
+      'Delayed post should still execute on the bus after the close boundary');
+    Check(not lHandle.IsPending, 'Delayed handle should clear once the delayed post attempts delivery');
+    CheckEquals(1, lMailbox.PendingCount, 'Closed mailbox should reject delayed admission and keep only the preserved pending item');
+    CheckEquals(1, lMailbox.PumpAll);
+    CheckEquals(1, lValues.Count);
+    CheckEquals(1, lValues[0]);
+  finally
+    lDelayedDone.Free;
+    lValues.Free;
+    lBus.Clear;
+  end;
+end;
+
 procedure TTestMailbox.MailboxDeadlineTimesOutWhenStillFull;
 var
   lHits: Integer;
@@ -7744,6 +7848,58 @@ begin
   CheckEquals(1, lMailbox.PendingCount);
   CheckEquals(1, lMailbox.PumpAll);
   CheckEquals(1, lHits);
+end;
+
+procedure TTestMailbox.MailboxOverflowDropNewestRejectsDelayedAdmission;
+const
+  cDelayMs = 80;
+  cName = 'mailbox.overflow.delayed.dropnewest';
+var
+  lBus: ImaxBus;
+  lDelayedDone: TEvent;
+  lHandle: ImaxDelayedPost;
+  lMailbox: ImaxMailbox;
+  lPolicy: TmaxMailboxPolicy;
+  lValues: TList<Integer>;
+begin
+  lBus := CreateIsolatedBus;
+  lBus.Clear;
+  lPolicy := BuildMailboxPolicy(1, MailboxDropNewest, 0);
+  lMailbox := TmaxMailbox.Create(lPolicy);
+  lValues := TList<Integer>.Create;
+  lDelayedDone := TEvent.Create(nil, True, False, '');
+  try
+    maxBusObj(lBus).SubscribeNamedOfIn<Integer>(cName, lMailbox,
+      procedure(const aValue: Integer)
+      begin
+        lValues.Add(aValue);
+      end);
+    maxBusObj(lBus).SubscribeNamedOf<Integer>(cName,
+      procedure(const aValue: Integer)
+      begin
+        if aValue = 2 then
+          lDelayedDone.SetEvent;
+      end,
+      TmaxDelivery.Posting);
+
+    CheckEquals(Integer(TmaxPostResult.Queued), Integer(maxBusObj(lBus).PostResultNamedOf<Integer>(cName, 1)));
+    CheckEquals(1, lMailbox.PendingCount);
+
+    lHandle := maxBusObj(lBus).PostDelayedNamedOf<Integer>(cName, 2, cDelayMs);
+    Check(lHandle <> nil);
+    Check(lHandle.IsPending);
+    CheckEquals(Integer(wrSignaled), Integer(lDelayedDone.WaitFor(2000)),
+      'Delayed post should still execute on the bus while the mailbox stays full');
+    Check(not lHandle.IsPending, 'Delayed handle should clear once the delayed post attempts delivery');
+    CheckEquals(1, lMailbox.PendingCount, 'Full mailbox should reject delayed admission under DropNewest');
+    CheckEquals(1, lMailbox.PumpAll);
+    CheckEquals(1, lValues.Count);
+    CheckEquals(1, lValues[0]);
+  finally
+    lDelayedDone.Free;
+    lValues.Free;
+    lBus.Clear;
+  end;
 end;
 
 procedure TTestMailbox.MailboxOverflowDropOldestEvictsOldestPending;
