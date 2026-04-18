@@ -7,6 +7,7 @@ uses
   SysUtils,
   System.Classes,
   System.Generics.Collections,
+  System.Diagnostics,
   System.IOUtils,
   System.SyncObjs,
   DUnitX.Loggers.Console,
@@ -103,6 +104,74 @@ begin
       lThreads[i].Free;
     lSchedulers.Free;
     lStartEvent.Free;
+  end;
+end;
+
+function RunWildcardBenchmarkProbe: Integer;
+const
+  cPostCount = 5000;
+  cRunCount = 3;
+  cSubscriberCount = 256;
+var
+  lBus: ImaxBus;
+  lDurationsMs: TList<Int64>;
+  lHits: Integer;
+  lName: string;
+  lPostIndex: Integer;
+  lPrefix: string;
+  lRunIndex: Integer;
+  lSorted: TArray<Int64>;
+  lElapsedMs: Int64;
+  lStopwatch: TStopwatch;
+  lSubs: TInterfaceList;
+  lSubscriberIndex: Integer;
+  lTotalExpected: Integer;
+
+  function BuildMatchingName: string;
+  begin
+    Result := StringOfChar('a', cSubscriberCount) + '.event';
+  end;
+
+begin
+  lDurationsMs := TList<Int64>.Create;
+  lSubs := TInterfaceList.Create;
+  lBus := TmaxBus.Create(CreateMaxAsyncScheduler);
+  try
+    lName := BuildMatchingName;
+    for lSubscriberIndex := 1 to cSubscriberCount do
+    begin
+      lPrefix := StringOfChar('a', lSubscriberIndex);
+      lSubs.Add(
+        maxBusObj(lBus).SubscribeNamedWildcard(lPrefix + '*',
+          procedure
+          begin
+            Inc(lHits);
+          end,
+          TmaxDelivery.Posting));
+    end;
+
+    lTotalExpected := cPostCount * cSubscriberCount;
+    for lRunIndex := 1 to cRunCount do
+    begin
+      lHits := 0;
+      lStopwatch := TStopwatch.StartNew;
+      for lPostIndex := 1 to cPostCount do
+        lBus.PostNamed(lName);
+      lElapsedMs := lStopwatch.ElapsedMilliseconds;
+      if lHits <> lTotalExpected then
+        raise Exception.CreateFmt('Wildcard benchmark expected %d hits but got %d', [lTotalExpected, lHits]);
+      lDurationsMs.Add(lElapsedMs);
+    end;
+
+    lSorted := lDurationsMs.ToArray;
+    TArray.Sort<Int64>(lSorted);
+    Writeln(Format('WILDCARD_BENCHMARK median_ms=%d runs=%d posts=%d subscribers=%d',
+      [lSorted[Length(lSorted) div 2], cRunCount, cPostCount, cSubscriberCount]));
+    Result := 0;
+  finally
+    lBus.Clear;
+    lSubs.Free;
+    lDurationsMs.Free;
   end;
 end;
 
@@ -313,6 +382,8 @@ var
 begin
   if HasArg('--default-async-race-probe') then
     Halt(RunDefaultAsyncRaceProbe);
+  if HasArg('--wildcard-benchmark-probe') then
+    Halt(RunWildcardBenchmarkProbe);
   if HasArg('--stress-suite') then
     Halt(RunStressSuite);
 
