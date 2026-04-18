@@ -6,7 +6,7 @@ interface
 
 uses
   // RTL
-  Classes, SysUtils, SyncObjs, TypInfo, System.Diagnostics, System.Generics.Collections,
+  Classes, SysUtils, SyncObjs, TypInfo, System.Diagnostics, System.Generics.Collections, System.Rtti,
   // OS/API
   Winapi.Windows,
   // Third-party
@@ -319,6 +319,7 @@ type
     procedure InvalidAttributedFormsRaise;
     procedure NamedNoArgBindsCorrectMethod;
     procedure GuidOneParamBindsAndUnsubscribes;
+    procedure AutoSubscribeRebindsWithoutDuplicatingHandlers;
   end;
   {$ENDIF}
 
@@ -476,11 +477,13 @@ type
     procedure MailboxCloseKeepsPendingWorkAndRejectsDelayedAdmission;
     procedure MailboxDeadlineTimesOutWhenStillFull;
     procedure MailboxTimeoutReturnsFalse;
+    procedure MailboxTryPostNilReturnsFalseWithoutQueueing;
   end;
 
   TTestPostResult = class(TmaxTestCase)
   published
     procedure NoTopicReturnsNoTopic;
+    procedure TryPostNoTopicMatrixReturnsTrueWithoutCounters;
     procedure DropNewestReturnsDropped;
     procedure NamedOfDropNewestReturnsDropped;
     procedure CoalescedReturnsCoalesced;
@@ -558,6 +561,7 @@ type
     procedure UnsubscribeStopsWildcardDelivery;
     procedure WildcardDispatchesWithoutPrecreatedNamedTopic;
     procedure SamePrefixLengthUsesSubscriptionOrder;
+    procedure WildcardTryPostAndPostResultHonorLifecycle;
   end;
 
   TTestDelayedPosting = class(TmaxTestCase)
@@ -576,6 +580,7 @@ type
     procedure NamedDelayedFailureForwardsAsyncHook;
     procedure NamedOfDelayedFailureForwardsAsyncHook;
     procedure GuidDelayedFailureForwardsAsyncHook;
+    procedure NamedAndGuidDelayedFailureWithoutAsyncHookStaysSilent;
     procedure SchedulerFailureDelayedNamedForwardsAsyncHook;
     procedure SchedulerFailureStillWaitsBeforeNamedDelivery;
     procedure SchedulerFailureCancelAndClearPreventDelayedDelivery;
@@ -3709,6 +3714,56 @@ begin
     lBusObj.PostGuidOf<IIntEvent>(TIntEvent.Create(99));
     CheckEquals(1, lTarget.GuidHits);
     CheckEquals(42, lTarget.LastGuidValue);
+  finally
+    AutoUnsubscribe(lTarget);
+    lTarget.Free;
+    lBusObj.Clear;
+  end;
+end;
+
+procedure TTestAutoSubscribe.AutoSubscribeRebindsWithoutDuplicatingHandlers;
+var
+  lAutoSubsDict: TObjectDictionary<TObject, TList<ImaxSubscription>>;
+  lAutoSubsField: TRttiField;
+  lAutoSubsValue: TValue;
+  lBusObj: TmaxBus;
+  lCtx: TRttiContext;
+  lFirstList: TList<ImaxSubscription>;
+  lFirstSub: ImaxSubscription;
+  lTarget: TAutoSubDerived;
+  lSecondList: TList<ImaxSubscription>;
+begin
+  lBusObj := maxBusObj;
+  lBusObj.Clear;
+  lTarget := TAutoSubDerived.Create;
+  lCtx := TRttiContext.Create;
+  try
+    lAutoSubsField := lCtx.GetType(TmaxBus).GetField('fAutoSubs');
+    Check(lAutoSubsField <> nil, 'Expected RTTI access to auto-subscription storage');
+
+    AutoSubscribe(lTarget);
+    lAutoSubsValue := lAutoSubsField.GetValue(lBusObj);
+    lAutoSubsDict := lAutoSubsValue.AsObject as TObjectDictionary<TObject, TList<ImaxSubscription>>;
+    Check(lAutoSubsDict.TryGetValue(lTarget, lFirstList));
+    Check(lFirstList <> nil);
+    lFirstSub := lFirstList[0];
+    Check(lFirstSub.IsActive);
+
+    AutoSubscribe(lTarget);
+    Check(not lFirstSub.IsActive, 'Second AutoSubscribe should deactivate the previous tracked subscriptions');
+    Check(lAutoSubsDict.TryGetValue(lTarget, lSecondList));
+    Check(lSecondList <> nil);
+    Check(lFirstList <> lSecondList, 'Second AutoSubscribe should rebuild the tracked list, not reuse the old one');
+
+    lBusObj.Post<integer>(9);
+    lBusObj.PostNamed('ping');
+    lBusObj.PostNamedOf<integer>('data', 99);
+
+    CheckEquals(1, lTarget.IntHits);
+    CheckEquals(9, lTarget.LastInt);
+    CheckEquals(1, lTarget.PingHits);
+    CheckEquals(1, lTarget.DataHits);
+    CheckEquals(99, lTarget.LastData);
   finally
     AutoUnsubscribe(lTarget);
     lTarget.Free;
@@ -8510,6 +8565,17 @@ begin
   Check(not lMailbox.PumpOne(20));
 end;
 
+procedure TTestMailbox.MailboxTryPostNilReturnsFalseWithoutQueueing;
+var
+  lMailbox: ImaxMailbox;
+begin
+  lMailbox := TmaxMailbox.Create;
+  Check(not lMailbox.TryPost(nil));
+  CheckEquals(0, lMailbox.PendingCount);
+  CheckEquals(0, lMailbox.PumpAll);
+  Check(not lMailbox.PumpOne(20));
+end;
+
 { TTestPostResult }
 
 procedure TTestPostResult.NoTopicReturnsNoTopic;
@@ -8527,6 +8593,66 @@ begin
   CheckEquals(Integer(TmaxPostResult.NoTopic), Integer(maxBusObj(lBus).PostResultNamed('__postresult_missing_named__')));
   CheckEquals(Integer(TmaxPostResult.NoTopic), Integer(maxBusObj(lBus).PostResultNamedOf<TPostResultNoTopicEvent>('__postresult_missing_named__', lEvt)));
   CheckEquals(Integer(TmaxPostResult.NoTopic), Integer(maxBusObj(lBus).PostResultGuidOf<IPostResultGuidEvent>(lGuidEvt)));
+end;
+
+procedure TTestPostResult.TryPostNoTopicMatrixReturnsTrueWithoutCounters;
+var
+  lBusObj: TmaxBus;
+  lBus: ImaxBus;
+  lGuidEvt: IIntEvent;
+  lCtx: TRttiContext;
+  lField: TRttiField;
+  lMetrics: ImaxBusMetrics;
+  lObj: TObject;
+  lProp: TRttiProperty;
+  lStats: TmaxTopicStats;
+  lValue: TValue;
+
+  function TopicStoreCount(const aFieldName: string): integer;
+  begin
+    lField := lCtx.GetType(TmaxBus).GetField(aFieldName);
+    Check(lField <> nil, 'Expected RTTI access to topic storage');
+    lValue := lField.GetValue(lBusObj);
+    lObj := lValue.AsObject;
+    Check(lObj <> nil, 'Expected topic storage object');
+    lProp := lField.FieldType.GetProperty('Count');
+    Check(lProp <> nil, 'Expected RTTI access to storage count');
+    Result := lProp.GetValue(lObj).AsInteger;
+  end;
+
+  procedure AssertNoTopicStores;
+  begin
+    CheckEquals(0, TopicStoreCount('fTyped'));
+    CheckEquals(0, TopicStoreCount('fNamed'));
+    CheckEquals(0, TopicStoreCount('fNamedTyped'));
+    CheckEquals(0, TopicStoreCount('fGuid'));
+  end;
+begin
+  lBus := CreateIsolatedBus;
+  lBusObj := maxBusObj(lBus);
+  lMetrics := lBus as ImaxBusMetrics;
+  lCtx := TRttiContext.Create;
+  lGuidEvt := TIntEvent.Create(42);
+
+  AssertNoTopicStores;
+  Check(maxBusObj(lBus).TryPost<integer>(7));
+  AssertNoTopicStores;
+  Check(maxBusObj(lBus).TryPostNamedOf<integer>('trypost.matrix.namedof', 8));
+  AssertNoTopicStores;
+  Check(maxBusObj(lBus).TryPostGuidOf<IIntEvent>(lGuidEvt));
+  AssertNoTopicStores;
+  CheckEquals(Integer(TmaxPostResult.NoTopic), Integer(maxBusObj(lBus).PostResult<integer>(7)));
+  AssertNoTopicStores;
+  CheckEquals(Integer(TmaxPostResult.NoTopic), Integer(maxBusObj(lBus).PostResultNamedOf<integer>('trypost.matrix.namedof', 8)));
+  AssertNoTopicStores;
+  CheckEquals(Integer(TmaxPostResult.NoTopic), Integer(maxBusObj(lBus).PostResultGuidOf<IIntEvent>(lGuidEvt)));
+  AssertNoTopicStores;
+
+  lStats := lMetrics.GetTotals;
+  CheckEquals(0, lStats.PostsTotal);
+  CheckEquals(0, lStats.DeliveredTotal);
+  CheckEquals(0, lStats.DroppedTotal);
+  CheckEquals(0, lStats.ExceptionsTotal);
 end;
 
 procedure TTestPostResult.DropNewestReturnsDropped;
@@ -10706,6 +10832,68 @@ begin
   end;
 end;
 
+procedure TTestWildcardNamed.WildcardTryPostAndPostResultHonorLifecycle;
+var
+  lBus: ImaxBus;
+  lExactHits: integer;
+  lExactSub: ImaxSubscription;
+  lWildcardHits: integer;
+  lWildcardSub: ImaxSubscription;
+begin
+  lBus := maxBus;
+  lBus.Clear;
+  lExactHits := 0;
+  lWildcardHits := 0;
+  lExactSub := nil;
+  lWildcardSub := nil;
+  try
+    lExactSub := maxBusObj(lBus).SubscribeNamed('order.created',
+      procedure
+      begin
+        Inc(lExactHits);
+      end,
+      TmaxDelivery.Posting);
+    lWildcardSub := maxBusObj(lBus).SubscribeNamedWildcard('order.*',
+      procedure
+      begin
+        Inc(lWildcardHits);
+      end,
+      TmaxDelivery.Posting);
+
+    Check(lExactSub.IsActive);
+    Check(lWildcardSub.IsActive);
+    Check(lBus.TryPostNamed('order.created'));
+    CheckEquals(Integer(TmaxPostResult.DispatchedInline), Integer(maxBusObj(lBus).PostResultNamed('order.created')));
+    Check(lBus.TryPostNamed('order.updated'));
+    CheckEquals(Integer(TmaxPostResult.DispatchedInline), Integer(maxBusObj(lBus).PostResultNamed('order.updated')));
+    CheckEquals(2, lExactHits);
+    CheckEquals(4, lWildcardHits);
+
+    lWildcardSub.Unsubscribe;
+    Check(lBus.TryPostNamed('order.created'));
+    CheckEquals(Integer(TmaxPostResult.DispatchedInline), Integer(maxBusObj(lBus).PostResultNamed('order.created')));
+    CheckEquals(4, lExactHits);
+    CheckEquals(4, lWildcardHits);
+
+    lBus.Clear;
+    lExactHits := 0;
+    lWildcardHits := 0;
+    lExactSub := maxBusObj(lBus).SubscribeNamed('order.created',
+      procedure
+      begin
+        Inc(lExactHits);
+      end,
+      TmaxDelivery.Posting);
+    Check(lBus.TryPostNamed('order.created'));
+    CheckEquals(Integer(TmaxPostResult.DispatchedInline), Integer(maxBusObj(lBus).PostResultNamed('order.created')));
+    CheckEquals(2, lExactHits);
+    CheckEquals(0, lWildcardHits);
+  finally
+    lWildcardSub := nil;
+    lExactSub := nil;
+  end;
+end;
+
 { TTestDelayedPosting }
 
 procedure TTestDelayedPosting.NamedDelayedPostWaitsBeforeDelivery;
@@ -11268,6 +11456,69 @@ begin
     lBus.Clear;
     lCapture.Free;
     lErrorEvent.Free;
+  end;
+end;
+
+procedure TTestDelayedPosting.NamedAndGuidDelayedFailureWithoutAsyncHookStaysSilent;
+const
+  cDelayMs = 25;
+var
+  lBus: ImaxBus;
+  lGuidDone: TEvent;
+  lGuidHits: integer;
+  lGuidSub: ImaxSubscription;
+  lNameDone: TEvent;
+  lNameHits: integer;
+  lNameSub: ImaxSubscription;
+  lPrevScheduler: IEventNexusScheduler;
+begin
+  lBus := maxBus;
+  lPrevScheduler := maxGetAsyncScheduler;
+  lNameDone := TEvent.Create(nil, True, False, '');
+  lGuidDone := TEvent.Create(nil, True, False, '');
+  lNameHits := 0;
+  lGuidHits := 0;
+  lNameSub := nil;
+  lGuidSub := nil;
+  try
+    lBus.Clear;
+    maxSetAsyncScheduler(TmaxRawThreadScheduler.Create);
+    maxSetAsyncErrorHandler(nil);
+
+    lNameSub := lBus.SubscribeNamed('delayed.silent.named',
+      procedure
+      begin
+        Inc(lNameHits);
+        lNameDone.SetEvent;
+        raise Exception.Create('named delayed silent boom');
+      end,
+      TmaxDelivery.Posting);
+
+    Check(lNameSub.IsActive);
+    Check(lBus.PostDelayedNamed('delayed.silent.named', cDelayMs) <> nil);
+    Check(lNameDone.WaitFor(2000) = wrSignaled, 'Named delayed failure without hook should still execute the delayed post');
+    CheckEquals(1, lNameHits);
+
+    lGuidSub := maxBusObj(lBus).SubscribeGuidOf<IIntEvent>(
+      procedure(const aValue: IIntEvent)
+      begin
+        Inc(lGuidHits);
+        lGuidDone.SetEvent;
+        raise Exception.Create('guid delayed silent boom');
+      end,
+      TmaxDelivery.Posting);
+
+    Check(lGuidSub.IsActive);
+    Check(maxBusObj(lBus).PostDelayedGuidOf<IIntEvent>(TIntEvent.Create(41), cDelayMs) <> nil);
+    Check(lGuidDone.WaitFor(2000) = wrSignaled, 'Guid delayed failure without hook should still execute the delayed post');
+    CheckEquals(1, lGuidHits);
+  finally
+    RestoreAsyncSchedulerState(lPrevScheduler);
+    lGuidSub := nil;
+    lNameSub := nil;
+    lBus.Clear;
+    lGuidDone.Free;
+    lNameDone.Free;
   end;
 end;
 
