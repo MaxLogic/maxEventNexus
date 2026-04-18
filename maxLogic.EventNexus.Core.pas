@@ -562,6 +562,7 @@ type
 			      aMode: TmaxDelivery; out aState: ImaxSubscriptionState): TmaxSubscriptionToken;
 			    procedure RemoveNamedWildcardByToken(aToken: TmaxSubscriptionToken);
 			    function SnapshotNamedWildcardMatches(const aName: TmaxString): TArray<TNamedWildcardSubscriber>;
+          procedure RefreshNamedWildcardSnapshotLocked;
           function AddAutoBridgeSubscription(aKind: TmaxAutoBridgeKind; const aParamType: PTypeInfo;
             const aNameKey: TmaxString; const aGuidKey: TGuid; const aMethodPtr: TMethod; aDelivery: TmaxDelivery;
             const aTarget: TObject): ImaxSubscription;
@@ -1323,68 +1324,89 @@ begin
   end;
 end;
 
-function TmaxBus.SnapshotNamedWildcardMatches(const aName: TmaxString): TArray<TNamedWildcardSubscriber>;
+procedure TmaxBus.RefreshNamedWildcardSnapshotLocked;
 var
   lCount: integer;
   lIdx: integer;
   lOut: integer;
   lFiltered: TArray<TNamedWildcardSubscriber>;
-  lMatches: TArray<TNamedWildcardSubscriber>;
-  lMatchCount: integer;
   lI: integer;
   lJ: integer;
   lTmp: TNamedWildcardSubscriber;
 begin
+  if fNamedWildcardSnapshotVersion = fNamedWildcardVersion then
+    Exit;
+
+  lCount := Length(fNamedWildcardSubs);
+  if lCount = 0 then
+  begin
+    SetLength(fNamedWildcardSnapshot, 0);
+    fNamedWildcardSnapshotVersion := fNamedWildcardVersion;
+    Exit;
+  end;
+
+  SetLength(lFiltered, lCount);
+  lOut := 0;
+  for lIdx := 0 to lCount - 1 do
+    if (fNamedWildcardSubs[lIdx].State = nil) or fNamedWildcardSubs[lIdx].State.IsActive then
+    begin
+      lFiltered[lOut] := fNamedWildcardSubs[lIdx];
+      Inc(lOut);
+    end
+    else if Assigned(fNamedWildcardSubs[lIdx].State) then
+      fNamedWildcardSubs[lIdx].State.Deactivate;
+
+  if lOut <> lCount then
+  begin
+    SetLength(lFiltered, lOut);
+    fNamedWildcardSubs := lFiltered;
+    Inc(fNamedWildcardVersion);
+  end
+  else
+    SetLength(lFiltered, lOut);
+
+  fNamedWildcardSnapshot := Copy(lFiltered);
+  for lI := 0 to High(fNamedWildcardSnapshot) - 1 do
+    for lJ := lI + 1 to High(fNamedWildcardSnapshot) do
+      if (fNamedWildcardSnapshot[lJ].PrefixLen > fNamedWildcardSnapshot[lI].PrefixLen) or
+        ((fNamedWildcardSnapshot[lJ].PrefixLen = fNamedWildcardSnapshot[lI].PrefixLen) and
+        (fNamedWildcardSnapshot[lJ].Token < fNamedWildcardSnapshot[lI].Token)) then
+      begin
+        lTmp := fNamedWildcardSnapshot[lI];
+        fNamedWildcardSnapshot[lI] := fNamedWildcardSnapshot[lJ];
+        fNamedWildcardSnapshot[lJ] := lTmp;
+      end;
+  fNamedWildcardSnapshotVersion := fNamedWildcardVersion;
+end;
+
+function TmaxBus.SnapshotNamedWildcardMatches(const aName: TmaxString): TArray<TNamedWildcardSubscriber>;
+var
+  lCount: integer;
+  lIdx: integer;
+  lMatchCount: integer;
+begin
   TMonitor.Enter(fNamedWildcardLock);
   try
-    lCount := Length(fNamedWildcardSubs);
+    RefreshNamedWildcardSnapshotLocked;
+    lCount := Length(fNamedWildcardSnapshot);
     if lCount = 0 then
     begin
       Result := nil;
       Exit;
     end;
 
-    SetLength(lFiltered, lCount);
-    lOut := 0;
-    for lIdx := 0 to lCount - 1 do
-      if (fNamedWildcardSubs[lIdx].State = nil) or fNamedWildcardSubs[lIdx].State.IsActive then
-      begin
-        lFiltered[lOut] := fNamedWildcardSubs[lIdx];
-        Inc(lOut);
-      end
-      else if Assigned(fNamedWildcardSubs[lIdx].State) then
-        fNamedWildcardSubs[lIdx].State.Deactivate;
-
-    if lOut <> lCount then
-    begin
-      SetLength(lFiltered, lOut);
-      fNamedWildcardSubs := lFiltered;
-      Inc(fNamedWildcardVersion);
-    end;
-
-    SetLength(lMatches, lOut);
+    SetLength(Result, lCount);
     lMatchCount := 0;
-    for lIdx := 0 to lOut - 1 do
-      if WildcardPrefixMatches(fNamedWildcardSubs[lIdx].Prefix, aName) then
+    for lIdx := 0 to lCount - 1 do
+      if WildcardPrefixMatches(fNamedWildcardSnapshot[lIdx].Prefix, aName) then
       begin
-        lMatches[lMatchCount] := fNamedWildcardSubs[lIdx];
+        Result[lMatchCount] := fNamedWildcardSnapshot[lIdx];
         Inc(lMatchCount);
       end;
+    SetLength(Result, lMatchCount);
   finally
     TMonitor.Exit(fNamedWildcardLock);
   end;
-
-  SetLength(lMatches, lMatchCount);
-  for lI := 0 to lMatchCount - 2 do
-    for lJ := lI + 1 to lMatchCount - 1 do
-      if (lMatches[lJ].PrefixLen > lMatches[lI].PrefixLen) or
-        ((lMatches[lJ].PrefixLen = lMatches[lI].PrefixLen) and (lMatches[lJ].Token < lMatches[lI].Token)) then
-      begin
-        lTmp := lMatches[lI];
-        lMatches[lI] := lMatches[lJ];
-        lMatches[lJ] := lTmp;
-      end;
-  Result := lMatches;
 end;
 
 class procedure TmaxBus.MergeDispatchError(const aSource: EmaxDispatchError; var aErrors: TmaxExceptionList;
